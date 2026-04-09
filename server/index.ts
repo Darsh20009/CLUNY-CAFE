@@ -35,10 +35,12 @@ async function autoConfigureGeidea() {
   if (!config) return;
 
   const pg = config.paymentGateway;
+  const APPLE_MERCHANT_ID = process.env.APPLE_PAY_MERCHANT_ID || 'merchant.cluny.cafe';
   const needsUpdate = pg?.provider !== 'geidea' ||
     pg?.geidea?.publicKey !== GEIDEA_PUBLIC_KEY ||
     pg?.geidea?.apiPassword !== GEIDEA_API_PASSWORD ||
     pg?.geidea?.baseUrl !== GEIDEA_BASE_URL ||
+    (pg?.geidea as any)?.applePayMerchantId !== APPLE_MERCHANT_ID ||
     pg?.cashEnabled !== false ||
     pg?.paymentTestMode !== false;
 
@@ -51,6 +53,7 @@ async function autoConfigureGeidea() {
           'paymentGateway.geidea.publicKey': GEIDEA_PUBLIC_KEY,
           'paymentGateway.geidea.apiPassword': GEIDEA_API_PASSWORD,
           'paymentGateway.geidea.baseUrl': GEIDEA_BASE_URL,
+          'paymentGateway.geidea.applePayMerchantId': process.env.APPLE_PAY_MERCHANT_ID || 'merchant.cluny.cafe',
           'paymentGateway.cashEnabled': false,
           'paymentGateway.qahwaCardEnabled': true,
           'paymentGateway.paymentTestMode': false,

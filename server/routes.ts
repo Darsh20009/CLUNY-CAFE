@@ -2456,36 +2456,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // ── Step 2: Direct Apple validation using Merchant Identity Certificate ──
       const certPath = process.env.APPLE_PAY_CERT_PATH;
+      const certKeyPath = process.env.APPLE_PAY_KEY_PATH;
       const certPassphrase = process.env.APPLE_PAY_CERT_PASSPHRASE;
 
       if (certPath) {
         try {
           const fs = await import('fs');
           const https = await import('https');
-          const cert = fs.readFileSync(certPath);
-          const agent = new https.Agent({ pfx: cert, passphrase: certPassphrase || '' });
+          const certData = fs.readFileSync(certPath);
+          const isPem = certData.toString('utf8', 0, 10).includes('-----');
+          const isPfx = !isPem;
 
-          console.log('[Apple Pay] Trying Apple direct validationURL with certificate');
-          const appleRes = await fetch(validationURL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              merchantIdentifier: appleMerchantId,
-              domainName: merchantDomain,
-              displayName: 'CLUNY CAFE',
-            }),
-            // @ts-ignore
-            agent,
-          });
-
-          const appleBody = await appleRes.text();
-          console.log(`[Apple Pay] Apple direct → ${appleRes.status}: ${appleBody.substring(0, 200)}`);
-
-          if (appleRes.ok) {
-            console.log('[Apple Pay] ✅ Merchant session validated directly via Apple');
-            return res.json(JSON.parse(appleBody));
+          let agent: any;
+          if (isPfx) {
+            agent = new https.Agent({ pfx: certData, passphrase: certPassphrase || '' });
+            console.log('[Apple Pay] Using PFX certificate for Apple direct validation');
+          } else if (certKeyPath && fs.existsSync(certKeyPath)) {
+            const keyData = fs.readFileSync(certKeyPath);
+            agent = new https.Agent({ cert: certData, key: keyData, passphrase: certPassphrase || '' });
+            console.log('[Apple Pay] Using PEM certificate + key for Apple direct validation');
+          } else {
+            console.warn('[Apple Pay] PEM certificate found but no private key (APPLE_PAY_KEY_PATH). Merchant validation requires both cert and key. Skipping direct Apple validation.');
+            results.push({ url: 'direct-apple-pem', status: 0, body: 'PEM cert available but private key (APPLE_PAY_KEY_PATH) not configured' });
           }
-          results.push({ url: validationURL, status: appleRes.status, body: appleBody.substring(0, 300) });
+
+          if (agent) {
+            console.log('[Apple Pay] Trying Apple direct validationURL with certificate');
+            const appleRes = await fetch(validationURL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                merchantIdentifier: appleMerchantId,
+                domainName: merchantDomain,
+                displayName: 'CLUNY CAFE',
+              }),
+              // @ts-ignore
+              agent,
+            });
+
+            const appleBody = await appleRes.text();
+            console.log(`[Apple Pay] Apple direct → ${appleRes.status}: ${appleBody.substring(0, 200)}`);
+
+            if (appleRes.ok) {
+              console.log('[Apple Pay] ✅ Merchant session validated directly via Apple');
+              return res.json(JSON.parse(appleBody));
+            }
+            results.push({ url: validationURL, status: appleRes.status, body: appleBody.substring(0, 300) });
+          }
         } catch (certErr: any) {
           console.error('[Apple Pay] Apple direct error:', certErr.message);
           results.push({ url: validationURL, status: 0, body: certErr.message });
