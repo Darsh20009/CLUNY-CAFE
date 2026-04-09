@@ -1,0 +1,47 @@
+[GET /api/tables] Found 0 tables for query: {"tenantId":"demo-tenant","branchId":"R5xgn6WW533TsSMWgYTei"}
+8:55:14 PM [express] GET /api/tables 304 in 37ms :: []
+[DEBUG] Adding table to bulk insert: {"id":"2dQMdw3por","tableNumber":"133","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"XIYv-1eJqoKM","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"6n0s1AYuYa","tableNumber":"134","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"9W9Uq28sjRDx","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"6397XiQuAr","tableNumber":"135","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"akNterVZaaP9","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"AJeQrqwwQg","tableNumber":"136","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"QMfcqSVwOuty","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"FwKHQCMgu2","tableNumber":"137","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"UXoTweJ_uIlS","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"V09xkt3U3Y","tableNumber":"138","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"UG3ORI5whbMk","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"LRZR5X_6_v","tableNumber":"139","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"wigegtLoNfv5","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"v-3mLdOOC5","tableNumber":"140","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"L_YNmRFiYY8e","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"C6CUjUt1uC","tableNumber":"141","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"yTAW-glgDUzK","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"KnhS7tXuE1","tableNumber":"142","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"X3NU7-IW4zLS","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"apFIIzfQ7-","tableNumber":"143","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"mF7BV5zHLqG8","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"CETD0inSQF","tableNumber":"144","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"W_xN-XK4yGpl","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"9f1gogUd6q","tableNumber":"145","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"Y-4GU3zXGAKo","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"669H-Vjgs_","tableNumber":"146","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"YURADStkFk_9","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"K5W0YNN-jO","tableNumber":"147","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"DvOA5vEV9l5q","isActive":1,"isOccupied":0}
+[DEBUG] Attempting to insertMany 15 tables for branch R5xgn6WW533TsSMWgYTei
+[DEBUG] Successfully created 15 tables
+8:55:24 PM [express] POST /api/tables/bulk-create 200 in 223ms :: {"results":{"created":[{"tableNumb…
+[GET /api/tables] Querying with: {"tenantId":"demo-tenant","branchId":"R5xgn6WW533TsSMWgYTei"}
+[GET /api/tables] Found 0 tables for query: {"tenantId":"demo-tenant","branchId":"R5xgn6WW533TsSMWgYTei"}
+8:55:24 PM [express] GET /api/tables 304 in 32ms :: []
+[GET /api/tables] Querying with: {"tenantId":"demo-tenant","branchId":"R5xgn6WW533TsSMWgYTei"}
+[GET /api/tables] Found 0 tables for query: {"tenantId":"demo-tenant","branchId":"R5xgn6WW533TsSMWgYTei"}
+8:55:24 PM [express] GET /api/tables 304 in 32ms :: []
+[DEBUG] Adding table to bulk insert: {"id":"DQ7KudRExi","tableNumber":"148","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"UUwkv2_S3OvM","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"AIO1c5DZUx","tableNumber":"149","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"o1-s79zrC4Q5","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"GV7MEUv8_8","tableNumber":"150","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"igeGBksfrvkb","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"OKyPRZz60t","tableNumber":"151","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"OMLSvvaq5GDs","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"NzzS9UsYAX","tableNumber":"152","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"XAV5ZGfDif7-","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"2OGSUzvEyJ","tableNumber":"153","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"z8C1js4n-UZ6","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"_pgVBMB4Xp","tableNumber":"154","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"BRAH0Z2E1i9n","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"0jhz2SWRgr","tableNumber":"155","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"ZnKUw_Mwv_Vw","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"5T2QtS7Fd1","tableNumber":"156","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"0hLSApEno0ck","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"WGFoGCC4jV","tableNumber":"157","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"0fWmZdS8v7BF","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"HPtxNzckTG","tableNumber":"158","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"HKbRLgXfLa47","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"yVhQb6czSn","tableNumber":"159","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"-b82eIIn61Cz","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"XkopLdUZTk","tableNumber":"160","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"ApdLDx1qFjpd","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"ya_54LJ1yT","tableNumber":"161","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"z0C0FOqiW0ub","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"Mg5rFaA_ik","tableNumber":"162","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"-RD5ZDGjUnCk","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"qM7SfjTYCR","tableNumber":"163","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"OTvTQPcPqDyP","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"bwFxp1e-6K","tableNumber":"164","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"2t5n_c5-qwPZ","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"ARhaKHTL-A","tableNumber":"165","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"tgWoTC_HmjxB","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"ldKUi4O4Pp","tableNumber":"166","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"3pAaStdjXJma","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"WbvDL2h6nx","tableNumber":"167","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"4W6O3tSENIcu","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"aXwHCwDEhH","tableNumber":"168","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"B

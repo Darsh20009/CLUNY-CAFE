@@ -1,0 +1,134 @@
+1) أخطاء قاتلة (بتوقع السيرفر/البيلد مباشرة)
+A) استخدام import.meta.dirname (غير موجود افتراضيًا في Node/Vite)
+
+ده موجود بكثافة، وده غالبًا سبب أعطال/بيلد فاشل أو مسارات غلط.
+
+server/index.ts سطر 188
+
+path.resolve(import.meta.dirname, '..', 'attached_assets')
+
+
+server/vite.ts (مسارات client/index.html و dist/public)
+
+server/routes.ts (مسارات attached_assets/* و uploads)
+
+vite.config.ts أسطر 21–29 كلها تعتمد على import.meta.dirname
+
+النتيجة: Node (ESM) ما عنده import.meta.dirname بشكل افتراضي → Runtime Error.
+
+✅ الإصلاح القياسي:
+اكتب مرة واحدة في كل ملف يحتاج dirname:
+
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+
+وبدل import.meta.dirname بـ __dirname.
+
+2) ثغرات أمنية خطيرة (لازم تتشال قبل أي نشر)
+A) بيانات MongoDB متخزنة صريحة داخل الكود
+
+server/index.ts سطر 13:
+
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://Vercel-Admin-CLUNY-CAFE:...@..."
+
+
+ده تسريب بيانات دخول (حتى لو DB قديمة). لازم يتشال فورًا ويكون ENV فقط.
+
+B) Session Secret افتراضي وثابت
+
+server/index.ts (داخل session config) فيه:
+process.env.SESSION_SECRET || "cluny.cafe-secret-key-change-in-production"
+
+ده معناه أي حد يقدر يزوّر جلسات لو عرف القيمة (وممكن تكون متسربة).
+
+✅ الحل: اجبار وجود ENV:
+
+لو مش موجود: وقف السيرفر برسالة واضحة.
+
+3) سبب شائع لـ “الشاشة البيضا بعد تحديثات” (PWA / Service Worker)
+Service Worker عامل Cache ثابت بإصدار v1 ومش بيتغير
+
+client/public/sw.js سطر 1:
+
+const CACHE_VERSION = 'v1';
+
+
+وكمان بيعمل cache-first على / و/index.html (سطر 4–13 + fetch handler)، فلو نزلت تحديث جديد والملفات اتغيرت (خصوصًا assets hashed) المتصفح يفضل على HTML/Assets قديمة → White Screen.
+
+✅ الحلول (اختر واحد):
+
+تزود CACHE_VERSION تلقائيًا مع كل Deploy (مثلاً بالـ build time).
+
+أو تخلي index.html network-first ومايتخزنش cache-first.
+
+أو تلغي SW مؤقتًا لو النظام مش محتاج Offline.
+
+مهم: حتى لو السيرفر بيحط no-store للهيدر، الـ SW ممكن يتجاهل ده لأنه هو اللي بيرد من الكاش.
+
+4) مشاكل Multi-Tenant قد تسبب “اختلاط بيانات” أو سلوك غير متوقع
+
+في routes في fallback ثابت:
+
+server/routes.ts سطر 373 وما بعدها:
+
+const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+
+
+بينما في auth middleware:
+
+server/middleware/auth.ts بيحط tenantId افتراضي 'default'.
+
+النتيجة:
+بيانات تتكتب أحيانًا على demo-tenant وأحيانًا على default → مشاكل “ليه البيانات بتختفي/ليه فرع مش شايف بياناته”.
+
+✅ الحل:
+
+توحيد الـ default (أو الأفضل: منع أي API تشتغل بدون tenantId واضح).
+
+وعدم استخدام fallback في الإنتاج.
+
+5) مشاكل تخزين بيانات حساسة/كراش في الواجهة
+A) تخزين “cardPassword” في LocalStorage
+
+client/src/lib/customer-storage.ts سطر 56 وبيظهر لاحقًا أنه بيتخزن محليًا.
+LocalStorage غير آمن (أي JS/إضافة متصفح تقدر تقراه).
+
+✅ الحل:
+
+مايتخزنش “Password” للبطاقة محليًا.
+
+استخدم OTP / PIN hashing على السيرفر، أو Token قصير العمر.
+
+B) JSON.parse بدون حماية → ممكن يعمل Crash
+
+في كذا ملف فيه JSON.parse(...) بدون try/catch (مثلاً في customer-storage.ts سطر 91)، لو localStorage اتلخبط/اتكتب غلط → React app ممكن تقع.
+
+✅ الحل:
+
+اعمل helper آمن safeJsonParse() يرجع null بدل ما يرمي exception.
+
+6) Uploads قد تفشل لأن المسار غير مضمون موجود
+
+server/routes.ts حوالين سطر 333+:
+uploadsDir = path.join(... 'attached_assets', 'receipts')
+وmulter بيحاول يكتب هناك بدون fs.mkdirSync(..., { recursive:true }).
+
+✅ الحل:
+
+قبل multer: تأكد تعمل إنشاء للمجلدات.
+
+7) مشكلة إعدادات TypeScript (مش خطأ كود، بس بيمنع الفحص/التطوير)
+
+لما حاولت أشغل tsc ظهر:
+
+Missing type definitions: node و vite/client
+
+السبب: node_modules غير موجود/غير متثبت، أو @types مش متاحة.
+
+✅ الحل:
+
+ثبّت dependencies (أو على الأقل @types/node) قبل تشغيل tsc.

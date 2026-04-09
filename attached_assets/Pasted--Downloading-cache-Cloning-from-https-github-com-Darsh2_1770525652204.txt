@@ -1,0 +1,46 @@
+==> Downloading cache...
+==> Cloning from https://github.com/Darsh20009/CLUNY-CAFE
+==> Checking out commit 016ba67f9afd8947534ab61ab194b5328aef9f08 in branch main
+==> Downloaded 291MB in 3s. Extraction took 6s.
+==> Using Node.js version 22.22.0 (default)
+==> Docs on specifying a Node.js version: https://render.com/docs/node-version
+==> Running build command 'npm install; npm run build'...
+up to date, audited 816 packages in 2s
+192 packages are looking for funding
+  run `npm fund` for details
+32 vulnerabilities (3 low, 4 moderate, 24 high, 1 critical)
+To address issues that do not require attention, run:
+  npm audit fix
+To address all issues possible (including breaking changes), run:
+  npm audit fix --force
+Some issues need review, and may require choosing
+a different dependency.
+Run `npm audit` for details.
+> cluny-cafe@2.0.0 build
+> vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --minify --outfile=dist/index.js
+vite v5.4.19 building for production...
+transforming...
+A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+✓ 4590 modules transformed.
+x Build failed in 8.10s
+error during build:
+client/src/pages/maintenance.tsx (2:27): "Tool" is not exported by "node_modules/lucide-react/dist/esm/lucide-react.js", imported by "client/src/pages/maintenance.tsx".
+file: /opt/render/project/src/client/src/pages/maintenance.tsx:2:27
+1: import { motion } from "framer-motion";
+2: import { Coffee, Settings, Tool, Clock } from "lucide-react";
+                              ^
+3: import { useTranslation } from "react-i18next";
+4: import clunyLogo from "@assets/cluny-logo-customer.png";
+    at getRollupError (file:///opt/render/project/src/node_modules/rollup/dist/es/shared/parseAst.js:396:41)
+    at error (file:///opt/render/project/src/node_modules/rollup/dist/es/shared/parseAst.js:392:42)
+    at Module.error (file:///opt/render/project/src/node_modules/rollup/dist/es/shared/node-entry.js:15588:16)
+    at Module.traceVariable (file:///opt/render/project/src/node_modules/rollup/dist/es/shared/node-entry.js:16037:29)
+    at ModuleScope.findVariable (file:///opt/render/project/src/node_modules/rollup/dist/es/shared/node-entry.js:13820:39)
+    at FunctionScope.findVariable (file:///opt/render/project/src/node_modules/rollup/dist/es/shared/node-entry.js:5283:38)
+    at FunctionBodyScope.findVariable (file:///opt/render/project/src/node_modules/rollup/dist/es/shared/node-entry.js:5283:38)
+    at Identifier.bind (file:///opt/render/project/src/node_modules/rollup/dist/es/shared/node-entry.js:5066:40)
+    at CallExpression.bind (file:///opt/render/project/src/node_modules/rollup/dist/es/shared/node-entry.js:2649:28)
+    at CallExpression.bind (file:///opt/render/project/src/node_modules/rollup/dist/es/shared/node-entry.js:11284:15)
+==> Build failed 😞
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
+Menu

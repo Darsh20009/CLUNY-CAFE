@@ -1,0 +1,181 @@
+✅ A) قبل إضافة أي ميزة: Checklist إصلاح العيوب الحالية (Mandatory)
+A1) توحيد الـ Front-end Design System (إجباري)
+
+ إنشاء Design Tokens (ألوان/خطوط/Spacing/Shadow/Radius) واستخدامها في كل الصفحات
+
+ توحيد مكونات UI الأساسية: Button / Input / Table / Modal / Toast / Badge
+
+ إضافة حالات UI إلزامية بكل صفحة:
+
+ Loading (Skeleton)
+
+ Empty State
+
+ Error State + Retry
+
+ Success Toast
+
+ RTL مضبوط 100% + خطوط عربية واضحة
+
+ إلغاء أي ألوان عشوائية داخل الصفحات (Hardcoded colors)
+
+قبول (Acceptance): أي صفحة جديدة/قديمة تتبع نفس النظام البصري بدون اختلافات.
+
+A2) إصلاح تدفق الصلاحيات والتنقل (Routing)
+
+ فصل Layouts حسب نوع المستخدم:
+
+ Customer Layout
+
+ POS Layout
+
+ Admin/Manager Layout
+
+ Employee Layout
+
+ Route Guards حسب الدور + الفرع
+
+ صفحة Unauthorized محترمة
+
+A3) إصلاح “المحاسبة لا تعمل” (Front + ربط حقيقي)
+
+عندكم صفحة accounting موجودة لكنها “مش Dashboard محاسبي شغال”.
+
+ إعادة بناء صفحة Accounting Dashboard:
+
+ صافي الربح اليومي/الأسبوعي/الشهري
+
+ COGS (تكلفة المكونات)
+
+ المصروفات الشهرية
+
+ أرباح صافية
+
+ Filters:
+
+ Date range
+
+ Branch
+
+ Drilldown:
+
+ اضغط على رقم → تفاصيل (Orders/Expenses/Stock movements)
+
+قبول: الأرقام تطلع من بيانات فعلية (طلبات + وصفات + مخزون + مصروفات) وليست ثابتة.
+
+A4) إصلاح إضافة المشروب (Wizard من خطوتين)
+
+ بناء “منشئ مشروب” من مرحلتين (زي ما كتبت أنت حرفيًا)
+
+ المرحلة 2 مرتبطة بـ Ingredients + quantities + unit
+
+ Preview Cost للمشروب قبل الحفظ
+
+ Edit Recipe بعد الحفظ مباشرة
+
+قبول: أي مشروب لا يُحفظ بدون Recipe (إلا لو حدّدته “بدون خصم مخزون” بصلاحية Admin).
+
+A5) إصلاح المخزون (واجهة مبسطة وذكية)
+
+ صفحة Inventory جديدة:
+
+ كمية متبقية لكل مكون
+
+ + / - سريع
+
+ Unit واضحة
+
+ Batches (دفعات)
+
+ Low stock list
+
+ Cost per unit
+
+ ربط فوري مع الوصفات: طلب = خصم تلقائي
+
+✅ B) تطوير “نظام التحضير” (KDS + Live Orders) — بعد مراجعة الموجود
+B1) توحيد حالات الطلب (Order State Machine)
+
+في الكود عندكم حالات متعددة (pending / payment_confirmed / in_progress / ready …). المطلوب تثبيتها رسميًا:
+
+ تعريف حالات موحدة + انتقالات واضحة:
+
+pending → confirmed → in_progress → ready → completed
+
+canceled / refunded مسارات منفصلة
+
+ منع أي انتقال غلط (مثلاً ready بدون in_progress إلا بصلاحية)
+
+قبول: لا يوجد Status عشوائي أو مكرر “preparing/in_progress” بنفس المعنى.
+
+B2) KDS أكثر تطورًا (مطبخ/باريستا)
+
+ Tabs ثابتة:
+
+ قيد التجهيز
+
+ يتم التحضير الآن
+
+ جاهز للاستلام
+
+ متأخر
+
+ Timer لكل طلب + SLA colors تلقائي (Warning/Delayed)
+
+ Sound rules:
+
+ صوت عند دخول طلب جديد
+
+ صوت أقوى عند انتقاله “جاهز”
+
+ زر كتم الصوت
+
+ عرض “آخر 3 أرقام” بشكل كبير (موجود عندكم بالفعل — لكن خلوه موحد بكل الشاشات)
+
+ فلترة حسب نوع الطلب: Dine-in / Takeaway / Delivery
+
+ طباعة “Kitchen Ticket” اختيارية تلقائية عند confirmed
+
+B3) Live Orders للعميل (شاشة عرض)
+
+عندكم order-status-display موجود لكن نطوره ليكون “احترافي زي فودكس”
+
+ شاشتين:
+
+ شاشة داخل الفرع للعرض العام (Full screen kiosk)
+
+ شاشة تتبع للعميل (Tracking page)
+
+ أقسام:
+
+ “يتم التحضير الآن”
+
+ “جاهز للاستلام”
+
+ منطق تلقائي:
+
+ الطلب يتحول “متأخر” لو تعدى X دقائق بدون ما يطلع من in_progress
+
+ ترتيب تلقائي حسب الوقت
+
+ QR:
+
+ QR تتبع الطلب
+
+ QR حالة التجهيز
+
+B4) تحديث لحظي بدل Polling (تطوير مهم)
+
+حاليًا في الشاشات في تحديث كل 5 ثواني (Polling).
+
+ إضافة WebSocket / SSE:
+
+ Order created
+
+ Status changed
+
+ New ready order
+
+ الاحتفاظ بـ Polling كـ fallback عند قطع الاتصال
+
+قبول: عند تغيير حالة الطلب في المطبخ تظهر فورًا في شاشة العرض بدون انتظار 5 ثواني.

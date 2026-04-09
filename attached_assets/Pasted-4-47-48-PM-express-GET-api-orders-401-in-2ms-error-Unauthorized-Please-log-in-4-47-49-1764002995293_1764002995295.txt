@@ -1,0 +1,110 @@
+4:47:48 PM [express] GET /api/orders 401 in 2ms :: {"error":"Unauthorized - Please log in"}
+4:47:49 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:47:50 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:47:50 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:47:53 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:47:53 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:47:55 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:47:55 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:47:58 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:47:58 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:47:59 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:00 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:48:03 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:03 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:04 PM [express] GET /api/orders 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:48:05 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:08 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:08 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:09 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:09 PM [express] GET /api/coffee-items 304 in 75ms :: [{"id":"americano","nameAr":"أمريكانو","na…
+4:48:09 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:48:10 PM [express] GET /api/cart/session-1759486386902-xevuow8ax 304 in 66ms :: []
+4:48:10 PM [express] GET /api/customers/690c74d77e809092eaf2383d/orders 200 in 280ms :: [{"deliveryA…
+4:48:13 PM [express] GET /api/orders 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:48:13 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:15 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:15 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:48:15 PM [express] GET /api/cart/session-1759586497946-gu7dij4pf 304 in 66ms :: []
+4:48:15 PM [express] GET /api/branches 304 in 67ms :: [{"_id":"6924086d668f7ac4dcfe4052","nameAr":"ف…
+4:48:16 PM [express] GET /api/customers/690c74d77e809092eaf2383d/orders 304 in 137ms :: [{"deliveryA…
+4:48:16 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:17 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:18 PM [express] GET /api/coffee-items 304 in 70ms :: [{"id":"americano","nameAr":"أمريكانو","na…
+4:48:19 PM [express] GET /api/cart/session-1759486386902-xevuow8ax 304 in 66ms :: []
+4:48:19 PM [express] GET /api/customers/690c74d77e809092eaf2383d/orders 304 in 135ms :: [{"deliveryA…
+4:48:20 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:20 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:48:21 PM [express] GET /api/orders 401 in 4ms :: {"error":"Unauthorized - Please log in"}
+4:48:21 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:23 PM [express] POST /api/cart 201 in 217ms :: {"sessionId":"session-1759486386902-xevuow8ax","…
+4:48:23 PM [express] GET /api/cart/session-1759486386902-xevuow8ax 200 in 136ms :: [{"sessionId":"se…
+4:48:25 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:25 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:48:25 PM [express] GET /api/branches 304 in 68ms :: [{"_id":"6924086d668f7ac4dcfe4052","nameAr":"ف…
+4:48:26 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:26 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:29 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:29 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:48:30 PM [express] GET /api/payment-methods 304 in 0ms :: [{"id":"cash","nameAr":"الدفع نقداً","na…
+4:48:30 PM [express] GET /api/loyalty/cards/phone/532441566 200 in 68ms :: {"_id":"690c74d77e809092e…
+4:48:31 PM [express] GET /api/payment-methods 304 in 1ms :: [{"id":"qahwa-card","nameAr":"بطاقة كوبي…
+4:48:31 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:48:31 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:34 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:48:35 PM [express] POST /api/orders 201 in 372ms :: {"orderNumber":"ORD-1764002914837-1","items":[…
+4:48:35 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:35 PM [express] POST /api/orders/69248c62c13503634c685612/generate-codes 201 in 66ms :: []
+4:48:35 PM [express] DELETE /api/cart/session-1759486386902-xevuow8ax 200 in 68ms :: {"message":"Car…
+4:48:36 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:36 PM [express] GET /api/cart/session-1759486386902-xevuow8ax 200 in 66ms :: []
+4:48:36 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:39 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:40 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:41 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:48:41 PM [express] GET /api/orders 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:48:44 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:44 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:45 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:48:46 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:11 PM [express] POST /api/employees/login 200 in 506ms :: {"username":"admin","fullName":"مدير …
+4:49:13 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:13 PM [express] GET /api/orders 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:14 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:14 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:17 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:18 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:19 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:19 PM [express] GET /api/orders 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:21 PM [express] GET /api/cart/session-1759486386902-xevuow8ax 304 in 66ms :: []
+4:49:21 PM [express] GET /api/customers/690c74d77e809092eaf2383d/orders 200 in 174ms :: [{"deliveryA…
+4:49:22 PM [express] GET /api/orders/table 401 in 6ms :: {"error":"Unauthorized - Please log in"}
+4:49:23 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:24 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:24 PM [express] GET /api/orders 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:27 PM [express] GET /api/customers/690c74d77e809092eaf2383d/orders 304 in 136ms :: [{"deliveryA…
+4:49:27 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:28 PM [express] GET /api/orders 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:28 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:29 PM [express] GET /api/orders 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:32 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:32 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:33 PM [express] GET /api/cart/session-1763400384078-63kxkl68j 200 in 66ms :: []
+4:49:33 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:34 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:37 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:37 PM [express] GET /api/orders 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:38 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:39 PM [express] GET /api/coffee-items 200 in 69ms :: [{"id":"americano","nameAr":"أمريكانو","na…
+4:49:39 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:40 PM [express] GET /api/customers/690c74d77e809092eaf2383d/orders 200 in 234ms :: [{"deliveryA…
+4:49:42 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:42 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:42 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:42 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:42 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:42 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+4:49:43 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:43 PM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:47 PM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+4:49:47 PM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}

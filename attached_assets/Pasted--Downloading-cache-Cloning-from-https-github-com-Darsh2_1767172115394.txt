@@ -1,0 +1,46 @@
+==> Downloading cache...
+==> Cloning from https://github.com/Darsh20009/CLUNY-CAFE
+==> Checking out commit 83260e47f3291dbae94ef2e8f7247bcf522b277e in branch main
+==> Downloaded 277MB in 3s. Extraction took 7s.
+==> Using Node.js version 22.16.0 (default)
+==> Docs on specifying a Node.js version: https://render.com/docs/node-version
+==> Running build command 'npm install; npm run build'...
+up to date, audited 812 packages in 2s
+191 packages are looking for funding
+  run `npm fund` for details
+11 vulnerabilities (3 low, 3 moderate, 5 high)
+To address issues that do not require attention, run:
+  npm audit fix
+Some issues need review, and may require choosing
+a different dependency.
+Run `npm audit` for details.
+> cluny-cafe@2.0.0 build
+> NODE_OPTIONS=--max-old-space-size=3072 vite build && NODE_OPTIONS=--max-old-space-size=2048 esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --minify --outdir=dist
+vite v5.4.19 building for production...
+transforming...
+A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+✓ 11 modules transformed.
+x Build failed in 2.42s
+error during build:
+[vite:esbuild] Transform failed with 1 error:
+/opt/render/project/src/client/src/pages/menu-view.tsx:648:8: ERROR: Expected ")" but found "item"
+file: /opt/render/project/src/client/src/pages/menu-view.tsx:648:8
+Expected ")" but found "item"
+646|  
+647|        <AddToCartModal
+648|          item={selectedItemForCart as any}
+   |          ^
+649|          isOpen={isModalOpen}
+650|          onClose={() => setIsModalOpen(false)}
+    at failureErrorWithLog (/opt/render/project/src/node_modules/vite/node_modules/esbuild/lib/main.js:1472:15)
+    at /opt/render/project/src/node_modules/vite/node_modules/esbuild/lib/main.js:755:50
+    at responseCallbacks.<computed> (/opt/render/project/src/node_modules/vite/node_modules/esbuild/lib/main.js:622:9)
+    at handleIncomingPacket (/opt/render/project/src/node_modules/vite/node_modules/esbuild/lib/main.js:677:12)
+    at Socket.readFromStdout (/opt/render/project/src/node_modules/vite/node_modules/esbuild/lib/main.js:600:7)
+    at Socket.emit (node:events:518:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+==> Build failed 😞
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys

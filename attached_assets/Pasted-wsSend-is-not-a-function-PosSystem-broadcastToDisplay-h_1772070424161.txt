@@ -1,0 +1,20 @@
+wsSend is not a function
+PosSystem/broadcastToDisplay<@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/src/pages/pos-system.tsx:158:11
+PosSystem/addToOrder/<@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/src/pages/pos-system.tsx:311:25
+basicStateReducer@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:11703:49
+updateReducer@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:11794:30
+updateState@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:12021:18
+useState@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:12753:24
+useState@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-QCHXOAYK.js?v=4a6e2856:1066:29
+PosSystem@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/src/pages/pos-system.tsx:107:47
+renderWithHooks@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:11548:35
+updateFunctionComponent@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:14582:28
+beginWork@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:15924:22
+beginWork$1@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:19753:22
+performUnitOfWork@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:19198:20
+workLoopSync@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:19137:30
+renderRootSync@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:19116:15
+recoverFromConcurrentError@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:18736:42
+performSyncWorkOnRoot@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:18879:28
+flushSyncCallbacks@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:9119:30
+node_modules/react-dom/cjs/react-dom.development.js/ensureRootIsScheduled/<@https://8ccbc4ba-614a-4a6d-a36c-0c398cb472a2-00-82p7f9644ozr.riker.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=4a6e2856:18627:21

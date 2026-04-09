@@ -1,0 +1,235 @@
+Classification: Public
+
+Dear @Youssef Darwish,
+
+ 
+
+            I need the curl request that shows the error and response
+
+ 
+
+BR,
+
+Mohammed Hamdy
+
+ 
+
+From: Youssef Darwish <youssefd.business@gmail.com>
+Sent: Sunday, March 29, 2026 9:34 AM
+To: Mohammed Hamdy <Mohammed.hamdy@geidea.net>
+Cc: sam -aL <s3oood1212@gmail.com>; PGW Integration <pgwintegration@geidea.net>; Asma Almazariqah <Asma.Almazariqah@geidea.net>
+Subject: Re: Geidea & cluny cafe - PGW - B10008281
+
+ 
+
+CAUTION: This is external email originated from outside of Geidea. Do not click links or open attachments unless you recognize the sender, and know the content is safe.
+
+https://cluny.cafe
+
+ 
+
+في أحد، 29 مارس، 2026 في 10:33 ص، كتب Mohammed Hamdy <Mohammed.hamdy@geidea.net>:
+
+Classification: Public
+
+Hello Dear,
+
+ 
+
+            Kindly share the curl request to check it from my side.
+
+ 
+
+BR,
+
+Mohammed Hamdy
+
+ 
+
+From: sam -aL <s3oood1212@gmail.com>
+Sent: Friday, March 27, 2026 4:37 PM
+To: Mohammed Hamdy <Mohammed.hamdy@geidea.net>
+Cc: PGW Integration <pgwintegration@geidea.net>; Asma Almazariqah <Asma.Almazariqah@geidea.net>; youssefd.business@gmail.com
+Subject: Re: Geidea & cluny cafe - PGW - B10008281
+
+ 
+
+CAUTION: This is external email originated from outside of Geidea. Do not click links or open attachments unless you recognize the sender, and know the content is safe.
+
+السلام عليكم
+
+لازالت المشكله لدينا تم اضافه المهندس يوسف وسوف يوضح الإشكالية بتفصيل شكرا لكم .
+
+ملاحظه: نحن متأخرين جدا علي عملائنا.
+
+ 
+
+في الخميس، 26 مارس 2026، 5:57 م Mohammed Hamdy <Mohammed.hamdy@geidea.net> كتب:
+
+Classification: Public
+
+Dear @sam -aL,
+
+ 
+
+            Please make sure that you're using the base URL https://api.ksamerchant.geidea.net/
+
+ 
+
+ 
+
+BR,
+
+Mohammed Hamdy
+
+ 
+
+From: sam -aL <s3oood1212@gmail.com>
+Sent: Thursday, March 26, 2026 9:58 AM
+To: Mohammed Hamdy <Mohammed.hamdy@geidea.net>
+Cc: PGW Integration <pgwintegration@geidea.net>; Asma Almazariqah <Asma.Almazariqah@geidea.net>
+Subject: Re: Geidea & cluny cafe - PGW - B10008281
+
+ 
+
+CAUTION: This is external email originated from outside of Geidea. Do not click links or open attachments unless you recognize the sender, and know the content is safe.
+
+السلام عليكم 
+
+عزيزي محمد ،
+
+شكرا لرد ولكن وجهتني مشكله عند الربط محتوي الرساله
+
+في مشكله في الربط هذه هي رسالة الرد اللي تجي"Unable to find gateway configuration by the provided gateway key"
+
+responseCode: "100", detailedResponseCode: "036"
+
+ 
+
+في الأربعاء، 25 مارس 2026، 6:21 م Mohammed Hamdy <Mohammed.hamdy@geidea.net> كتب:
+
+Classification: Public
+
+Dear @sam -aL,
+
+ 
+
+            Please find your live keys below.
+
+ 
+
+PK: 5bf49a11-693b-4d3c-9d85-4f757d03cc1c
+
+API: 140992d2-5417-4ff9-a742-13e859d138e6
+
+ 
+
+BR,
+
+Mohammed Hamdy
+
+ 
+
+From: sam -aL <s3oood1212@gmail.com>
+Sent: Wednesday, March 25, 2026 2:10 PM
+To: Mohammed Hamdy <Mohammed.hamdy@geidea.net>
+Subject: Re: Geidea & cluny cafe - PGW - B10008281
+
+ 
+
+CAUTION: This is external email originated from outside of Geidea. Do not click links or open attachments unless you recognize the sender, and know the content is safe.
+
+السلام عليكم
+
+عزيزي محمد،
+
+المفاتيح لا تعمل علي حسب كلام اقسم IT هل بالإمكان تزويدنا بمفتاح الحقيقه اذا تكرمت 
+
+شكرا لك
+
+ 
+
+في أربعاء، 25 مارس، 2026 في 12:52 ص، كتب Mohammed Hamdy <Mohammed.hamdy@geidea.net>:
+
+Classification: Public
+
+السلام عليكم
+
+ 
+
+            برجاء العلم بانه بعد استخدام مفاتيح الربط ادناه و عمل تجربة من جانبكم سيتم مشاركة مفاتيح الربط الحقيقية معك
+
+فى حاله الربط مع ابل باى برجاء استخدام الملف المرفق و متابعه الخطوات فى الرابط ادناه
+
+https://docs.geidea.net/docs/apple-pay
+
+ 
+
+BR,
+
+Mohammed Hamdy
+
+ 
+
+From: sam -aL <s3oood1212@gmail.com>
+Sent: Tuesday, March 24, 2026 5:54 PM
+To: Mohammed Hamdy <Mohammed.hamdy@geidea.net>
+Subject: Re: Geidea & cluny cafe - PGW - B10008281
+
+ 
+
+CAUTION: This is external email originated from outside of Geidea. Do not click links or open attachments unless you recognize the sender, and know the content is safe.
+
+عزيزي محمد،
+
+في مشكلة في مفاتيح الربط لانها test و اتدخل الحساب عندي في جيديا لا يظهر المفاتيح الايف للربط الحقيقي و ايضا المشكلة الثانيه نظام الابل باي المفروض يكون متفعل من نحيتكم مش محتاجين ابل id مني.
+
+ 
+
+في الخميس، 12 مارس 2026، 3:41 م Mohammed Hamdy <Mohammed.hamdy@geidea.net> كتب:
+
+Classification: Public
+
+Hello Dear,
+
+ 
+
+Greetings from Geidea!
+
+ 
+
+We have created the MID credentials below in the Geidea PGW test environment. Please perform the necessary integration and conduct Visa & Master & Mada test transactions using the test cards available at https://docs.geidea.net/docs/test-cards Confirm with us for further processing.
+
+ 
+
+Public Key
+
+f2b07286-192c-45ec-85c0-752842294c58
+
+API Password
+
+0d81d925-564d-49db-bf30-49975215a46c
+
+ 
+
+Below is the integration guide for your reference. Please check and let us know of any required support from our side during the integration process.
+
+https://docs.geidea.net/docs/geidea-checkout-v2
+
+ 
+
+To activate Apple Pay, please follow the steps mentioned in the link and use the attached file: https://docs.geidea.net/docs/apple-pay
+
+ 
+
+Let us know if you need any support.
+
+  
+
+ 
+
+BR,
+
+Mohammed Hamdy
+
+ 

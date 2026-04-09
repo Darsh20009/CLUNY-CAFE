@@ -1,0 +1,12 @@
+Illegal constructor
+TypeError: Illegal constructor
+    at renderWithHooks (https://ac173028-b99c-411d-8e2a-7fccaac4f9f6-00-16xf7p95f86zi.janeway.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=b757f387:11548:26)
+    at mountIndeterminateComponent (https://ac173028-b99c-411d-8e2a-7fccaac4f9f6-00-16xf7p95f86zi.janeway.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=b757f387:14926:21)
+    at beginWork (https://ac173028-b99c-411d-8e2a-7fccaac4f9f6-00-16xf7p95f86zi.janeway.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=b757f387:15914:22)
+    at beginWork$1 (https://ac173028-b99c-411d-8e2a-7fccaac4f9f6-00-16xf7p95f86zi.janeway.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=b757f387:19753:22)
+    at performUnitOfWork (https://ac173028-b99c-411d-8e2a-7fccaac4f9f6-00-16xf7p95f86zi.janeway.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=b757f387:19198:20)
+    at workLoopSync (https://ac173028-b99c-411d-8e2a-7fccaac4f9f6-00-16xf7p95f86zi.janeway.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=b757f387:19137:13)
+    at renderRootSync (https://ac173028-b99c-411d-8e2a-7fccaac4f9f6-00-16xf7p95f86zi.janeway.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=b757f387:19116:15)
+    at recoverFromConcurrentError (https://ac173028-b99c-411d-8e2a-7fccaac4f9f6-00-16xf7p95f86zi.janeway.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=b757f387:18736:28)
+    at performSyncWorkOnRoot (https://ac173028-b99c-411d-8e2a-7fccaac4f9f6-00-16xf7p95f86zi.janeway.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=b757f387:18879:28)
+    at flushSyncCallbacks (https://ac173028-b99c-411d-8e2a-7fccaac4f9f6-00-16xf7p95f86zi.janeway.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=b757f387:9119:30)

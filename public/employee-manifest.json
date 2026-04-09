@@ -1,0 +1,28 @@
+{
+  "name": "CLUNY CAFE - موظف",
+  "short_name": "CLUNY Staff",
+  "description": "نظام نقاط البيع وإدارة الطلبات - CLUNY CAFE",
+  "start_url": "/employee/pos",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#1F2D2E",
+  "theme_color": "#2D9B6E",
+  "orientation": "any",
+  "lang": "ar",
+  "dir": "rtl",
+  "categories": ["food", "productivity", "business"],
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

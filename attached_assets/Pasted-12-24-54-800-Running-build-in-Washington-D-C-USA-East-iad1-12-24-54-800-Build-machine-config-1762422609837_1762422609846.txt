@@ -1,0 +1,315 @@
+12:24:54.800 Running build in Washington, D.C., USA (East) – iad1
+12:24:54.800 Build machine configuration: 2 cores, 8 GB
+12:24:54.930 Cloning github.com/Darsh20009/qahwacup (Branch: main, Commit: bd789ab)
+12:24:54.931 Previous build caches not available.
+12:24:55.583 Cloning completed: 653.000ms
+12:24:55.657 Found .vercelignore
+12:24:55.664 Removed 30 ignored files defined in .vercelignore
+12:24:55.665   /.git/config
+12:24:55.665   /.git/description
+12:24:55.665   /.git/FETCH_HEAD
+12:24:55.665   /.git/HEAD
+12:24:55.665   /.git/hooks/applypatch-msg.sample
+12:24:55.665   /.git/hooks/commit-msg.sample
+12:24:55.665   /.git/hooks/fsmonitor-watchman.sample
+12:24:55.665   /.git/hooks/post-update.sample
+12:24:55.665   /.git/hooks/pre-applypatch.sample
+12:24:55.665   /.git/hooks/pre-commit.sample
+12:24:56.007 Running "vercel build"
+12:24:56.661 Vercel CLI 48.8.2
+12:24:58.093 Running "install" command: `npm install`...
+12:25:02.810 npm warn deprecated @esbuild-kit/esm-loader@2.6.5: Merged into tsx: https://tsx.is
+12:25:02.850 npm warn deprecated @esbuild-kit/core-utils@3.3.2: Merged into tsx: https://tsx.is
+12:25:09.228 
+12:25:09.229 added 537 packages, and audited 538 packages in 11s
+12:25:09.230 
+12:25:09.230 67 packages are looking for funding
+12:25:09.230   run `npm fund` for details
+12:25:09.269 
+12:25:09.269 10 vulnerabilities (3 low, 7 moderate)
+12:25:09.269 
+12:25:09.270 To address issues that do not require attention, run:
+12:25:09.270   npm audit fix
+12:25:09.270 
+12:25:09.270 To address all issues (including breaking changes), run:
+12:25:09.270   npm audit fix --force
+12:25:09.270 
+12:25:09.270 Run `npm audit` for details.
+12:25:09.522 
+12:25:09.523 > rest-express@1.0.0 build
+12:25:09.523 > npx vite build && npx esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist
+12:25:09.523 
+12:25:10.055 [36mvite v5.4.19 [32mbuilding for production...[36m[39m
+12:25:10.103 transforming...
+12:25:11.618 
+12:25:11.618 A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+12:25:18.517 [32m✓[39m 2554 modules transformed.
+12:25:19.088 rendering chunks...
+12:25:19.825 [1m[33m[plugin:vite:reporter][39m[22m [33m[plugin vite:reporter] 
+12:25:19.826 (!) /vercel/path0/node_modules/html2canvas/dist/html2canvas.esm.js is dynamically imported by /vercel/path0/client/src/lib/pdf-generator.ts, /vercel/path0/node_modules/jspdf/dist/jspdf.es.min.js but also statically imported by /vercel/path0/client/src/pages/employee-dashboard.tsx, /vercel/path0/client/src/pages/my-card.tsx, dynamic import will not move module into another chunk.
+12:25:19.826 [39m
+12:25:19.860 computing gzip size...
+12:25:19.921 [2m../dist/public/[22m[32mindex.html                          [39m[1m[2m    1.54 kB[22m[1m[22m[2m │ gzip:   0.85 kB[22m
+12:25:19.922 [2m../dist/public/[22m[2massets/[22m[32mqahwa-cup-logo-DJFzRGmL.png  [39m[1m[2m1,526.44 kB[22m[1m[22m
+12:25:19.927 [2m../dist/public/[22m[2massets/[22m[35mindex-CDlfP8uJ.css           [39m[1m[2m  153.52 kB[22m[1m[22m[2m │ gzip:  22.17 kB[22m
+12:25:19.927 [2m../dist/public/[22m[2massets/[22m[36mpurify.es-BFmuJLeH.js        [39m[1m[2m   21.93 kB[22m[1m[22m[2m │ gzip:   8.62 kB[22m
+12:25:19.927 [2m../dist/public/[22m[2massets/[22m[36mindex.es-CyYD0rKm.js         [39m[1m[2m  150.57 kB[22m[1m[22m[2m │ gzip:  51.51 kB[22m
+12:25:19.928 [2m../dist/public/[22m[2massets/[22m[36mjspdf.es.min-Cf99qm6q.js     [39m[1m[2m  413.14 kB[22m[1m[22m[2m │ gzip: 134.84 kB[22m
+12:25:19.928 [2m../dist/public/[22m[2massets/[22m[36mindex-KPaRfZCm.js            [39m[1m[33m  932.25 kB[39m[22m[2m │ gzip: 264.41 kB[22m
+12:25:19.928 [32m✓ built in 9.84s[39m
+12:25:19.928 [33m
+12:25:19.928 (!) Some chunks are larger than 500 kB after minification. Consider:
+12:25:19.929 - Using dynamic import() to code-split the application
+12:25:19.929 - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+12:25:19.929 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+12:25:20.277 
+12:25:20.278   dist/index.js  102.9kb
+12:25:20.278 
+12:25:20.278 ⚡ Done in 16ms
+12:25:20.286 
+12:25:20.286 > rest-express@1.0.0 postbuild
+12:25:20.287 > npx tsx scripts/setup-db.ts && npx drizzle-kit push --force
+12:25:20.287 
+12:25:21.193 Setting up database for external deployment...
+12:25:21.778 ✅ Database connection successful
+12:25:21.867 ✅ Public schema ensured
+12:25:21.990 Error setting up database: no schema has been selected to create in
+12:25:21.991 ⚠️  Continuing with build despite setup warning...
+12:25:22.489 No config path provided, using default 'drizzle.config.ts'
+12:25:22.490 Reading config file '/vercel/path0/drizzle.config.ts'
+12:25:22.839 Using 'pg' driver for database querying
+12:25:23.041 [⣷] Pulling schema from database...
+12:25:23.163 [2K[1G[⣯] Pulling schema from database...
+12:25:23.291 [2K[1G[⣟] Pulling schema from database...
+12:25:23.420 [2K[1G[⡿] Pulling schema from database...
+12:25:23.548 [2K[1G[⢿] Pulling schema from database...
+12:25:23.676 [2K[1G[⣻] Pulling schema from database...
+12:25:23.803 [2K[1G[⣽] Pulling schema from database...
+12:25:23.932 [2K[1G[⣷] Pulling schema from database...
+12:25:24.001 [2K[1G[✓] Pulling schema from database...
+12:25:24.013 
+12:25:24.013  Warning  You are about to execute current statements:
+12:25:24.014 
+12:25:24.015 CREATE TABLE "card_codes" (
+12:25:24.015 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.015 	"code" varchar(12) NOT NULL,
+12:25:24.015 	"issued_for_order_id" varchar NOT NULL,
+12:25:24.015 	"drink_name" text NOT NULL,
+12:25:24.016 	"is_redeemed" integer DEFAULT 0 NOT NULL,
+12:25:24.016 	"redeemed_at" timestamp,
+12:25:24.016 	"redeemed_by_card_id" varchar,
+12:25:24.016 	"created_at" timestamp DEFAULT now() NOT NULL,
+12:25:24.016 	CONSTRAINT "card_codes_code_unique" UNIQUE("code")
+12:25:24.016 );
+12:25:24.016 
+12:25:24.016 CREATE TABLE "cart_items" (
+12:25:24.016 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.016 	"session_id" varchar NOT NULL,
+12:25:24.016 	"coffee_item_id" varchar NOT NULL,
+12:25:24.016 	"quantity" integer NOT NULL,
+12:25:24.016 	"created_at" timestamp DEFAULT now() NOT NULL
+12:25:24.016 );
+12:25:24.016 
+12:25:24.016 CREATE TABLE "coffee_item_ingredients" (
+12:25:24.016 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.016 	"coffee_item_id" varchar NOT NULL,
+12:25:24.016 	"ingredient_id" varchar NOT NULL,
+12:25:24.016 	"created_at" timestamp DEFAULT now() NOT NULL
+12:25:24.016 );
+12:25:24.016 
+12:25:24.017 CREATE TABLE "coffee_items" (
+12:25:24.017 	"id" varchar PRIMARY KEY NOT NULL,
+12:25:24.017 	"name_ar" text NOT NULL,
+12:25:24.017 	"name_en" text,
+12:25:24.017 	"description" text NOT NULL,
+12:25:24.017 	"price" numeric(10, 2) NOT NULL,
+12:25:24.017 	"old_price" numeric(10, 2),
+12:25:24.017 	"category" varchar(50) NOT NULL,
+12:25:24.017 	"image_url" text,
+12:25:24.017 	"is_available" integer DEFAULT 1 NOT NULL,
+12:25:24.017 	"availability_status" varchar(20) DEFAULT 'available',
+12:25:24.017 	"coffee_strength" varchar(20) DEFAULT 'classic',
+12:25:24.017 	"strength_level" integer
+12:25:24.017 );
+12:25:24.017 
+12:25:24.017 CREATE TABLE "customers" (
+12:25:24.017 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.018 	"phone" varchar(20) NOT NULL,
+12:25:24.018 	"email" varchar(255),
+12:25:24.018 	"name" text NOT NULL,
+12:25:24.018 	"password" text NOT NULL,
+12:25:24.018 	"created_at" timestamp DEFAULT now() NOT NULL,
+12:25:24.018 	CONSTRAINT "customers_phone_unique" UNIQUE("phone"),
+12:25:24.018 	CONSTRAINT "customers_email_unique" UNIQUE("email")
+12:25:24.018 );
+12:25:24.018 
+12:25:24.018 CREATE TABLE "discount_codes" (
+12:25:24.018 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.018 	"code" varchar(20) NOT NULL,
+12:25:24.018 	"discount_percentage" integer NOT NULL,
+12:25:24.022 	"reason" text NOT NULL,
+12:25:24.022 	"employee_id" varchar NOT NULL,
+12:25:24.022 	"is_active" integer DEFAULT 1 NOT NULL,
+12:25:24.022 	"usage_count" integer DEFAULT 0 NOT NULL,
+12:25:24.022 	"created_at" timestamp DEFAULT now() NOT NULL,
+12:25:24.022 	CONSTRAINT "discount_codes_code_unique" UNIQUE("code")
+12:25:24.022 );
+12:25:24.022 
+12:25:24.022 CREATE TABLE "employees" (
+12:25:24.022 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.022 	"username" varchar(50) NOT NULL,
+12:25:24.022 	"password" text NOT NULL,
+12:25:24.022 	"full_name" text NOT NULL,
+12:25:24.022 	"role" varchar(20) NOT NULL,
+12:25:24.022 	"title" text,
+12:25:24.022 	"created_at" timestamp DEFAULT now() NOT NULL,
+12:25:24.022 	CONSTRAINT "employees_username_unique" UNIQUE("username")
+12:25:24.022 );
+12:25:24.022 
+12:25:24.022 CREATE TABLE "ingredients" (
+12:25:24.022 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.022 	"name_ar" text NOT NULL,
+12:25:24.022 	"name_en" text,
+12:25:24.022 	"is_available" integer DEFAULT 1 NOT NULL,
+12:25:24.022 	"icon" text,
+12:25:24.022 	"created_at" timestamp DEFAULT now() NOT NULL,
+12:25:24.022 	"updated_at" timestamp DEFAULT now() NOT NULL
+12:25:24.022 );
+12:25:24.022 
+12:25:24.023 CREATE TABLE "loyalty_cards" (
+12:25:24.023 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.023 	"customer_name" text,
+12:25:24.023 	"phone_number" varchar(20) NOT NULL,
+12:25:24.023 	"qr_token" varchar(100) NOT NULL,
+12:25:24.023 	"card_number" varchar(20) NOT NULL,
+12:25:24.023 	"stamps" integer DEFAULT 0 NOT NULL,
+12:25:24.023 	"free_cups_earned" integer DEFAULT 0 NOT NULL,
+12:25:24.023 	"free_cups_redeemed" integer DEFAULT 0 NOT NULL,
+12:25:24.023 	"points" integer DEFAULT 0 NOT NULL,
+12:25:24.023 	"tier" varchar(20) DEFAULT 'bronze' NOT NULL,
+12:25:24.023 	"total_spent" numeric(10, 2) DEFAULT '0' NOT NULL,
+12:25:24.023 	"discount_count" integer DEFAULT 0 NOT NULL,
+12:25:24.023 	"status" varchar(20) DEFAULT 'active' NOT NULL,
+12:25:24.023 	"last_used_at" timestamp,
+12:25:24.023 	"created_at" timestamp DEFAULT now() NOT NULL,
+12:25:24.023 	"updated_at" timestamp DEFAULT now() NOT NULL,
+12:25:24.023 	CONSTRAINT "loyalty_cards_qr_token_unique" UNIQUE("qr_token"),
+12:25:24.023 	CONSTRAINT "loyalty_cards_card_number_unique" UNIQUE("card_number")
+12:25:24.023 );
+12:25:24.023 
+12:25:24.023 CREATE TABLE "loyalty_rewards" (
+12:25:24.023 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.023 	"name_ar" text NOT NULL,
+12:25:24.023 	"name_en" text,
+12:25:24.023 	"description" text NOT NULL,
+12:25:24.023 	"points_cost" integer NOT NULL,
+12:25:24.023 	"discount_percentage" numeric(5, 2),
+12:25:24.023 	"discount_amount" numeric(10, 2),
+12:25:24.024 	"tier" varchar(20),
+12:25:24.024 	"is_active" integer DEFAULT 1 NOT NULL,
+12:25:24.024 	"created_at" timestamp DEFAULT now() NOT NULL
+12:25:24.024 );
+12:25:24.024 
+12:25:24.024 CREATE TABLE "loyalty_transactions" (
+12:25:24.024 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.024 	"card_id" varchar NOT NULL,
+12:25:24.024 	"order_id" varchar,
+12:25:24.024 	"type" varchar(20) NOT NULL,
+12:25:24.024 	"points_change" integer NOT NULL,
+12:25:24.024 	"discount_amount" numeric(10, 2),
+12:25:24.024 	"order_amount" numeric(10, 2),
+12:25:24.024 	"description" text,
+12:25:24.024 	"employee_id" varchar,
+12:25:24.024 	"created_at" timestamp DEFAULT now() NOT NULL
+12:25:24.024 );
+12:25:24.024 
+12:25:24.024 CREATE TABLE "order_items" (
+12:25:24.024 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.024 	"order_id" varchar NOT NULL,
+12:25:24.024 	"coffee_item_id" varchar NOT NULL,
+12:25:24.024 	"quantity" integer NOT NULL,
+12:25:24.024 	"unit_price" numeric(10, 2) NOT NULL,
+12:25:24.024 	"total_price" numeric(10, 2) NOT NULL
+12:25:24.024 );
+12:25:24.024 
+12:25:24.025 CREATE TABLE "orders" (
+12:25:24.025 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.025 	"order_number" varchar(20) NOT NULL,
+12:25:24.025 	"items" jsonb NOT NULL,
+12:25:24.025 	"total_amount" numeric(10, 2) NOT NULL,
+12:25:24.025 	"payment_method" varchar(50) NOT NULL,
+12:25:24.025 	"payment_details" text,
+12:25:24.025 	"status" varchar(20) DEFAULT 'pending' NOT NULL,
+12:25:24.025 	"customer_info" jsonb,
+12:25:24.025 	"customer_id" varchar,
+12:25:24.025 	"employee_id" varchar,
+12:25:24.025 	"customer_notes" text,
+12:25:24.025 	"cancellation_reason" text,
+12:25:24.025 	"created_at" timestamp DEFAULT now() NOT NULL,
+12:25:24.025 	"updated_at" timestamp DEFAULT now() NOT NULL,
+12:25:24.025 	CONSTRAINT "orders_order_number_unique" UNIQUE("order_number")
+12:25:24.025 );
+12:25:24.025 
+12:25:24.025 CREATE TABLE "password_reset_tokens" (
+12:25:24.025 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.025 	"email" varchar(255) NOT NULL,
+12:25:24.025 	"token" varchar(100) NOT NULL,
+12:25:24.025 	"expires_at" timestamp NOT NULL,
+12:25:24.025 	"used" integer DEFAULT 0 NOT NULL,
+12:25:24.026 	"created_at" timestamp DEFAULT now() NOT NULL,
+12:25:24.026 	CONSTRAINT "password_reset_tokens_token_unique" UNIQUE("token")
+12:25:24.026 );
+12:25:24.026 
+12:25:24.026 CREATE TABLE "users" (
+12:25:24.026 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+12:25:24.026 	"username" text NOT NULL,
+12:25:24.026 	"password" text NOT NULL,
+12:25:24.026 	CONSTRAINT "users_username_unique" UNIQUE("username")
+12:25:24.026 );
+12:25:24.026 
+12:25:24.026 ALTER TABLE "card_codes" ADD CONSTRAINT "card_codes_issued_for_order_id_orders_id_fk" FOREIGN KEY ("issued_for_order_id") REFERENCES "public"."orders"("id") ON DELETE no action ON UPDATE no action;
+12:25:24.027 ALTER TABLE "card_codes" ADD CONSTRAINT "card_codes_redeemed_by_card_id_loyalty_cards_id_fk" FOREIGN KEY ("redeemed_by_card_id") REFERENCES "public"."loyalty_cards"("id") ON DELETE no action ON UPDATE no action;
+12:25:24.027 ALTER TABLE "cart_items" ADD CONSTRAINT "cart_items_coffee_item_id_coffee_items_id_fk" FOREIGN KEY ("coffee_item_id") REFERENCES "public"."coffee_items"("id") ON DELETE no action ON UPDATE no action;
+12:25:24.027 ALTER TABLE "coffee_item_ingredients" ADD CONSTRAINT "coffee_item_ingredients_coffee_item_id_coffee_items_id_fk" FOREIGN KEY ("coffee_item_id") REFERENCES "public"."coffee_items"("id") ON DELETE no action ON UPDATE no action;
+12:25:24.027 ALTER TABLE "coffee_item_ingredients" ADD CONSTRAINT "coffee_item_ingredients_ingredient_id_ingredients_id_fk" FOREIGN KEY ("ingredient_id") REFERENCES "public"."ingredients"("id") ON DELETE no action ON UPDATE no action;
+12:25:24.027 ALTER TABLE "discount_codes" ADD CONSTRAINT "discount_codes_employee_id_employees_id_fk" FOREIGN KEY ("employee_id") REFERENCES "public"."employees"("id") ON DELETE no action ON UPDATE no action;
+12:25:24.027 ALTER TABLE "loyalty_transactions" ADD CONSTRAINT "loyalty_transactions_card_id_loyalty_cards_id_fk" FOREIGN KEY ("card_id") REFERENCES "public"."loyalty_cards"("id") ON DELETE no action ON UPDATE no action;
+12:25:24.027 ALTER TABLE "loyalty_transactions" ADD CONSTRAINT "loyalty_transactions_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE no action ON UPDATE no action;
+12:25:24.027 ALTER TABLE "loyalty_transactions" ADD CONSTRAINT "loyalty_transactions_employee_id_employees_id_fk" FOREIGN KEY ("employee_id") REFERENCES "public"."employees"("id") ON DELETE no action ON UPDATE no action;
+12:25:24.027 ALTER TABLE "order_items" ADD CONSTRAINT "order_items_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE no action ON UPDATE no action;
+12:25:24.027 ALTER TABLE "order_items" ADD CONSTRAINT "order_items_coffee_item_id_coffee_items_id_fk" FOREIGN KEY ("coffee_item_id") REFERENCES "public"."coffee_items"("id") ON DELETE no action ON UPDATE no action;
+12:25:24.027 ALTER TABLE "orders" ADD CONSTRAINT "orders_customer_id_customers_id_fk" FOREIGN KEY ("customer_id") REFERENCES "public"."customers"("id") ON DELETE no action ON UPDATE no action;
+12:25:24.027 ALTER TABLE "orders" ADD CONSTRAINT "orders_employee_id_employees_id_fk" FOREIGN KEY ("employee_id") REFERENCES "public"."employees"("id") ON DELETE no action ON UPDATE no action;
+12:25:24.027 
+12:25:24.123 error: no schema has been selected to create in
+12:25:24.124     at /vercel/path0/node_modules/pg-pool/index.js:45:11
+12:25:24.124     at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+12:25:24.124     at async Object.query (/vercel/path0/node_modules/drizzle-kit/bin.cjs:66575:26)
+12:25:24.124     at async pgPush (/vercel/path0/node_modules/drizzle-kit/bin.cjs:70117:13)
+12:25:24.124     at async Object.handler (/vercel/path0/node_modules/drizzle-kit/bin.cjs:79124:9)
+12:25:24.125     at async run (/vercel/path0/node_modules/drizzle-kit/bin.cjs:78381:7) {
+12:25:24.125   length: 120,
+12:25:24.125   severity: 'ERROR',
+12:25:24.125   code: '3F000',
+12:25:24.125   detail: undefined,
+12:25:24.125   hint: undefined,
+12:25:24.125   position: '14',
+12:25:24.125   internalPosition: undefined,
+12:25:24.126   internalQuery: undefined,
+12:25:24.126   where: undefined,
+12:25:24.126   schema: undefined,
+12:25:24.126   table: undefined,
+12:25:24.126   column: undefined,
+12:25:24.126   dataType: undefined,
+12:25:24.126   constraint: undefined,
+12:25:24.126   file: 'namespace.c',
+12:25:24.126   line: '499',
+12:25:24.127   routine: 'RangeVarGetCreationNamespace'
+12:25:24.127 }
+12:25:24.268 Build Completed in /vercel/output [26s]
+12:25:24.392 Deploying outputs...
+12:25:27.216 Deployment completed
+12:25:28.043 Creating build cache...
+12:25:42.463 Created build cache: 14.410s
+12:25:42.463 Uploading build cache [92.09 MB]
+12:25:45.749 Build cache uploaded: 3.295s

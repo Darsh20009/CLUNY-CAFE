@@ -1,0 +1,19 @@
+وليما هذه العلامه  تظهر في كل حته حل هذه المشكلة و هناك مشكلة في رفع ايصال الدفع ايضا الكاشير لا يظهر عنده نوع الاستلام و لو تو صيل لا يقدر يشوف من المندوب اللي هيستلم الطلب و مع العلم المناديب التواصيل اللي عندنا لما يعمل طلب لعميل يظهر عند كل المناديب و اللي يختار منهم هستبمه انا يتحول الطلب عليه و اعمل الفروع الاستلام اني احط رابط جوجل ماب للعميل يقدر يروح و صلح الموقع و ظبطه و ايضا صفحة الدفع عشوائيه جدا و شكلها وحش ظبط الشكل و ايضا هناك مشكلة في امكان المسموح بيها التوصيل خلي اللوكيشن اللي احطه على الخريطه يظهر بالعنوان تحت طلقائيا باسم الحي ولو اسم الحي بديعه او ظهرة البديعة او السويدي يوافق لو لا قوله لم ندعم منطقتك في الوقت الحالي نعتذر
+Ready to move on to Task 2: Building the map-based address selection with zone validation for the Al-Badia area. This will give customers an interactive way to select their delivery location with visual zone boundaries.
+Update data storage for new features
+Add ways to connect and manage drivers
+Choose pickup or delivery before pay
+Add delivery fee and area
+Map selection for customer location
+Improve website speed and performance
+Make website work well on phones
+Create delivery driver accounts system
+Track orders with live driver location
+Upload payment receipt for electronic payاولا الموقع بطئ جدا و ليست كل الصفحات متوافقه مع الجوالات بنسبة 100 % و ايضا في صفحة الدفع لماذا قبلها لا يتم اختيار الطريقه هل الاستلام من الفرع و يختار الفرع ام توصيل مع العلم التوصيل يكون بي 10 ريال داخل البديعة فقط في الوقت الحالي و ايضا لما العميل لا يحط عنوانه من الخريطه ولازم يكون داخل حدود البديعة و ظهرة البديعة و ايضا لما لا يوجد حسابات مندوبين توصيل المدير ينشئه و العميل يتتبع طلبه من الموقع و اين المندوب وصل و عن استلام المندوب الطلب حق العميل يتم عمل مشاره لموقع المنوب life location عشان العميل يشوف و لماذا صفحة الدفع لا يوجد فيها اذا الدفع بأي طريقة غير الكاش و بطاقة كوبي اين ارفاق ايصال التحويل الاجباري عند اختيار اي من طرق الدفع alinma pay, ur pay , barq , الراجحي , وشيل stc pay من خيارات الدقع و اعمل عند الكاشير عند يحط رقم عميل و طلع مسجل يحط الاسم طلقائي النظام و اذا كان ليه اي اختام بطاقت كوبي ممكن يستخدما و ايضا اعمل اكانيه خذف منتج او وضع شاره عليه انه جديد او التعديل على منتجSave delivery details and fee at checkout
+Build map page for selecting delivery address
+Manage drivers: add, assign, and track them
+Track customer orders with live driver location
+Add phone lookup for customer info
+Manage products: delete, edit, and mark new
+Make website look good on mobile
+Speed up website loading and images
