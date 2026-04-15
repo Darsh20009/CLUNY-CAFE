@@ -94,6 +94,7 @@ const AdminSettings = lazy(() => import("@/pages/admin-settings"));
 const AdminBranches = lazy(() => import("@/pages/admin-branches"));
 const AdminEmail = lazy(() => import("@/pages/admin-email"));
 const AdminAppPublishing = lazy(() => import("@/pages/admin-app-publishing"));
+const AdminApplePayHealth = lazy(() => import("@/pages/admin-apple-pay-health"));
 const TenantSignup = lazy(() => import("@/pages/tenant-signup"));
 const RecipesManagement = lazy(() => import("@/pages/recipes-management"));
 const InventorySmartDashboard = lazy(() => import("@/pages/inventory-smart-dashboard"));
@@ -314,6 +315,7 @@ function AppRouter() {
       <Route path="/admin/settings"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminSettings /></AdminLayout></AuthGuard></Route>
       <Route path="/admin/branches"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminBranches /></AdminLayout></AuthGuard></Route>
       <Route path="/admin/email"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminEmail /></AdminLayout></AuthGuard></Route>
+      <Route path="/admin/apple-pay-health"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminApplePayHealth /></AdminLayout></AuthGuard></Route>
       <Route path="/admin/app-publishing"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminAppPublishing /></AdminLayout></AuthGuard></Route>
 
       {/* Phase 5 - New Dashboard Pages */}
