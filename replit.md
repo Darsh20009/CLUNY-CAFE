@@ -186,3 +186,4 @@ All admin routes now wrapped with `AdminLayout` in `App.tsx`:
 - **Run command**: `npm run dev` (starts tsx server on port 5000, serves both API and Vite-compiled frontend).
 - **Build command**: `npm run build` (Vite build + esbuild server bundle to `dist/`).
 - **Deploy command**: `node dist/index.js` (production server).
+- **Apple Pay / Geidea Update (April 2026)**: Installed the latest Geidea-provided Apple Pay domain association file at `public/.well-known/apple-developer-merchantid-domain-association` and mirrored it to `client/public/.well-known/`. Stored the latest Apple Pay payment processing certificate at `certs/apple_pay_payment_processing_merchant_cluny_cafe.cer`. Apple Pay now defaults to domain `cluny.cafe` and merchant ID `merchant.cluny.cafe`, with diagnostics available at `/api/payments/apple-pay/diagnose`.

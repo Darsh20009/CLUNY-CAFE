@@ -78,6 +78,15 @@ import {
 } from "./mail-service";
 import { appendOrderToSheet } from "./google-sheets";
 import { getVapidPublicKey, saveSubscription, removeSubscription, sendPushToEmployee, sendPushToCustomer } from "./push-service";
+
+const APPLE_PAY_DOMAIN = (process.env.APPLE_PAY_DOMAIN || "cluny.cafe").replace(/^https?:\/\//, "").replace(/\/$/, "");
+const APPLE_PAY_MERCHANT_ID = process.env.APPLE_PAY_MERCHANT_ID || "merchant.cluny.cafe";
+const APPLE_PAY_DOMAIN_ASSOCIATION_PATH = path.resolve(process.cwd(), "public/.well-known/apple-developer-merchantid-domain-association");
+
+function resolveApplePayMerchantId(configured?: string) {
+  if (configured && configured !== "merchant.net.geidea.ksamerchant") return configured;
+  return APPLE_PAY_MERCHANT_ID;
+}
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 
   // Ensure upload directories exist
@@ -560,16 +569,15 @@ function enrichOrderWithItems(serializedOrder: any, coffeeItems: any[]): any {
 export async function registerRoutes(app: Express): Promise<Server> {
   registerObjectStorageRoutes(app);
 
-  // Apple Pay domain association file - required for Apple Pay web integration
-  // Served at both paths (with and without .txt) as Apple sometimes checks either
-  const applePayDomainFile = path.resolve(process.cwd(), "client/public/.well-known/apple-developer-merchantid-domain-association");
   app.get("/.well-known/apple-developer-merchantid-domain-association", (req, res) => {
     res.setHeader("Content-Type", "application/octet-stream");
-    res.sendFile(applePayDomainFile);
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.sendFile(APPLE_PAY_DOMAIN_ASSOCIATION_PATH);
   });
   app.get("/.well-known/apple-developer-merchantid-domain-association.txt", (req, res) => {
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.sendFile(applePayDomainFile);
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.sendFile(APPLE_PAY_DOMAIN_ASSOCIATION_PATH);
   });
 
   // Send manual email to customer
@@ -2389,16 +2397,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const baseUrl = (cfgBase || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
       const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
 
-      // Apple Pay merchant identifier — must match what's registered in Geidea
-      // This is different from Geidea's publicKey (UUID); it's the Apple merchant ID
-      const appleMerchantId = applePayMerchantId
-        || process.env.APPLE_PAY_MERCHANT_ID
-        || 'merchant.net.geidea.ksamerchant';
-
-      // Determine the merchant domain from the request
-      const reqHost = req.headers.host || '';
-      const merchantDomain = reqHost.includes('cluny.cafe') ? 'cluny.cafe'
-        : reqHost.replace(/:\d+$/, '') || 'cluny.cafe';
+      const appleMerchantId = resolveApplePayMerchantId(applePayMerchantId);
+      const merchantDomain = APPLE_PAY_DOMAIN;
 
       const requestBody = JSON.stringify({
         validationUrl: validationURL,
@@ -2454,8 +2454,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // ── Step 2: Direct Apple validation using Merchant Identity Certificate ──
-      const certPath = process.env.APPLE_PAY_CERT_PATH;
+      const certPath = process.env.APPLE_PAY_MERCHANT_IDENTITY_CERT_PATH || process.env.APPLE_PAY_CERT_PATH;
       const certKeyPath = process.env.APPLE_PAY_KEY_PATH;
       const certPassphrase = process.env.APPLE_PAY_CERT_PASSPHRASE;
 
@@ -2465,7 +2464,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const https = await import('https');
           const certData = fs.readFileSync(certPath);
           const isPem = certData.toString('utf8', 0, 10).includes('-----');
-          const isPfx = !isPem;
+          const isPfx = !isPem && /\.(p12|pfx)$/i.test(certPath);
 
           let agent: any;
           if (isPfx) {
@@ -2476,8 +2475,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             agent = new https.Agent({ cert: certData, key: keyData, passphrase: certPassphrase || '' });
             console.log('[Apple Pay] Using PEM certificate + key for Apple direct validation');
           } else {
-            console.warn('[Apple Pay] PEM certificate found but no private key (APPLE_PAY_KEY_PATH). Merchant validation requires both cert and key. Skipping direct Apple validation.');
-            results.push({ url: 'direct-apple-pem', status: 0, body: 'PEM cert available but private key (APPLE_PAY_KEY_PATH) not configured' });
+            console.warn('[Apple Pay] Merchant Identity certificate/key not configured. Skipping direct Apple validation.');
+            results.push({ url: 'direct-apple-certificate', status: 0, body: 'Merchant Identity certificate and private key are required for direct Apple validation' });
           }
 
           if (agent) {
@@ -2715,9 +2714,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ── Apple Pay: Get Merchant Identifier ────────────────────────────
   app.get("/api/payments/apple-pay/merchant-id", async (req, res) => {
     const config = await BusinessConfigModel.findOne({ tenantId: 'demo-tenant' });
-    const merchantId = (config?.paymentGateway as any)?.geidea?.applePayMerchantId
-      || process.env.APPLE_PAY_MERCHANT_ID
-      || 'merchant.net.geidea.ksamerchant';
+    const merchantId = resolveApplePayMerchantId((config?.paymentGateway as any)?.geidea?.applePayMerchantId);
     res.json({ merchantId });
   });
 
@@ -2747,15 +2744,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasPublicKey: !!pg?.publicKey,
         hasApiPassword: !!pg?.apiPassword,
         baseUrl: pg?.baseUrl || 'https://api.ksamerchant.geidea.net',
-        applePayMerchantId: pg?.applePayMerchantId || '(not set — using default)',
+        applePayMerchantId: resolveApplePayMerchantId(pg?.applePayMerchantId),
       };
     } catch (e: any) { report.geideaConfig = { error: e.message }; }
 
     // 3. Check env vars
     report.envVars = {
       APPLE_PAY_MERCHANT_ID: process.env.APPLE_PAY_MERCHANT_ID ? 'SET' : 'not set',
+      APPLE_PAY_DOMAIN: process.env.APPLE_PAY_DOMAIN ? 'SET' : 'not set',
       APPLE_PAY_CERT_PATH: process.env.APPLE_PAY_CERT_PATH ? 'SET' : 'not set',
+      APPLE_PAY_MERCHANT_IDENTITY_CERT_PATH: process.env.APPLE_PAY_MERCHANT_IDENTITY_CERT_PATH ? 'SET' : 'not set',
       APPLE_PAY_CERT_PASSPHRASE: process.env.APPLE_PAY_CERT_PASSPHRASE ? 'SET' : 'not set',
+    };
+    report.localFiles = {
+      domainAssociationPath: APPLE_PAY_DOMAIN_ASSOCIATION_PATH,
+      paymentProcessingCertificatePath: path.resolve(process.cwd(), 'certs/apple_pay_payment_processing_merchant_cluny_cafe.cer'),
+      paymentProcessingCertificateExists: fs.existsSync(path.resolve(process.cwd(), 'certs/apple_pay_payment_processing_merchant_cluny_cafe.cer')),
     };
 
     // 4. Test Geidea API connectivity
@@ -2775,7 +2779,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const r = await fetch(url, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}` },
-              body: JSON.stringify({ validationUrl: 'https://test.apple.com', merchantIdentifier: 'merchant.net.geidea.ksamerchant', domainName: 'cluny.cafe', displayName: 'CLUNY CAFE' }),
+              body: JSON.stringify({ validationUrl: 'https://test.apple.com', merchantIdentifier: resolveApplePayMerchantId(pg.applePayMerchantId), domainName: APPLE_PAY_DOMAIN, displayName: 'CLUNY CAFE' }),
             });
             const body = await r.text();
             return { url, status: r.status, preview: body.substring(0, 150) };
@@ -2789,7 +2793,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // 5. Domain info
     report.serverDomain = req.headers.host || 'unknown';
-    report.expectedApplePayDomain = 'cluny.cafe';
+    report.expectedApplePayDomain = APPLE_PAY_DOMAIN;
 
     res.json({ ok: true, timestamp: new Date().toISOString(), report });
   });

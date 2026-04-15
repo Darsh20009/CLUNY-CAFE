@@ -406,8 +406,17 @@ app.get('/geideaCheckout.min.js', (req, res) => {
 // Serve Apple Pay domain association file (required for Apple Pay on web)
 app.get('/.well-known/apple-developer-merchantid-domain-association', (req, res) => {
   const filePath = path.resolve(__dirname, '..', 'public', '.well-known', 'apple-developer-merchantid-domain-association');
-  res.setHeader('Content-Type', 'text/plain');
-  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.sendFile(filePath, (err) => {
+    if (err) res.status(404).send('File not found');
+  });
+});
+
+app.get('/.well-known/apple-developer-merchantid-domain-association.txt', (req, res) => {
+  const filePath = path.resolve(__dirname, '..', 'public', '.well-known', 'apple-developer-merchantid-domain-association');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=300');
   res.sendFile(filePath, (err) => {
     if (err) res.status(404).send('File not found');
   });
