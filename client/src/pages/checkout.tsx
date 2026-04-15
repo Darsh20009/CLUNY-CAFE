@@ -1306,11 +1306,6 @@ export default function CheckoutPage() {
 
           {/* Drop-in container: Geidea injects its iframe here */}
           <div className="flex-1 overflow-y-auto min-h-0">
-            <div id="geidea-dropin-container" className="min-h-[500px] w-full" />
-          </div>
-
-          {/* Widget (invisible, auto-starts drop-in into the div above) */}
-          <div className="hidden">
             <GeideaCheckoutWidget
               orderNumber={geideaOrderNum.current}
               amount={pendingGeideaOrderData.current?.totalAmount || 0}
@@ -1338,6 +1333,7 @@ export default function CheckoutPage() {
                 toast({ title: "تم إلغاء الدفع", description: "يمكنك المحاولة مرة أخرى" });
               }}
             />
+            <div id="geidea-dropin-container" className="min-h-[500px] w-full" />
           </div>
 
           {/* Footer security row */}
