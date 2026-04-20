@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, CheckCircle, RefreshCw } from "lucide-react";
+import { AlertCircle, CheckCircle, RefreshCw, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 declare global {
@@ -19,7 +19,7 @@ interface ApplePayNativeProps {
   onCancel: () => void;
 }
 
-type State = "idle" | "loading" | "processing" | "success" | "error" | "unsupported";
+type State = "idle" | "loading" | "processing" | "success" | "error" | "unsupported" | "pending_activation";
 
 function isApplePaySupported(): boolean {
   try {
@@ -125,12 +125,19 @@ export default function ApplePayNative({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ validationURL: event.validationURL }),
         });
+        const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || "فشل التحقق من التاجر");
+          // Check if this is a "pending Geidea activation" case (not a real error)
+          if (data.errorCode === 'GEIDEA_APPLE_PAY_NOT_ACTIVATED') {
+            session.abort();
+            if (mountedRef.current) {
+              setState("pending_activation");
+            }
+            return;
+          }
+          throw new Error(data.error || "فشل التحقق من التاجر");
         }
-        const merchantSession = await res.json();
-        session.completeMerchantValidation(merchantSession);
+        session.completeMerchantValidation(data);
       } catch (err: any) {
         console.error("[Apple Pay] validatemerchant error:", err);
         session.abort();
@@ -246,6 +253,37 @@ export default function ApplePayNative({
         >
           <RefreshCw className="w-4 h-4" />
           إعادة المحاولة
+        </Button>
+      </div>
+    );
+  }
+
+  if (state === "pending_activation") {
+    return (
+      <div className="flex flex-col items-center gap-4 py-6 px-4 text-center">
+        <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center">
+          <Clock className="w-7 h-7 text-amber-600" />
+        </div>
+        <div className="space-y-2">
+          <p className="font-bold text-amber-800 dark:text-amber-400">Apple Pay قيد الانتظار</p>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            خدمة Apple Pay لم تُفعَّل بعد على حساب Geidea.
+            <br />
+            تواصل معهم لتفعيلها:
+          </p>
+          <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3 text-sm space-y-1 border border-amber-200 dark:border-amber-800">
+            <p className="font-mono font-medium">support@geidea.net</p>
+            <p className="font-mono font-medium">920000038</p>
+          </div>
+          <p className="text-xs text-muted-foreground">اطلب منهم تفعيل <strong>Apple Pay Direct API</strong></p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => { geideaSessionIdRef.current = null; setState("idle"); }}
+          className="w-full"
+          data-testid="button-applepay-back"
+        >
+          العودة
         </Button>
       </div>
     );

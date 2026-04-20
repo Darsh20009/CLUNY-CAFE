@@ -2544,17 +2544,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.error('[Apple Pay] ❌ All validation methods failed. Results:', JSON.stringify(results));
 
-      let errorMsg = 'تعذّر التحقق من التاجر مع Apple Pay.';
+      let errorMsg = 'Apple Pay غير مفعّل بعد على حساب Geidea. تواصل مع Geidea لتفعيل خدمة Apple Pay Direct API.';
+      let errorCode = 'GEIDEA_APPLE_PAY_NOT_ACTIVATED';
+
       if (allNotFound) {
-        errorMsg = 'Geidea KSA لا تدعم merchant session proxy عبر Direct API للويب. يجب استخدام Merchant Identity Certificate من Apple Developer أو التواصل مع Geidea لتفعيل هذه الخاصية.';
+        errorMsg = 'Apple Pay Direct API غير مفعّل على حساب Geidea. تواصل مع Geidea على support@geidea.net أو 920000038 وأطلب تفعيل Apple Pay Direct API.';
+        errorCode = 'GEIDEA_APPLE_PAY_NOT_ACTIVATED';
       } else if (hasAuthError) {
-        errorMsg = `مشكلة في المصادقة مع Geidea أو النطاق "${merchantDomain}" غير مسجّل. أكمل إعداد Apple Pay في بوابة Geidea.`;
+        errorMsg = 'Apple Pay Direct API غير مفعّل على حساب Geidea (خطأ 401). تواصل مع Geidea على support@geidea.net أو 920000038 وأطلب تفعيل Apple Pay Direct API.';
+        errorCode = 'GEIDEA_APPLE_PAY_NOT_ACTIVATED';
       } else if (hasDomainError) {
-        errorMsg = `النطاق "${merchantDomain}" غير مسجّل في إعدادات Apple Pay لدى Geidea.`;
+        errorMsg = 'Apple Pay غير مفعّل بعد. تواصل مع Geidea على support@geidea.net أو 920000038 لتفعيل Apple Pay Direct API.';
+        errorCode = 'GEIDEA_APPLE_PAY_NOT_ACTIVATED';
       }
 
       return res.status(502).json({
         error: errorMsg,
+        errorCode,
         setupRequired: true,
         diagnostic: results.map(r => ({ url: r.url, status: r.status, preview: r.body })),
       });
