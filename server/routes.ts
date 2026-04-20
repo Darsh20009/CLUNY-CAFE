@@ -2584,8 +2584,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const crypto = await import('crypto');
       const now = new Date();
-      const pad = (n: number) => String(n).padStart(2, '0');
-      const timestamp = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+      const pad2 = (n: number) => String(n).padStart(2, '0');
+      const h = now.getHours();
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const h12 = h % 12 || 12;
+      // Geidea required format: M/D/YYYY H:MM:SS AM/PM (no leading zeros on month/day/hour)
+      const timestamp = `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear()} ${h12}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())} ${ampm}`;
       const amountFormatted = Number(amount).toFixed(2);
       const rawSignature = `${publicKey}${amountFormatted}${currency}${orderId}${timestamp}`;
       const signature = crypto.createHmac('sha256', apiPassword).update(rawSignature).digest('base64');
@@ -2686,8 +2690,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!sessionId) {
         const crypto = await import('crypto');
         const now = new Date();
-        const pad = (n: number) => String(n).padStart(2, '0');
-        const timestamp = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+        const pad2b = (n: number) => String(n).padStart(2, '0');
+        const hb = now.getHours();
+        const ampmb = hb >= 12 ? 'PM' : 'AM';
+        const h12b = hb % 12 || 12;
+        const timestamp = `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear()} ${h12b}:${pad2b(now.getMinutes())}:${pad2b(now.getSeconds())} ${ampmb}`;
         const amountFormatted = Number(amount).toFixed(2);
         const rawSignature = `${publicKey}${amountFormatted}${currency}${orderId}${timestamp}`;
         const signature = crypto.createHmac('sha256', apiPassword).update(rawSignature).digest('base64');
@@ -2902,10 +2909,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const crypto = await import('crypto');
           const merchantReferenceId = orderId || `ORD-${internalSessionId}`;
 
-          // Generate timestamp in Geidea required format: YYYY/MM/DD HH:mm:ss
+          // Generate timestamp in Geidea required format: M/D/YYYY H:MM:SS AM/PM
           const now = new Date();
-          const pad = (n: number) => String(n).padStart(2, '0');
-          const timestamp = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+          const pad2c = (n: number) => String(n).padStart(2, '0');
+          const hc = now.getHours();
+          const ampmc = hc >= 12 ? 'PM' : 'AM';
+          const h12c = hc % 12 || 12;
+          const timestamp = `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear()} ${h12c}:${pad2c(now.getMinutes())}:${pad2c(now.getSeconds())} ${ampmc}`;
 
           // Format amount to 2 decimal places for signature
           const amountFormatted = Number(amount).toFixed(2);
