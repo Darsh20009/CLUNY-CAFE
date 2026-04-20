@@ -2,18 +2,17 @@ import QRCode from "qrcode";
 
 function clunyHeader(subtitle?: string): string {
   return `
-    <style>@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Cairo:wght@700&display=swap');</style>
     <div style="text-align: center; padding: 6px 0 12px;">
-      <div style="font-family: 'Cinzel', 'Georgia', serif; font-size: 34px; font-weight: 700; color: #000; letter-spacing: 8px; text-transform: uppercase; line-height: 1;">CLUNY</div>
-      <div style="font-family: 'Cairo', sans-serif; font-size: 18px; font-weight: 700; color: #000; letter-spacing: 4px; line-height: 1.3; direction: rtl; margin-top: 2px;">كـلـونـي</div>
+      <div style="font-size: 34px; font-weight: 700; color: #000; letter-spacing: 8px; text-transform: uppercase; line-height: 1;">CLUNY</div>
+      <div style="font-size: 18px; font-weight: 700; color: #000; letter-spacing: 4px; line-height: 1.3; direction: rtl; margin-top: 2px;">كـلـونـي</div>
       <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin: 5px 0 2px;">
         <span style="flex: 1; height: 1px; background: #000; max-width: 45px; display: block;"></span>
-        <span style="font-family: 'Cinzel', 'Georgia', serif; font-size: 10px; color: #000; letter-spacing: 3px;">cafe</span>
+        <span style="font-size: 10px; color: #000; letter-spacing: 3px;">cafe</span>
         <span style="width: 4px; height: 4px; background: #000; border-radius: 50%; display: inline-block;"></span>
-        <span style="font-family: 'Cairo', sans-serif; font-size: 10px; color: #000; letter-spacing: 2px; direction: rtl;">كافيه</span>
+        <span style="font-size: 10px; color: #000; letter-spacing: 2px; direction: rtl;">كافيه</span>
         <span style="flex: 1; height: 1px; background: #000; max-width: 45px; display: block;"></span>
       </div>
-      ${subtitle ? `<div style="font-size: 10px; color: #555; margin-top: 4px; font-family: 'Cairo', sans-serif; direction: rtl;">${subtitle}</div>` : ''}
+      ${subtitle ? `<div style="font-size: 10px; color: #555; margin-top: 4px; direction: rtl;">${subtitle}</div>` : ''}
     </div>
   `;
 }
@@ -85,27 +84,23 @@ interface KitchenOrderData {
   timestamp: string;
 }
 
-// System font stack that supports Arabic on all platforms without any network request.
-// Eliminates the Google Fonts loading delay that caused blank pages on thermal printers.
-const SYSTEM_FONT_CSS = `
-  <style>
-    /* Override any @import Google Fonts — use local Arabic-capable system fonts instead */
-    * { font-family: 'Segoe UI', 'Tahoma', 'Arial Unicode MS', 'Arial', sans-serif !important; }
-    body { font-family: 'Segoe UI', 'Tahoma', 'Arial Unicode MS', 'Arial', sans-serif !important; }
-  </style>
-`;
+const SYSTEM_FONTS = `'Segoe UI', Tahoma, 'Arial Unicode MS', Arial, sans-serif`;
 
-// ── Iframe-based printing — no popup, no freeze, works with popup-blockers ────
+// ── Window-based printing — opens a real visible tab so content renders correctly ────
 function openPrintWindow(html: string, _title: string, config: PrintConfig = {}): void {
   const { paperWidth = '80mm', autoPrint = true, showPrintButton = false } = config;
 
-  // Remove all Google Fonts @import — they cause blank pages because
-  // the font network request does not complete before window.print() fires.
-  const cleanHtml = html.replace(/@import\s+url\(['"]?https:\/\/fonts\.googleapis\.com[^;]*;?\s*/gi, '');
+  // Remove ALL @import lines — Google Fonts cause blank pages because the font
+  // network request never completes before window.print() fires.
+  // The regex matches the full @import statement including any URL with semicolons inside.
+  let cleanHtml = html
+    .replace(/@import\s+url\([^)]*\)\s*;?\s*/gi, '')
+    .replace(/@import\s+['"][^'"]*['"]\s*;?\s*/gi, '');
 
-  const dynamicStyles = `
-    ${SYSTEM_FONT_CSS}
+  const injectedStyles = `
     <style>
+      * { font-family: ${SYSTEM_FONTS} !important; }
+      body { font-family: ${SYSTEM_FONTS} !important; direction: rtl; }
       @media print {
         @page { size: ${paperWidth} auto; margin: 0; }
         body { margin: 0; padding: 0; }
@@ -114,51 +109,46 @@ function openPrintWindow(html: string, _title: string, config: PrintConfig = {})
     </style>
   `;
 
-  // Print immediately on load — system fonts are always available, no waiting needed.
+  // Auto-print after 900ms — enough time for layout to complete with system fonts
   const autoPrintScript = autoPrint ? `
     <script>
       window.addEventListener('load', function() {
-        setTimeout(function() {
-          window.print();
-          window.addEventListener('afterprint', function() {
-            try { window.parent.postMessage('__cluny_print_done__', '*'); } catch(e){}
-          });
-        }, 100);
+        setTimeout(function() { window.print(); }, 900);
       });
     <\/script>
   ` : '';
 
-  let modifiedHtml = cleanHtml.replace('</head>', `${dynamicStyles}${autoPrintScript}</head>`);
+  // Always show a manual print button as backup
+  const toolbarHtml = `
+    <div class="no-print" style="position:sticky;top:0;z-index:9999;background:#fff;border-bottom:2px dashed #ccc;padding:10px 16px;display:flex;gap:8px;align-items:center;justify-content:center;">
+      <button onclick="window.print()" style="padding:10px 28px;font-size:15px;font-family:${SYSTEM_FONTS};background:#b45309;color:#fff;border:none;border-radius:8px;cursor:pointer;">
+        🖨️ طباعة
+      </button>
+      <button onclick="window.close()" style="padding:10px 20px;font-size:14px;font-family:${SYSTEM_FONTS};background:#6b7280;color:#fff;border:none;border-radius:8px;cursor:pointer;">
+        ✕ إغلاق
+      </button>
+    </div>
+  `;
 
-  if (showPrintButton && !autoPrint) {
-    const btnHtml = `<div class="no-print" style="text-align:center;padding:20px;">
-      <button onclick="window.print()" style="padding:12px 32px;font-size:16px;background:#b45309;color:#fff;border:none;border-radius:8px;cursor:pointer;margin-left:10px;">طباعة</button>
-    </div>`;
-    modifiedHtml = modifiedHtml.replace('</body>', `${btnHtml}</body>`);
-  }
+  let modifiedHtml = cleanHtml.replace('</head>', `${injectedStyles}${autoPrintScript}</head>`);
+  modifiedHtml = modifiedHtml.replace('<body>', `<body>${toolbarHtml}`);
 
-  // iframe must NOT be visibility:hidden or 1×1px — the browser skips layout/rendering
-  // for such frames, producing blank output. Use opacity:0 at a real size instead.
-  const iframe = document.createElement('iframe');
-  iframe.setAttribute('data-print-frame', '1');
-  iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;height:600px;border:none;opacity:0;pointer-events:none;';
-  document.body.appendChild(iframe);
-
-  const cleanup = () => {
-    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
-    window.removeEventListener('message', msgHandler);
-  };
-  const msgHandler = (e: MessageEvent) => {
-    if (e.data === '__cluny_print_done__') cleanup();
-  };
-  window.addEventListener('message', msgHandler);
-  setTimeout(cleanup, 60_000);
-
-  const doc = iframe.contentDocument || (iframe.contentWindow as any)?.document;
-  if (doc) {
-    doc.open();
-    doc.write(modifiedHtml);
-    doc.close();
+  // Open a real visible window — hidden iframes skip layout & produce blank output
+  const printWin = window.open('', '_blank', 'width=900,height=750,scrollbars=yes');
+  if (printWin) {
+    printWin.document.open();
+    printWin.document.write(modifiedHtml);
+    printWin.document.close();
+  } else {
+    // Popup blocked — use blob URL fallback
+    const blob = new Blob([modifiedHtml], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }
 }
 
@@ -184,7 +174,6 @@ export async function printEmployeeCard(data: EmployeePrintData): Promise<void> 
   <meta charset="UTF-8">
   <title>بطاقة الموظف - ${data.employeeName}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@400;700&family=Cairo:wght@400;600;700&display=swap');
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Cairo', sans-serif; background: #fff; color: #000; direction: rtl; }
     .card { width: 80mm; margin: 20px auto; padding: 24px; border: 2px solid #333; border-radius: 12px; }
@@ -244,7 +233,6 @@ export async function printKitchenOrder(data: KitchenOrderData): Promise<void> {
   <meta charset="UTF-8">
   <title>طلب المطبخ - ${data.orderNumber}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Cairo', sans-serif; background: #fff; color: #000; direction: rtl; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .ticket { width: 80mm; margin: 0 auto; padding: 16px; }
@@ -390,7 +378,6 @@ export async function printUnifiedReceipt(data: TaxInvoiceData): Promise<void> {
   <meta charset="UTF-8">
   <title>إيصال المبيعات والتحضير - ${data.orderNumber}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap');
     * { box-sizing: border-box; }
     body { font-family: 'Cairo', sans-serif; direction: rtl; margin: 0; padding: 0; color: #000; background: #fff; }
     .customer-copy { width: 80mm; padding: 10px; margin: 0 auto; }
@@ -505,7 +492,6 @@ export async function printBulkEmployeeInvoices(orders: any[]): Promise<void> {
 <head>
   <meta charset="UTF-8">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap');
     body { font-family: 'Cairo', sans-serif; direction: rtl; }
     .invoice-page { width: 80mm; padding: 10px; border-bottom: 2px dashed #000; page-break-after: always; margin: 0 auto; }
     .header { text-align: center; border-bottom: 1px solid #000; padding-bottom: 10px; }
@@ -655,7 +641,6 @@ export async function printTaxInvoice(data: TaxInvoiceData): Promise<void> {
   <meta charset="UTF-8">
   <title>فاتورة ضريبية - ${displayInvoiceNumber}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Cairo', sans-serif; background: #fff; color: #000; direction: rtl; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .customer-section { width: 80mm; padding: 8px; margin: 0 auto; }
@@ -832,7 +817,6 @@ export async function printCustomerPickupReceipt(data: TaxInvoiceData & { delive
   <meta charset="UTF-8">
   <title>إيصال استلام - ${data.orderNumber}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Cairo', sans-serif; background: #fff; color: #000; direction: rtl; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .receipt { max-width: 80mm; margin: 0 auto; padding: 16px; }
@@ -932,7 +916,6 @@ export async function printCashierReceipt(data: TaxInvoiceData & { deliveryType?
   <meta charset="UTF-8">
   <title>نسخة الكاشير - ${data.orderNumber}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Cairo', sans-serif; background: #fff; color: #000; direction: rtl; }
     .receipt { max-width: 80mm; margin: 0 auto; padding: 12px; }
@@ -1052,7 +1035,6 @@ export async function printSimpleReceipt(data: TaxInvoiceData): Promise<void> {
   <meta charset="UTF-8">
   <title>إيصال - ${data.orderNumber}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap');
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -1288,7 +1270,6 @@ export async function downloadInvoicePDF(data: {
 <head>
   <meta charset="UTF-8">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
     * { margin:0; padding:0; box-sizing:border-box; }
     body { font-family:'Cairo',Arial,sans-serif; direction:rtl; background:#fff; color:#000; width:210mm; }
     .page { width:210mm; min-height:297mm; padding:16mm 14mm; }
