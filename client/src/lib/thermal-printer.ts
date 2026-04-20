@@ -55,20 +55,46 @@ export function isPrinterConnected(): boolean {
   return _port !== null && _writer !== null;
 }
 
-export async function connectPrinter(): Promise<{ ok: boolean; error?: string }> {
+// Common baud rates for thermal printers (tried in order until one succeeds)
+const BAUD_RATES = [9600, 115200, 38400, 19200];
+
+export async function connectPrinter(baudRate?: number): Promise<{ ok: boolean; error?: string }> {
   if (!isWebSerialSupported()) {
     return { ok: false, error: 'Web Serial غير مدعوم في هذا المتصفح. استخدم Chrome أو Edge.' };
   }
+
+  // Always clean up any previous connection before requesting a new port
+  await disconnectPrinter();
+
+  let port: any = null;
   try {
-    _port = await (navigator as any).serial.requestPort();
-    await _port.open({ baudRate: 9600 });
-    _writer = _port.writable.getWriter();
-    return { ok: true };
+    port = await (navigator as any).serial.requestPort();
   } catch (e: any) {
-    _port = null; _writer = null;
     if (e?.name === 'NotFoundError') return { ok: false, error: 'لم يتم اختيار طابعة.' };
-    return { ok: false, error: `فشل الاتصال: ${e?.message || e}` };
+    return { ok: false, error: `فشل اختيار المنفذ: ${e?.message || e}` };
   }
+
+  // If caller specified a baud rate, try only that; otherwise try common rates
+  const rates = baudRate ? [baudRate] : BAUD_RATES;
+  let lastError = '';
+
+  for (const rate of rates) {
+    try {
+      await port.open({ baudRate: rate });
+      _port = port;
+      _writer = port.writable.getWriter();
+      return { ok: true };
+    } catch (e: any) {
+      lastError = e?.message || String(e);
+      // Port claimed by another app — no point retrying different baud rates
+      if (e?.name === 'InvalidStateError' || e?.name === 'NetworkError') break;
+      // Port opened but writer failed — close before retrying
+      try { await port.close(); } catch { /* ignore */ }
+    }
+  }
+
+  _port = null; _writer = null;
+  return { ok: false, error: `فشل الاتصال بالطابعة: ${lastError}` };
 }
 
 export async function disconnectPrinter(): Promise<void> {

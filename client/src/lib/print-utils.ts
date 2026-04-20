@@ -99,25 +99,30 @@ function openPrintWindow(html: string, _title: string, config: PrintConfig = {})
     </style>
   `;
 
-  // Script runs inside the iframe context — triggers OS print dialog without any cross-window call.
-  // afterprint event used to auto-remove iframe when dialog closes.
+  // Wait for fonts then print — prevents blank-page output on thermal printers.
+  // Uses document.fonts.ready so Arabic/Latin fonts are loaded before the OS dialog opens.
   const autoPrintScript = autoPrint ? `
     <script>
       window.addEventListener('load', function() {
-        setTimeout(function() {
+        var doPrint = function() {
           window.print();
           window.addEventListener('afterprint', function() {
             try { window.parent.postMessage('__cluny_print_done__', '*'); } catch(e){}
-            ${autoClose ? '' : ''}
           });
-        }, 300);
+        };
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(function() {
+            setTimeout(doPrint, 200);
+          });
+        } else {
+          setTimeout(doPrint, 1200);
+        }
       });
     <\/script>
   ` : '';
 
   let modifiedHtml = html.replace('</head>', `${dynamicStyles}${autoPrintScript}</head>`);
 
-  // Add a visible print button only when autoPrint is off
   if (showPrintButton && !autoPrint) {
     const btnHtml = `<div class="no-print" style="text-align:center;padding:20px;">
       <button onclick="window.print()" style="padding:12px 32px;font-size:16px;background:#b45309;color:#fff;border:none;border-radius:8px;cursor:pointer;margin-left:10px;">طباعة</button>
@@ -125,12 +130,14 @@ function openPrintWindow(html: string, _title: string, config: PrintConfig = {})
     modifiedHtml = modifiedHtml.replace('</body>', `${btnHtml}</body>`);
   }
 
+  // The iframe must NOT be visibility:hidden or 1×1px — doing so prevents
+  // the browser from rendering fonts/layout, which causes blank printed pages.
+  // Instead we place it far off-screen at a proper render size.
   const iframe = document.createElement('iframe');
   iframe.setAttribute('data-print-frame', '1');
-  iframe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;border:none;visibility:hidden;';
+  iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;height:600px;border:none;opacity:0;pointer-events:none;';
   document.body.appendChild(iframe);
 
-  // Listen for "done" signal from iframe, then remove it
   const cleanup = () => {
     if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
     window.removeEventListener('message', msgHandler);
@@ -139,8 +146,7 @@ function openPrintWindow(html: string, _title: string, config: PrintConfig = {})
     if (e.data === '__cluny_print_done__') cleanup();
   };
   window.addEventListener('message', msgHandler);
-  // Fallback cleanup after 30s in case afterprint never fires
-  setTimeout(cleanup, 30_000);
+  setTimeout(cleanup, 60_000);
 
   const doc = iframe.contentDocument || (iframe.contentWindow as any)?.document;
   if (doc) {
