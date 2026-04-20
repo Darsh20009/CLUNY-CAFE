@@ -45,6 +45,8 @@ export default function ApplePayNative({
   const [state, setState] = useState<State>("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const mountedRef = useRef(true);
+  // Hold the pre-created Geidea session ID so we don't create it twice
+  const geideaSessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -59,13 +61,36 @@ export default function ApplePayNative({
     staleTime: 60000,
   });
 
+  // Pre-create a Geidea payment session before opening the Apple Pay sheet.
+  // This is needed because the Direct API requires a sessionId.
+  const createGeideaSession = useCallback(async (): Promise<string | null> => {
+    if (geideaSessionIdRef.current) return geideaSessionIdRef.current;
+    try {
+      const res = await fetch("/api/payments/apple-pay/init-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount, currency: "SAR", orderId, customerEmail, customerPhone }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.sessionId) {
+        console.warn("[Apple Pay] init-session failed:", data);
+        return null; // backend will create it on-demand
+      }
+      geideaSessionIdRef.current = data.sessionId;
+      return data.sessionId;
+    } catch (err) {
+      console.warn("[Apple Pay] init-session error:", err);
+      return null;
+    }
+  }, [amount, orderId, customerEmail, customerPhone]);
+
   const startApplePay = useCallback(async () => {
     if (!isApplePaySupported()) {
       setState("unsupported");
       return;
     }
 
-    const merchantId = merchantData?.merchantId || "merchant.net.geidea.ksamerchant";
+    const merchantId = merchantData?.merchantId || "merchant.cluny.cafe";
 
     const paymentRequest = {
       countryCode: "SA",
@@ -79,6 +104,11 @@ export default function ApplePayNative({
       },
     };
 
+    // Pre-create the Geidea session BEFORE opening the Apple Pay sheet
+    setState("loading");
+    const geideaSessionId = await createGeideaSession();
+    console.log("[Apple Pay] Pre-created Geidea session:", geideaSessionId);
+
     let session: any;
     try {
       session = new window.ApplePaySession!(3, paymentRequest);
@@ -87,8 +117,6 @@ export default function ApplePayNative({
       setErrorMsg("تعذّر فتح نافذة Apple Pay. تأكد من أن جهازك يدعم Apple Pay.");
       return;
     }
-
-    setState("loading");
 
     session.onvalidatemerchant = async (event: any) => {
       try {
@@ -114,7 +142,7 @@ export default function ApplePayNative({
       }
     };
 
-    session.onpaymentmethodselected = (event: any) => {
+    session.onpaymentmethodselected = () => {
       session.completePaymentMethodSelection({
         newTotal: {
           label: "CLUNY CAFE",
@@ -135,6 +163,8 @@ export default function ApplePayNative({
             amount,
             currency: "SAR",
             orderId,
+            // Pass the pre-created session so backend doesn't create a duplicate
+            geideaSessionId: geideaSessionId ?? undefined,
             customerEmail,
             customerPhone,
           }),
@@ -161,6 +191,7 @@ export default function ApplePayNative({
     session.oncancel = () => {
       if (mountedRef.current) {
         setState("idle");
+        geideaSessionIdRef.current = null; // reset so next attempt creates a fresh session
         onCancel();
       }
     };
@@ -171,7 +202,7 @@ export default function ApplePayNative({
       setState("error");
       setErrorMsg("تعذّر بدء جلسة Apple Pay");
     }
-  }, [amount, orderId, customerEmail, customerPhone, merchantData, onSuccess, onError, onCancel]);
+  }, [amount, orderId, customerEmail, customerPhone, merchantData, createGeideaSession, onSuccess, onError, onCancel]);
 
   if (state === "unsupported") {
     return (
@@ -208,7 +239,11 @@ export default function ApplePayNative({
           <p className="font-bold">تعذّر إتمام الدفع</p>
           <p className="text-sm text-muted-foreground">{errorMsg}</p>
         </div>
-        <Button onClick={startApplePay} className="gap-2 w-full" data-testid="button-retry-applepay">
+        <Button
+          onClick={() => { geideaSessionIdRef.current = null; startApplePay(); }}
+          className="gap-2 w-full"
+          data-testid="button-retry-applepay"
+        >
           <RefreshCw className="w-4 h-4" />
           إعادة المحاولة
         </Button>
@@ -224,7 +259,7 @@ export default function ApplePayNative({
           <div className="absolute inset-0 rounded-full border-4 border-black border-t-transparent animate-spin" />
         </div>
         <p className="text-sm font-medium text-muted-foreground">
-          {state === "loading" ? "جاري تجهيز Apple Pay..." : "جاري معالجة الدفع..."}
+          {state === "loading" ? "جاري تجهيز جلسة الدفع..." : "جاري معالجة الدفع..."}
         </p>
       </div>
     );

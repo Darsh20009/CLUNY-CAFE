@@ -2398,59 +2398,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
 
       const appleMerchantId = resolveApplePayMerchantId(applePayMerchantId);
-      const merchantDomain = APPLE_PAY_DOMAIN;
 
-      const requestBody = JSON.stringify({
-        validationUrl: validationURL,
-        merchantIdentifier: appleMerchantId,
-        domainName: merchantDomain,
-        displayName: 'CLUNY CAFE',
-      });
+      // Derive domain from incoming request so it matches the page's actual domain
+      const reqOrigin = (req.headers.origin as string || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const reqHost = (req.headers.host as string || '').replace(/\/$/, '').split(':')[0];
+      const replitDev = (process.env.REPLIT_DEV_DOMAIN || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const merchantDomain = reqOrigin || replitDev || reqHost || APPLE_PAY_DOMAIN;
 
       console.log('[Apple Pay] validate-merchant → merchantId:', appleMerchantId, 'domain:', merchantDomain, 'validationURL:', validationURL);
 
-      // ── Step 1: Try known Geidea KSA merchant-session proxy endpoints ──
-      const geideaCandidates = [
-        `${baseUrl}/payment/api/v1/direct/apple/merchant-session`,
+      const results: { url: string; status: number; body: string }[] = [];
+
+      // ── Body format variants to try ──
+      // Geidea KSA may expect different field names across API versions
+      const bodyVariants = [
+        // v1: standard fields
+        JSON.stringify({ validationUrl: validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE' }),
+        // v2: URL in "url" field
+        JSON.stringify({ url: validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE' }),
+        // v3: camelCase validationURL
+        JSON.stringify({ validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE' }),
+        // v4: minimal – just the validation URL (let Geidea fill in merchant details from credentials)
+        JSON.stringify({ validationUrl: validationURL }),
+        // v5: with merchantName instead of displayName
+        JSON.stringify({ validationUrl: validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, merchantName: 'CLUNY CAFE' }),
+      ];
+
+      // ── Step 1: Try all Geidea endpoints with all body variants ──
+      const geideaEndpoints = [
         `${baseUrl}/pgw/api/v2/direct/apple/merchant-session`,
         `${baseUrl}/pgw/api/v1/direct/apple/merchant-session`,
         `${baseUrl}/pgw/api/v2/direct/apple/sessions`,
         `${baseUrl}/pgw/api/v1/direct/apple/sessions`,
+        `${baseUrl}/payment-intent/api/v2/direct/apple/merchant-session`,
+        `${baseUrl}/payment-intent/api/v2/direct/apple/sessions`,
+        `${baseUrl}/payment/api/v1/direct/apple/merchant-session`,
         `${baseUrl}/pgw/api/v2/direct/apple/validate-merchant`,
         `${baseUrl}/pgw/api/v2/apple/merchant-session`,
+        // AE fallback (in case KSA routes to same backend)
+        `https://api.geidea.ae/pgw/api/v2/direct/apple/merchant-session`,
+        `https://api.geidea.ae/pgw/api/v2/direct/apple/sessions`,
       ];
 
-      const results: { url: string; status: number; body: string }[] = [];
+      outer:
+      for (const url of geideaEndpoints) {
+        for (const body of bodyVariants) {
+          try {
+            const geideaRes = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+              body,
+            });
+            const responseText = await geideaRes.text();
+            results.push({ url, status: geideaRes.status, body: responseText.substring(0, 300) });
+            console.log(`[Apple Pay] ${url} [${body.substring(0, 60)}] → ${geideaRes.status}: ${responseText.substring(0, 150)}`);
 
-      for (const url of geideaCandidates) {
-        try {
-          const geideaRes = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Basic ${credentials}`,
-              'Accept': 'application/json',
-            },
-            body: requestBody,
-          });
-          const body = await geideaRes.text();
-          results.push({ url, status: geideaRes.status, body: body.substring(0, 300) });
-          console.log(`[Apple Pay] ${url} → ${geideaRes.status}: ${body.substring(0, 200)}`);
-
-          if (geideaRes.ok) {
-            try {
-              const merchantSession = JSON.parse(body);
-              console.log('[Apple Pay] ✅ Merchant session validated via:', url);
-              return res.json(merchantSession);
-            } catch {
-              console.warn('[Apple Pay] Response not valid JSON, trying next');
+            if (geideaRes.ok && responseText.trim().startsWith('{')) {
+              try {
+                const merchantSession = JSON.parse(responseText);
+                // A valid Apple Pay merchant session has epochTimestamp
+                if (merchantSession.epochTimestamp || merchantSession.merchantSessionIdentifier || merchantSession.signature) {
+                  console.log('[Apple Pay] ✅ Merchant session obtained via:', url);
+                  return res.json(merchantSession);
+                }
+                // Geidea might wrap it
+                if (merchantSession.session || merchantSession.data || merchantSession.merchantSession) {
+                  const inner = merchantSession.session || merchantSession.data || merchantSession.merchantSession;
+                  if (typeof inner === 'object') {
+                    console.log('[Apple Pay] ✅ Merchant session (wrapped) via:', url);
+                    return res.json(inner);
+                  }
+                }
+              } catch {
+                // not valid JSON object
+              }
             }
+            // 404 = endpoint doesn't exist — stop trying body variants, go to next endpoint
+            if (geideaRes.status === 404) break;
+          } catch (fetchErr: any) {
+            results.push({ url, status: 0, body: fetchErr.message });
+            console.warn(`[Apple Pay] fetch error ${url}:`, fetchErr.message);
+            break; // network error — try next endpoint
           }
-          // 404 = endpoint does not exist, keep trying
-          // 401/403 = auth/domain issue, log and continue
-        } catch (fetchErr: any) {
-          results.push({ url, status: 0, body: fetchErr.message });
-          console.warn(`[Apple Pay] fetch error ${url}:`, fetchErr.message);
         }
       }
 
@@ -2585,18 +2614,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (customerEmail) sessionBody.customer = { email: customerEmail, phoneNumber: customerPhone };
 
       console.log('[Apple Pay] Creating Geidea session, orderId:', orderId, 'amount:', amount);
-      const sessionRes = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
-        body: JSON.stringify(sessionBody),
-      });
-      const sessionData = await sessionRes.json() as any;
-      console.log('[Apple Pay] Session response:', JSON.stringify(sessionData));
 
-      const geideaSessionId = sessionData.session?.id || sessionData.sessionId;
+      // Try multiple session creation endpoints (KSA may use different path)
+      const sessionEndpoints = [
+        `${baseUrl}/payment-intent/api/v2/direct/session`,
+        `${baseUrl}/payment-intent/api/v1/session`,
+        `${baseUrl}/pgw/api/v2/direct/session`,
+        `${baseUrl}/pgw/api/v1/direct/session`,
+      ];
+
+      let sessionData: any = null;
+      let geideaSessionId: string | null = null;
+
+      for (const sessionUrl of sessionEndpoints) {
+        try {
+          const sessionRes = await fetch(sessionUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+            body: JSON.stringify(sessionBody),
+          });
+          sessionData = await sessionRes.json() as any;
+          console.log(`[Apple Pay] Session ${sessionUrl} → ${sessionRes.status}:`, JSON.stringify(sessionData).substring(0, 200));
+          geideaSessionId = sessionData?.session?.id || sessionData?.sessionId || sessionData?.id;
+          if (geideaSessionId) {
+            console.log('[Apple Pay] ✅ Session created via:', sessionUrl, 'id:', geideaSessionId);
+            break;
+          }
+          // If we got a 404, try next; otherwise stop (auth error etc)
+          if (sessionRes.status !== 404) break;
+        } catch (sessionErr: any) {
+          console.warn('[Apple Pay] Session endpoint error:', sessionUrl, sessionErr.message);
+        }
+      }
+
       if (!geideaSessionId) {
         return res.status(400).json({
-          error: sessionData.detailedResponseMessage || sessionData.responseMessage || "فشل إنشاء جلسة الدفع",
+          error: sessionData?.detailedResponseMessage || sessionData?.responseMessage || "فشل إنشاء جلسة الدفع",
         });
       }
 
@@ -2650,29 +2703,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
           : `https://cluny.cafe/api/payments/geidea/callback?orderNumber=${encodeURIComponent(orderId)}`;
         const sessionBody: any = { merchantPublicKey: publicKey, amount: Number(amountFormatted), currency, merchantReferenceId: orderId, callbackUrl, timestamp, signature, language: 'ar' };
         if (customerEmail) sessionBody.customer = { email: customerEmail, phoneNumber: customerPhone };
-        const sessionRes = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
-          body: JSON.stringify(sessionBody),
-        });
-        const sessionData = await sessionRes.json() as any;
-        sessionId = sessionData.session?.id || sessionData.sessionId;
+
+        const sessionEndpoints = [
+          `${baseUrl}/payment-intent/api/v2/direct/session`,
+          `${baseUrl}/payment-intent/api/v1/session`,
+          `${baseUrl}/pgw/api/v2/direct/session`,
+          `${baseUrl}/pgw/api/v1/direct/session`,
+        ];
+        let lastSessionData: any = null;
+        for (const sessionUrl of sessionEndpoints) {
+          try {
+            const sessionRes = await fetch(sessionUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+              body: JSON.stringify(sessionBody),
+            });
+            lastSessionData = await sessionRes.json() as any;
+            sessionId = lastSessionData?.session?.id || lastSessionData?.sessionId || lastSessionData?.id;
+            if (sessionId) { console.log('[Apple Pay] ✅ Fallback session created via:', sessionUrl); break; }
+            if (sessionRes.status !== 404) break;
+          } catch (e: any) { console.warn('[Apple Pay] Fallback session error:', sessionUrl, e.message); }
+        }
         if (!sessionId) {
-          return res.status(400).json({ error: sessionData.detailedResponseMessage || sessionData.responseMessage || "فشل إنشاء جلسة الدفع" });
+          return res.status(400).json({ error: lastSessionData?.detailedResponseMessage || lastSessionData?.responseMessage || "فشل إنشاء جلسة الدفع" });
         }
       }
 
       // Call Geidea Direct Apple Pay API
-      // The browser's ApplePaySession gives an ENCRYPTED token — use method:"encrypted"
-      // so Geidea decrypts it using their Apple Pay Processing Certificate.
-      // walletData must be the JSON-stringified paymentData portion of the Apple Pay token.
+      // event.payment.token structure from Apple Pay JS API:
+      //   { paymentData: { version, data, signature, header }, paymentMethod: {...}, transactionIdentifier }
+      // For method:"encrypted" → walletData = the paymentData sub-object (contains the encrypted blob)
+      // For method:"decrypted" → walletData = the decrypted token (requires Payment Processing private key)
+      // Geidea handles decryption on their side when method is "encrypted".
       const tokenObj = typeof applePayToken === 'string'
         ? JSON.parse(applePayToken)
         : applePayToken;
 
-      // Use only the paymentData sub-object (version, data, signature, header) if available,
-      // otherwise stringify the whole token as a fallback.
-      const walletDataStr = JSON.stringify(tokenObj?.paymentData ?? tokenObj);
+      // Extract the paymentData sub-object which has {version, data, signature, header}
+      // This is what Geidea needs to decrypt the Apple Pay token on their side
+      const paymentDataObj = tokenObj?.paymentData ?? tokenObj;
+      const walletDataStr = typeof paymentDataObj === 'string'
+        ? paymentDataObj
+        : JSON.stringify(paymentDataObj);
 
       const directBody = {
         sessionId,

@@ -1,0 +1,107 @@
+Apple Pay Direct API
+post
+https://api.geidea.ae/pgw/api/v2/direct/apple/pay
+
+Recent Requests
+Log in to see full request history
+Time	Status	User Agent	
+Make a request to see history.
+0 Requests This Month
+
+The Apple Pay API allows merchants to process payments using Apple Pay. This API accepts a decrypted Apple Pay payment token, validates it, and processes the transaction through the payment gateway. Use this endpoint after you have:
+
+Integrated Apple Pay on your frontend (Web / iOS app).
+
+Collected and decrypted the Apple Pay token (server-side or via your PSP).
+
+Prepared the payment request with required details.
+
+Body Params
+sessionId
+string
+required
+A session ID, is a unique identifier that a server generates as part of the create session API call and assigns to a merchant transaction for the duration of the session (15 min).
+
+method
+string
+enum
+required
+Defaults to decrypted
+The method paramter identifies if the direct Apple Pay payment request will be using the encrypted or decrypted Apple Pay payment token.
+
+
+decrypted
+Allowed:
+
+decrypted
+walletData
+string
+required
+Defaults to {"applicationPrimaryAccountNumber":"5167885865744728","applicationExpirationDate":"3012","currencyCode":"AED","transactionAmount":1.00,"cardholderName":"/","deviceManufacturerIdentifier":"049510030273","paymentDataType":"3DSecure","paymentData":{"onlinePaymentCryptogram":"MNruTdFuowAZBSE6irH3AoABFIA=","eciIndicator":"2"},"network":"MasterCard","displayName":"MasterCard2095","type":"credit"}
+The wallet data parameter will have all required payment token data to process the Apple Pay payment token. The wallet data needs to be encoded in the payment request.
+
+{"applicationPrimaryAccountNumber":"5167885865744728","applicationExpirationDate":"3012","currencyCode":"AED","transactionAmount":1.00,"cardholderName":"/","deviceManufacturerIdentifier":"049510030273","paymentDataType":"3DSecure","paymentData":{"onlinePaymentCryptogram":"MNruTdFuowAZBSE6irH3AoABFIA=","eciIndicator":"2"},"network":"MasterCard","displayName":"MasterCard2095","type":"credit"}
+source
+string
+enum
+required
+Defaults to DirectAPI
+Source of capturing the transaction. Use "DirectAPI" for this call.
+
+
+DirectAPI
+Allowed:
+
+HPP
+
+MobileApp
+
+DirectAPI
+initiatedBy
+string
+enum
+required
+Defaults to Internet
+A value indicating whether the request is started from Customer(Internet) or Merchant.
+
+
+Internet
+Allowed:
+
+Internet
+
+Merchant
+Responses
+
+200
+200
+
+
+400
+400
+
+Language
+
+JSON
+Credentials
+Basic
+base64
+username
+:
+password
+
+Request
+1
+{
+2
+  "method": "decrypted",
+3
+  "walletData": "{\"applicationPrimaryAccountNumber\":\"5167885865744728\",\"applicationExpirationDate\":\"3012\",\"currencyCode\":\"AED\",\"transactionAmount\":1.00,\"cardholderName\":\"/\",\"deviceManufacturerIdentifier\":\"049510030273\",\"paymentDataType\":\"3DSecure\",\"paymentData\":{\"onlinePaymentCryptogram\":\"MNruTdFuowAZBSE6irH3AoABFIA=\",\"eciIndicator\":\"2\"},\"network\":\"MasterCard\",\"displayName\":\"MasterCard2095\",\"type\":\"credit\"}",
+4
+  "source": "DirectAPI",
+5
+  "initiatedBy": "Internet"
+6
+}
+
+Try It!
