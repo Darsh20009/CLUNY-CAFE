@@ -1,300 +1,289 @@
-import { useEffect, useMemo } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useMemo } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Users, TrendingUp, DollarSign, Calendar, Activity, Settings, Clock, ShoppingBag, ReceiptText } from 'lucide-react';
+import {
+  Users, TrendingUp, DollarSign, Settings, ShoppingBag,
+  BarChart2, CreditCard, Banknote, SplitSquareVertical, Calendar, RefreshCw
+} from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell
+} from 'recharts';
 import SarIcon from "@/components/sar-icon";
 
-function getItemName(item: any) {
-  return item.nameAr || item.name || item.coffeeItemName || item.productName || 'منتج غير مسمى';
+const PERIOD_OPTIONS = [
+  { label: 'اليوم', days: 0 },
+  { label: 'أمس', days: 1 },
+  { label: '7 أيام', days: 7 },
+  { label: '30 يوم', days: 30 },
+  { label: '90 يوم', days: 90 },
+];
+
+const PAYMENT_LABELS: Record<string, string> = {
+  cash: 'كاش', card: 'شبكة', split: 'مجزأ',
+  pos: 'POS', mada: 'مدى', geidea: 'جيدية',
+  apple_pay: 'Apple Pay', loyalty_points: 'ولاء', other: 'أخرى',
+};
+
+const COLORS = ['#b45309', '#0ea5e9', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#84cc16'];
+
+function fmt(n: number) { return n.toLocaleString('ar-SA', { maximumFractionDigits: 1 }); }
+function dayLabel(iso: string) {
+  const d = new Date(iso);
+  return `${d.getDate()}/${d.getMonth() + 1}`;
 }
 
 export default function AdminDashboard() {
   const [, navigate] = useLocation();
+  const [periodIdx, setPeriodIdx] = useState(2); // 7 days default
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  useEffect(() => {
-    document.title = "لوحة تحكم الإدارة - CLUNY CAFE | إحصائيات شاملة";
-    const metaDesc = document.querySelector('meta[name="description"]');
-    if (metaDesc) metaDesc.setAttribute('content', 'لوحة تحكم الإدارة في CLUNY CAFE - إحصائيات المبيعات والموظفين والطلبات');
-  }, []);
+  const { days } = PERIOD_OPTIONS[periodIdx];
+  const { from, to } = useMemo(() => {
+    const toDate = new Date();
+    const fromDate = new Date();
+    if (days === 0) { fromDate.setHours(0, 0, 0, 0); }
+    else if (days === 1) {
+      toDate.setDate(toDate.getDate() - 1); toDate.setHours(23, 59, 59, 999);
+      fromDate.setDate(fromDate.getDate() - 1); fromDate.setHours(0, 0, 0, 0);
+    } else { fromDate.setDate(fromDate.getDate() - days); }
+    return { from: fromDate.toISOString(), to: toDate.toISOString() };
+  }, [days]);
 
-  const { data: employees = [] } = useQuery<any[]>({
-    queryKey: ['/api/employees'],
+  const { data: analytics, isLoading, refetch } = useQuery<any>({
+    queryKey: ['/api/orders/analytics', from, to, refreshKey],
+    queryFn: () => fetch(`/api/orders/analytics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`).then(r => r.json()),
+    staleTime: 60_000,
   });
 
-  const { data: orders = [] } = useQuery<any[]>({
-    queryKey: ['/api/orders'],
-  });
-
-  const { data: attendance = [] } = useQuery<any[]>({
-    queryKey: ['/api/attendance'],
-    retry: false,
-  });
-
-  const { data: leaveRequests = [] } = useQuery<any[]>({
-    queryKey: ['/api/leave-requests'],
-    retry: false,
-  });
-
+  const { data: employees = [] } = useQuery<any[]>({ queryKey: ['/api/employees'] });
   const activeEmployees = employees.filter((e: any) => e.isActivated === 1).length;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const presentToday = Array.isArray(attendance)
-    ? attendance.filter((a: any) => {
-        const checkIn = a.checkIn ? new Date(a.checkIn) : null;
-        return checkIn && checkIn >= today;
-      }).length
-    : 0;
-
-  const onLeave = Array.isArray(leaveRequests)
-    ? leaveRequests.filter((lr: any) => {
-        if (lr.status !== 'approved') return false;
-        const start = lr.startDate ? new Date(lr.startDate) : null;
-        const end = lr.endDate ? new Date(lr.endDate) : null;
-        const now = new Date();
-        return start && end && start <= now && end >= now;
-      }).length
-    : 0;
-
-  const todayOrders = orders.filter((o: any) => {
-    const created = o.createdAt ? new Date(o.createdAt) : null;
-    return created && created >= today;
-  });
-
-  const todayRevenue = todayOrders.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
-  const totalRevenue = orders.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
-  const avgOrderValue = orders.length > 0 ? totalRevenue / orders.length : 0;
-
-  const todaySoldItems = useMemo(() => {
-    const map = new Map<string, { name: string; quantity: number; revenue: number; orders: number }>();
-    todayOrders.forEach((order: any) => {
-      const seenInOrder = new Set<string>();
-      (Array.isArray(order.items) ? order.items : []).forEach((item: any) => {
-        const id = String(item.coffeeItemId || item.id || getItemName(item));
-        const quantity = Number(item.quantity || 1);
-        const revenue = Number(item.totalPrice || item.price * quantity || 0);
-        const current = map.get(id) || { name: getItemName(item), quantity: 0, revenue: 0, orders: 0 };
-        current.quantity += quantity;
-        current.revenue += revenue;
-        if (!seenInOrder.has(id)) {
-          current.orders += 1;
-          seenInOrder.add(id);
-        }
-        map.set(id, current);
-      });
-    });
-    return Array.from(map.values()).sort((a, b) => b.revenue - a.revenue).slice(0, 6);
-  }, [todayOrders]);
-
-  const todayItemCount = todaySoldItems.reduce((sum, item) => sum + item.quantity, 0);
-
-  const StatCard = ({ icon: Icon, label, value, subtext }: any) => (
-    <Card className="border-border/50 bg-gradient-to-br from-card to-card/90 shadow-md" data-testid={`card-stat-${label}`}>
-      <CardContent className="p-4 sm:p-6">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-muted-foreground sm:text-sm" data-testid={`text-stat-label-${label}`}>{label}</p>
-            <p className="mt-2 truncate text-2xl font-bold font-playfair text-foreground sm:text-3xl" data-testid={`text-stat-value-${label}`}>{value}</p>
-            {subtext && <p className="mt-1 text-xs text-muted-foreground" data-testid={`text-stat-subtext-${label}`}>{subtext}</p>}
-          </div>
-          <div className="shrink-0 rounded-lg bg-accent/20 p-3 dark:bg-accent/10">
-            <Icon className="h-5 w-5 text-accent sm:h-6 sm:w-6" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
+  const totalRevenue = analytics?.totalRevenue ?? 0;
+  const totalOrders = analytics?.totalOrders ?? 0;
+  const avgOrder = analytics?.avgOrderValue ?? 0;
+  const topProducts = analytics?.topProducts ?? [];
+  const revenueByDay = (analytics?.revenueByDay ?? []).map((d: any) => ({ ...d, label: dayLabel(d.date) }));
+  const payBreakdown = analytics?.paymentBreakdown ?? [];
+  const topProduct = topProducts[0]?.name ?? '—';
 
   return (
-    <div className="min-h-screen space-y-5 bg-gradient-to-b from-background via-primary/5 to-background p-4 sm:space-y-8 sm:p-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold font-playfair text-foreground sm:text-4xl" data-testid="text-admin-dashboard-title">لوحة التحكم</h1>
-          <p className="mt-1 text-sm text-muted-foreground font-cairo sm:mt-2" data-testid="text-admin-dashboard-subtitle">نظرة فورية على أداء اليوم والإدارة</p>
+    <div className="min-h-screen bg-gradient-to-b from-background via-primary/5 to-background p-4 sm:p-6 space-y-5">
+
+      {/* Header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground sm:text-3xl">لوحة التحكم</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">تحليلات المبيعات والأداء</p>
         </div>
-        <Button variant="outline" onClick={() => navigate('/admin/settings')} data-testid="button-open-admin-settings">
-          <Settings className="ml-2 h-4 w-4" />
-          الإعدادات
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="icon" onClick={() => { setRefreshKey(k => k + 1); refetch(); }} data-testid="button-refresh-analytics">
+            <RefreshCw className="w-4 h-4" />
+          </Button>
+          <Button variant="outline" onClick={() => navigate('/admin/settings')} data-testid="button-admin-settings">
+            <Settings className="w-4 h-4 ml-2" />الإعدادات
+          </Button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 sm:gap-6">
-        <StatCard icon={Users} label="إجمالي الموظفين" value={employees.length} subtext={`${activeEmployees} نشطين`} />
-        <StatCard icon={Activity} label="الحاضرون اليوم" value={presentToday} subtext={`من ${activeEmployees} موظف نشط`} />
-        <StatCard icon={Calendar} label="في الإجازة" value={onLeave} subtext="إجازة معتمدة اليوم" />
-        <StatCard icon={DollarSign} label="إيرادات اليوم" value={`${todayRevenue.toFixed(0)} ر.س`} subtext={`${todayOrders.length} طلب اليوم`} />
+      {/* Period Filter */}
+      <div className="flex gap-2 flex-wrap" data-testid="filter-period">
+        {PERIOD_OPTIONS.map((opt, i) => (
+          <Button
+            key={i}
+            size="sm"
+            variant={periodIdx === i ? 'default' : 'outline'}
+            onClick={() => setPeriodIdx(i)}
+            data-testid={`button-period-${opt.label}`}
+          >
+            <Calendar className="w-3 h-3 ml-1" />
+            {opt.label}
+          </Button>
+        ))}
       </div>
 
-      <Card className="border-0 bg-white dark:bg-card" data-testid="card-today-sales-summary">
-        <CardHeader className="p-4 pb-2 sm:p-6 sm:pb-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-                <ShoppingBag className="h-5 w-5" />
-                تفاصيل مبيعات اليوم
-              </CardTitle>
-              <CardDescription>أهم ما تم بيعه اليوم مع الكمية والإيراد</CardDescription>
-            </div>
-            <Button variant="outline" onClick={() => navigate('/admin/reports')} data-testid="button-open-detailed-reports">
-              <ReceiptText className="ml-2 h-4 w-4" />
-              تحليل تفصيلي
-            </Button>
-          </div>
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        {[
+          { icon: DollarSign, label: 'الإيرادات', value: `${fmt(totalRevenue)} ر.س`, sub: `${PERIOD_OPTIONS[periodIdx].label}`, color: 'text-emerald-600' },
+          { icon: ShoppingBag, label: 'عدد الطلبات', value: fmt(totalOrders), sub: `${PERIOD_OPTIONS[periodIdx].label}`, color: 'text-blue-600' },
+          { icon: TrendingUp, label: 'متوسط الطلب', value: `${fmt(avgOrder)} ر.س`, sub: 'لكل طلب', color: 'text-amber-600' },
+          { icon: BarChart2, label: 'الأكثر مبيعاً', value: topProduct, sub: `${topProducts[0]?.quantity ?? 0} قطعة`, color: 'text-primary' },
+        ].map(({ icon: Icon, label, value, sub, color }, i) => (
+          <Card key={i} className="border-border/50 shadow-sm">
+            <CardContent className="p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs text-muted-foreground mb-1">{label}</p>
+                  <p className={`text-lg sm:text-xl font-black truncate ${color}`} data-testid={`kpi-${label}`}>{isLoading ? '...' : value}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{sub}</p>
+                </div>
+                <div className="shrink-0 rounded-lg bg-muted/50 p-2">
+                  <Icon className="w-4 h-4 sm:w-5 sm:h-5 text-muted-foreground" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Revenue Chart */}
+      <Card className="border-0 shadow-sm">
+        <CardHeader className="pb-2 px-4 pt-4">
+          <CardTitle className="text-base flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-primary" />
+            الإيرادات بالتفصيل
+          </CardTitle>
         </CardHeader>
-        <CardContent className="p-4 pt-2 sm:p-6 sm:pt-0">
-          <div className="grid grid-cols-3 gap-2 sm:gap-4">
-            <div className="rounded-xl bg-orange-50 p-3 dark:bg-orange-950/20" data-testid="metric-today-orders">
-              <p className="text-xs text-muted-foreground">طلبات</p>
-              <p className="text-xl font-bold text-orange-600">{todayOrders.length}</p>
-            </div>
-            <div className="rounded-xl bg-emerald-50 p-3 dark:bg-emerald-950/20" data-testid="metric-today-items">
-              <p className="text-xs text-muted-foreground">قطع مباعة</p>
-              <p className="text-xl font-bold text-emerald-600">{todayItemCount}</p>
-            </div>
-            <div className="rounded-xl bg-blue-50 p-3 dark:bg-blue-950/20" data-testid="metric-today-average">
-              <p className="text-xs text-muted-foreground">متوسط الطلب</p>
-              <p className="text-xl font-bold text-blue-600">{todayOrders.length ? (todayRevenue / todayOrders.length).toFixed(1) : '0'}</p>
-            </div>
-          </div>
-          <div className="mt-4 space-y-3">
-            {todaySoldItems.length > 0 ? todaySoldItems.map((item, index) => (
-              <div key={`${item.name}-${index}`} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 p-3 dark:bg-slate-900/60" data-testid={`row-today-sold-item-${index}`}>
-                <div className="min-w-0">
-                  <p className="truncate font-semibold" data-testid={`text-today-item-name-${index}`}>{item.name}</p>
-                  <p className="text-xs text-muted-foreground" data-testid={`text-today-item-orders-${index}`}>{item.orders} طلب مرتبط</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Badge variant="secondary" data-testid={`badge-today-item-qty-${index}`}>{item.quantity} قطعة</Badge>
-                  <span className="font-bold text-accent" data-testid={`text-today-item-revenue-${index}`}>{item.revenue.toFixed(0)} <SarIcon /></span>
-                </div>
-              </div>
-            )) : (
-              <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground" data-testid="empty-today-sales">لا توجد مبيعات مسجلة اليوم حتى الآن</div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3 sm:gap-6">
-        <Card className="border-0 bg-white dark:bg-card lg:col-span-2">
-          <CardHeader className="p-4 pb-2 sm:p-6 sm:pb-4">
-            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-              <TrendingUp className="h-5 w-5" />
-              نظرة عامة على الطلبات
-            </CardTitle>
-            <CardDescription>جميع الطلبات</CardDescription>
-          </CardHeader>
-          <CardContent className="p-4 pt-2 sm:p-6 sm:pt-0">
-            <div className="space-y-3 sm:space-y-4">
-              <div className="flex items-center justify-between gap-3 rounded-lg bg-background p-4 dark:bg-accent/20" data-testid="row-total-orders">
-                <span className="text-sm font-medium">إجمالي الطلبات</span>
-                <span className="text-2xl font-bold text-accent">{orders.length}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3 rounded-lg bg-blue-50 p-4 dark:bg-blue-900/20" data-testid="row-today-orders">
-                <span className="text-sm font-medium">طلبات اليوم</span>
-                <span className="text-2xl font-bold text-blue-600 dark:text-blue-400">{todayOrders.length}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3 rounded-lg bg-emerald-50 p-4 dark:bg-emerald-900/20" data-testid="row-total-revenue">
-                <span className="text-sm font-medium">إجمالي الإيرادات</span>
-                <span className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{totalRevenue.toFixed(0)} <SarIcon /></span>
-              </div>
-              <div className="flex items-center justify-between gap-3 rounded-lg bg-amber-50 p-4 dark:bg-amber-900/20" data-testid="row-average-order">
-                <span className="text-sm font-medium">متوسط قيمة الطلب</span>
-                <span className="text-2xl font-bold text-amber-600 dark:text-amber-400">{avgOrderValue.toFixed(2)} <SarIcon /></span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-0 bg-white dark:bg-card">
-          <CardHeader className="p-4 pb-2 sm:p-6 sm:pb-4">
-            <CardTitle className="text-lg sm:text-xl">إجراءات سريعة</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 p-4 pt-2 sm:p-6 sm:pt-0">
-            <Button onClick={() => navigate('/admin/employees')} className="w-full bg-accent text-white" data-testid="button-manage-employees">
-              <Users className="ml-2 h-4 w-4" />
-              إدارة الموظفين
-            </Button>
-            <Button variant="outline" onClick={() => navigate('/admin/reports')} className="w-full" data-testid="button-view-reports">
-              <TrendingUp className="ml-2 h-4 w-4" />
-              التقارير التفصيلية
-            </Button>
-            <Button variant="outline" onClick={() => navigate('/admin/apple-pay-health')} className="w-full" data-testid="button-view-apple-pay-health">
-              <Clock className="ml-2 h-4 w-4" />
-              فحص Apple Pay
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card className="border-0 bg-white dark:bg-card">
-        <CardHeader className="p-4 pb-2 sm:p-6 sm:pb-4">
-          <div className="flex items-center justify-between gap-3">
-            <CardTitle className="text-lg sm:text-xl">الموظفون</CardTitle>
-            <Button variant="ghost" size="sm" onClick={() => navigate('/admin/employees')} data-testid="button-view-all-employees">
-              عرض الكل
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="p-4 pt-2 sm:p-6 sm:pt-0">
-          {employees.length > 0 ? (
-            <div className="space-y-3 md:hidden">
-              {employees.slice(0, 5).map((emp: any, index: number) => (
-                <div key={emp.id || index} className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900/60" data-testid={`card-employee-mobile-${emp.id || index}`}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate font-semibold" data-testid={`text-employee-name-${emp.id || index}`}>{emp.fullName}</p>
-                      <p className="text-sm text-muted-foreground" data-testid={`text-employee-job-${emp.id || index}`}>{emp.jobTitle}</p>
-                    </div>
-                    <Badge variant={emp.isActivated === 1 ? 'default' : 'secondary'} data-testid={`badge-employee-status-${emp.id || index}`}>
-                      {emp.isActivated === 1 ? 'نشط' : 'معطل'}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="py-8 text-center" data-testid="empty-employees">
-              <Users className="mx-auto mb-3 h-12 w-12 text-gray-300" />
-              <p className="text-muted-foreground">لا توجد موظفون</p>
-            </div>
-          )}
-          {employees.length > 0 && (
-            <div className="hidden overflow-x-auto md:block">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-orange-200 dark:border-orange-900/30">
-                    <th className="p-3 text-right font-semibold">الاسم</th>
-                    <th className="p-3 text-right font-semibold">الدور</th>
-                    <th className="p-3 text-right font-semibold">الحالة</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {employees.slice(0, 5).map((emp: any) => (
-                    <tr key={emp.id} className="border-b border-gray-200 dark:border-gray-700">
-                      <td className="p-3">{emp.fullName}</td>
-                      <td className="p-3 text-muted-foreground">{emp.jobTitle}</td>
-                      <td className="p-3">
-                        <span className={`rounded-full px-3 py-1 text-xs font-medium ${
-                          emp.isActivated === 1
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400'
-                            : 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-muted-foreground'
-                        }`}>
-                          {emp.isActivated === 1 ? 'نشط' : 'معطل'}
-                        </span>
-                      </td>
-                    </tr>
+        <CardContent className="px-2 pb-4">
+          {revenueByDay.length > 0 ? (
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={revenueByDay} margin={{ top: 0, right: 8, left: 0, bottom: 0 }}>
+                <XAxis dataKey="label" tick={{ fontSize: 10, fontFamily: 'Cairo' }} />
+                <YAxis tick={{ fontSize: 10 }} width={45} />
+                <Tooltip formatter={(v: any) => [`${Number(v).toFixed(1)} ر.س`, 'الإيراد']} labelStyle={{ fontFamily: 'Cairo' }} contentStyle={{ fontFamily: 'Cairo', fontSize: 12 }} />
+                <Bar dataKey="revenue" radius={[4, 4, 0, 0]}>
+                  {revenueByDay.map((_: any, idx: number) => (
+                    <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
                   ))}
-                </tbody>
-              </table>
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-36 flex items-center justify-center text-muted-foreground text-sm">
+              {isLoading ? 'جاري التحميل...' : 'لا توجد بيانات للفترة المحددة'}
             </div>
           )}
         </CardContent>
       </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Top Products */}
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-2 px-4 pt-4">
+            <CardTitle className="text-base flex items-center gap-2">
+              <BarChart2 className="w-4 h-4 text-primary" />
+              أكثر المنتجات طلباً
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4">
+            {topProducts.length > 0 ? (
+              <div className="space-y-2">
+                {topProducts.slice(0, 8).map((p: any, i: number) => {
+                  const maxQty = topProducts[0]?.quantity || 1;
+                  const pct = Math.round((p.quantity / maxQty) * 100);
+                  return (
+                    <div key={i} className="space-y-0.5" data-testid={`row-product-${i}`}>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="font-medium truncate flex-1 ml-2">{p.name}</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge variant="secondary" className="text-[10px] h-4">{p.quantity} قطعة</Badge>
+                          <span className="font-bold text-primary text-[10px]">{fmt(p.revenue)} <SarIcon /></span>
+                        </div>
+                      </div>
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%`, backgroundColor: COLORS[i % COLORS.length] }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                {isLoading ? 'جاري التحميل...' : 'لا توجد بيانات'}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Payment Breakdown */}
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-2 px-4 pt-4">
+            <CardTitle className="text-base flex items-center gap-2">
+              <CreditCard className="w-4 h-4 text-primary" />
+              توزيع طرق الدفع
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 space-y-2">
+            {payBreakdown.length > 0 ? (
+              <>
+                <ResponsiveContainer width="100%" height={130}>
+                  <BarChart data={payBreakdown.map((p: any) => ({ ...p, label: PAYMENT_LABELS[p.method] || p.method }))} layout="vertical" margin={{ left: 40, right: 10 }}>
+                    <XAxis type="number" tick={{ fontSize: 9 }} />
+                    <YAxis type="category" dataKey="label" tick={{ fontSize: 10, fontFamily: 'Cairo' }} width={40} />
+                    <Tooltip formatter={(v: any) => [`${Number(v).toFixed(1)} ر.س`]} contentStyle={{ fontFamily: 'Cairo', fontSize: 11 }} />
+                    <Bar dataKey="revenue" radius={[0, 4, 4, 0]}>
+                      {payBreakdown.map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="space-y-1.5 mt-2">
+                  {payBreakdown.sort((a: any, b: any) => b.revenue - a.revenue).map((p: any, i: number) => (
+                    <div key={i} className="flex justify-between items-center text-xs bg-muted/40 rounded-lg px-3 py-1.5">
+                      <span className="flex items-center gap-1.5">
+                        {p.method === 'cash' ? <Banknote className="w-3 h-3 text-green-600" /> :
+                         p.method === 'split' ? <SplitSquareVertical className="w-3 h-3 text-purple-600" /> :
+                         <CreditCard className="w-3 h-3 text-blue-600" />}
+                        <span className="font-medium">{PAYMENT_LABELS[p.method] || p.method}</span>
+                      </span>
+                      <span className="font-bold">{fmt(p.revenue)} ر.س</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                {isLoading ? 'جاري التحميل...' : 'لا توجد بيانات'}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Staff Quick Stats */}
+      <Card className="border-0 shadow-sm">
+        <CardHeader className="pb-2 px-4 pt-4">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Users className="w-4 h-4 text-primary" />
+              الموظفون
+            </CardTitle>
+            <Button variant="ghost" size="sm" onClick={() => navigate('/admin/employees')}>عرض الكل</Button>
+          </div>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div className="rounded-xl bg-blue-50 dark:bg-blue-950/20 p-3">
+              <p className="text-xs text-muted-foreground">إجمالي الموظفين</p>
+              <p className="text-2xl font-black text-blue-600">{employees.length}</p>
+            </div>
+            <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/20 p-3">
+              <p className="text-xs text-muted-foreground">الموظفون النشطون</p>
+              <p className="text-2xl font-black text-emerald-600">{activeEmployees}</p>
+            </div>
+            <div className="rounded-xl bg-amber-50 dark:bg-amber-950/20 p-3">
+              <p className="text-xs text-muted-foreground">غير نشط</p>
+              <p className="text-2xl font-black text-amber-600">{employees.length - activeEmployees}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Quick Actions */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {[
+          { label: 'إدارة الموظفين', path: '/admin/employees', icon: Users },
+          { label: 'التقارير التفصيلية', path: '/admin/reports', icon: TrendingUp },
+          { label: 'الإعدادات', path: '/admin/settings', icon: Settings },
+        ].map(({ label, path, icon: Icon }) => (
+          <Button key={path} variant="outline" className="h-12 gap-2 justify-start" onClick={() => navigate(path)} data-testid={`button-quick-${label}`}>
+            <Icon className="w-4 h-4" />
+            <span className="font-medium text-sm">{label}</span>
+          </Button>
+        ))}
+      </div>
     </div>
   );
 }

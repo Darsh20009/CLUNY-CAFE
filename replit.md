@@ -187,5 +187,45 @@ All admin routes now wrapped with `AdminLayout` in `App.tsx`:
 - **Build command**: `npm run build` (Vite build + esbuild server bundle to `dist/`).
 - **Deploy command**: `node dist/index.js` (production server).
 - **Apple Pay / Geidea Update (April 2026)**: Installed the latest Geidea-provided Apple Pay domain association file at `public/.well-known/apple-developer-merchantid-domain-association` and mirrored it to `client/public/.well-known/`. Stored the latest Apple Pay payment processing certificate at `certs/apple_pay_payment_processing_merchant_cluny_cafe.cer`. Apple Pay now defaults to domain `cluny.cafe` and merchant ID `merchant.cluny.cafe`, with diagnostics available at `/api/payments/apple-pay/diagnose`.
+
+## Recent Enhancements (April 2026)
+
+### Sales Analytics API
+- Added `GET /api/orders/analytics?from=&to=` endpoint in `server/routes.ts` before `/api/orders`
+- Returns: `totalRevenue`, `totalOrders`, `avgOrderValue`, `topProducts`, `revenueByDay`, `paymentBreakdown`, `channelBreakdown`
+- Uses `.select().lean()` for performance — does NOT return full order objects
+- Replaces the old `/api/orders` fetch in admin-dashboard which loaded 200+ full orders
+
+### Admin Dashboard Rewrite (admin-dashboard.tsx)
+- Date range filter: Today / Yesterday / 7 Days / 30 Days / 90 Days
+- KPI cards: Revenue, Orders, Avg Order, Top Product
+- Bar chart (recharts) for revenue by day
+- Horizontal bar chart for payment method breakdown (cash, card, split, etc.)
+- Product rank bars showing quantity + revenue per product
+- Auto-refreshes with a manual refresh button
+
+### Print System — Iframe-based (no popup)
+- `openPrintWindow` in `print-utils.ts` now uses a hidden `<iframe>` instead of `window.open()`
+- Auto-print script inside the iframe calls `window.print()` from within iframe context
+- Eliminates the "popup freeze" bug when clicking outside the print popup
+- Works with popup blockers — no browser permission needed
+- Iframe removed after `afterprint` event or 30s fallback timeout
+
+### Split Payment in All Invoices
+- `TaxInvoiceData` interface now has `splitCash?: number` and `splitCard?: number` fields
+- All print functions (`printTaxInvoice`, `printUnifiedReceipt`, `printCustomerPickupReceipt`, `printCashierReceipt`, `printSimpleReceipt`) now display split breakdown when `paymentMethod === 'split'`
+- POS `handleCheckout` and `handlePrintReceipt` pass split amounts to all print calls
+
+### Direct USB Thermal Printer (Web Serial API)
+- New `client/src/lib/thermal-printer.ts` library with full ESC/POS command set
+- Supports: Epson, Bixolon, Xprinter and most 80mm USB thermal printers
+- `connectPrinter()` — opens Web Serial port browser dialog
+- `testPrint()` — sends a test page
+- `printReceiptToThermal(data)` — sends full ESC/POS receipt with Arabic encoding
+- Split payment printed directly to thermal paper
+- Printer icon button in POS header (Chrome/Edge only, Web Serial support check)
+- Connection dialog with status indicator (connected/disconnected dot)
+- When thermal printer is connected: auto-print uses ESC/POS (no browser dialog)
+- When thermal printer is not connected: fallback to iframe-based browser print
 - **Admin Mobile UX & Detailed Sales Analytics (April 2026)**: Admin portal now uses the Shadcn sidebar primitives with RTL mobile drawer, sticky mobile header, bottom quick navigation, and responsive full-width content. `/admin/reports` now provides detailed day-by-day sales analytics, product-level sold item breakdowns, hourly daily timeline, payment/status/employee breakdowns, mobile order cards, and flexible filtering by date range, selected day, status, payment method, and search. Added `/admin/apple-pay-health` as an admin-facing Apple Pay/Geidea diagnostic dashboard.
 - **Geidea Checkout Visibility Fix (April 2026)**: The checkout page now renders the Geidea widget visibly inside the payment overlay instead of inside a hidden wrapper, so loading/error/retry states appear to customers instead of a blank payment screen. Helmet CSP was also expanded for Geidea KSA script/connect/style/font hosts.

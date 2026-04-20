@@ -46,6 +46,8 @@ interface TaxInvoiceData {
   serviceFee?: number;
   loyaltyDiscount?: number;
   paymentMethod: string;
+  splitCash?: number;
+  splitCard?: number;
   employeeName: string;
   tableNumber?: string;
   orderType?: 'dine_in' | 'takeaway' | 'delivery';
@@ -83,34 +85,9 @@ interface KitchenOrderData {
   timestamp: string;
 }
 
-function openPrintWindow(html: string, title: string, config: PrintConfig = {}): Window | null {
-  const { paperWidth = '80mm', autoClose = false, autoPrint = true, showPrintButton = true } = config;
-
-  const printButtonHtml = showPrintButton ? `
-    <div class="no-print" style="text-align: center; margin-top: 20px; padding: 20px;">
-      <button onclick="window.print()" style="padding: 12px 32px; font-size: 16px; background: #b45309; color: white; border: none; border-radius: 8px; cursor: pointer; margin-left: 10px;">
-        طباعة
-      </button>
-      <button onclick="window.close()" style="padding: 12px 32px; font-size: 16px; background: #6b7280; color: white; border: none; border-radius: 8px; cursor: pointer;">
-        إغلاق
-      </button>
-    </div>
-  ` : '';
-
-  // Auto-print script injected into the popup's own HTML so window.print() runs
-  // from the popup's JavaScript context — NOT from the main tab.
-  // Calling printWindow.print() cross-window from the main tab freezes the main tab
-  // in some browsers; this approach is fully non-blocking.
-  const autoPrintScript = autoPrint ? `
-    <script>
-      window.addEventListener('load', function() {
-        setTimeout(function() {
-          window.print();
-          ${autoClose ? 'setTimeout(function() { window.close(); }, 1000);' : ''}
-        }, 300);
-      });
-    <\/script>
-  ` : '';
+// ── Iframe-based printing — no popup, no freeze, works with popup-blockers ────
+function openPrintWindow(html: string, _title: string, config: PrintConfig = {}): void {
+  const { paperWidth = '80mm', autoClose = false, autoPrint = true, showPrintButton = false } = config;
 
   const dynamicStyles = `
     <style>
@@ -118,33 +95,59 @@ function openPrintWindow(html: string, title: string, config: PrintConfig = {}):
         @page { size: ${paperWidth} auto; margin: 0; }
         body { margin: 0; padding: 0; }
         .no-print { display: none !important; }
-        .invoice-container, .receipt, .ticket, .card { max-width: ${paperWidth}; }
       }
     </style>
   `;
 
-  let modifiedHtml = html;
-  if (showPrintButton && !modifiedHtml.includes('<div class="no-print"')) {
-    modifiedHtml = modifiedHtml.replace('</body>', `${printButtonHtml}</body>`);
-  }
-  modifiedHtml = modifiedHtml.replace('</head>', `${dynamicStyles}${autoPrintScript}</head>`);
+  // Script runs inside the iframe context — triggers OS print dialog without any cross-window call.
+  // afterprint event used to auto-remove iframe when dialog closes.
+  const autoPrintScript = autoPrint ? `
+    <script>
+      window.addEventListener('load', function() {
+        setTimeout(function() {
+          window.print();
+          window.addEventListener('afterprint', function() {
+            try { window.parent.postMessage('__cluny_print_done__', '*'); } catch(e){}
+            ${autoClose ? '' : ''}
+          });
+        }, 300);
+      });
+    <\/script>
+  ` : '';
 
-  const printWindow = window.open('', '_blank', 'width=450,height=700,scrollbars=yes,resizable=yes');
-  if (printWindow) {
-    printWindow.document.write(modifiedHtml);
-    printWindow.document.close();
-    printWindow.document.title = title;
-    // No cross-window .print() call here — the popup handles it internally via its script
-  } else {
-    // Popup was blocked by the browser — show a non-blocking notification.
-    console.warn('[PRINT] Popup blocked — auto-print skipped. User must allow popups for automatic printing.');
-    const msg = document.createElement('div');
-    msg.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:99999;background:#b45309;color:#fff;padding:14px 20px;border-radius:10px;font-family:Cairo,sans-serif;font-size:14px;direction:rtl;box-shadow:0 4px 20px rgba(0,0,0,0.3);max-width:300px;';
-    msg.textContent = 'يرجى السماح بالنوافذ المنبثقة في المتصفح لتفعيل الطباعة التلقائية، أو اضغط "طباعة" من الإيصال يدوياً.';
-    document.body.appendChild(msg);
-    setTimeout(() => msg.remove(), 6000);
+  let modifiedHtml = html.replace('</head>', `${dynamicStyles}${autoPrintScript}</head>`);
+
+  // Add a visible print button only when autoPrint is off
+  if (showPrintButton && !autoPrint) {
+    const btnHtml = `<div class="no-print" style="text-align:center;padding:20px;">
+      <button onclick="window.print()" style="padding:12px 32px;font-size:16px;background:#b45309;color:#fff;border:none;border-radius:8px;cursor:pointer;margin-left:10px;">طباعة</button>
+    </div>`;
+    modifiedHtml = modifiedHtml.replace('</body>', `${btnHtml}</body>`);
   }
-  return printWindow;
+
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('data-print-frame', '1');
+  iframe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;border:none;visibility:hidden;';
+  document.body.appendChild(iframe);
+
+  // Listen for "done" signal from iframe, then remove it
+  const cleanup = () => {
+    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+    window.removeEventListener('message', msgHandler);
+  };
+  const msgHandler = (e: MessageEvent) => {
+    if (e.data === '__cluny_print_done__') cleanup();
+  };
+  window.addEventListener('message', msgHandler);
+  // Fallback cleanup after 30s in case afterprint never fires
+  setTimeout(cleanup, 30_000);
+
+  const doc = iframe.contentDocument || (iframe.contentWindow as any)?.document;
+  if (doc) {
+    doc.open();
+    doc.write(modifiedHtml);
+    doc.close();
+  }
 }
 
 export async function printEmployeeCard(data: EmployeePrintData): Promise<void> {
@@ -435,8 +438,12 @@ export async function printUnifiedReceipt(data: TaxInvoiceData): Promise<void> {
       </div>
       <div class="row" style="margin-top: 5px; font-size: 11px;">
         <span>طريقة الدفع:</span>
-        <span>${data.paymentMethod}</span>
+        <span>${data.paymentMethod === 'cash' ? 'نقدي' : data.paymentMethod === 'card' ? 'شبكة' : data.paymentMethod === 'split' ? 'مجزأ' : data.paymentMethod}</span>
       </div>
+      ${data.paymentMethod === 'split' && (data.splitCash != null || data.splitCard != null) ? `
+      <div class="row" style="font-size: 10px; color: #555;">
+        <span>نقدي: ${Number(data.splitCash ?? 0).toFixed(2)} | شبكة: ${Number(data.splitCard ?? 0).toFixed(2)}</span>
+      </div>` : ''}
     </div>
 
     ${qrCodeUrl ? `
@@ -550,22 +557,7 @@ function formatDate(dateStr: string): { date: string; time: string } {
 
 export async function printTaxInvoice(data: TaxInvoiceData): Promise<void> {
 
-  // ─── STEP 1: Open the popup window SYNCHRONOUSLY ────────────────────────────
-  // This MUST happen before any await so the browser treats it as a direct
-  // response to the user's click gesture (otherwise popup blockers kick in).
-  const printWindow = window.open('', '_blank', 'width=480,height=750,scrollbars=yes,resizable=yes');
-  if (!printWindow) {
-    const msg = document.createElement('div');
-    msg.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:99999;background:#b45309;color:#fff;padding:14px 20px;border-radius:10px;font-family:Cairo,sans-serif;font-size:14px;direction:rtl;box-shadow:0 4px 20px rgba(0,0,0,0.3);max-width:320px;';
-    msg.textContent = 'يرجى السماح بالنوافذ المنبثقة في المتصفح لتفعيل الطباعة التلقائية.';
-    document.body.appendChild(msg);
-    setTimeout(() => msg.remove(), 6000);
-    return;
-  }
-  // Show a loading placeholder while QR codes are generated
-  printWindow.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><style>@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@700&display=swap');body{font-family:'Cairo',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#fff;}</style></head><body><p style="font-size:18px;color:#b45309;">جاري تحضير الفاتورة…</p></body></html>`);
-
-  // ─── STEP 2: Compute values (sync) ──────────────────────────────────────────
+  // ─── STEP 1: Compute values ──────────────────────────────────────────────────
   const totalAmount = parseNumber(data.total);
 
   const codeDiscountAmount = data.discount ? parseNumber(data.discount.amount) : 0;
@@ -746,7 +738,15 @@ export async function printTaxInvoice(data: TaxInvoiceData): Promise<void> {
       <div class="t-row grand"><span>الإجمالي:</span><span>${totalAmount.toFixed(2)} ر.س</span></div>
     </div>
 
-    <div class="payment"><span>الدفع:</span><span class="val">${data.paymentMethod}</span></div>
+    ${data.paymentMethod === 'split' && (data.splitCash != null || data.splitCard != null) ? `
+    <div class="payment">
+      <span>الدفع: مجزأ</span>
+      <span class="val">نقدي: ${Number(data.splitCash ?? 0).toFixed(2)} | شبكة: ${Number(data.splitCard ?? 0).toFixed(2)}</span>
+    </div>` : `
+    <div class="payment"><span>الدفع:</span><span class="val">${
+      data.paymentMethod === 'cash' ? 'نقدي' :
+      data.paymentMethod === 'card' ? 'شبكة' :
+      data.paymentMethod === 'split' ? 'مجزأ' : data.paymentMethod}</span></div>`}
 
     ${qrCodeUrl ? `
     <div class="qr">
@@ -790,19 +790,8 @@ export async function printTaxInvoice(data: TaxInvoiceData): Promise<void> {
 </html>
   `;
 
-  // ─── STEP 4: Write final content to the already-open window ─────────────────
-  const autoPrintScript = `<script>window.addEventListener('load',function(){setTimeout(function(){window.print();},400);});<\/script>`;
-  const printBtnHtml = `<div class="no-print" style="text-align:center;margin-top:20px;padding:20px;">
-    <button onclick="window.print()" style="padding:12px 32px;font-size:16px;background:#b45309;color:white;border:none;border-radius:8px;cursor:pointer;margin-left:10px;">طباعة</button>
-    <button onclick="window.close()" style="padding:12px 32px;font-size:16px;background:#6b7280;color:white;border:none;border-radius:8px;cursor:pointer;">إغلاق</button>
-  </div>`;
-  const finalHtml = invoiceHtml
-    .replace('</head>', `<style>@media print{@page{size:80mm auto;margin:0;}body{margin:0;}.no-print{display:none!important;}.customer-section{page-break-after:always;break-after:page;}}</style>${autoPrintScript}</head>`)
-    .replace('</body>', `${printBtnHtml}</body>`);
-  printWindow.document.open();
-  printWindow.document.write(finalHtml);
-  printWindow.document.close();
-  printWindow.document.title = `فاتورة ضريبية - ${displayInvoiceNumber}`;
+  // ─── STEP 4: Send to iframe-based printer (no popup needed) ─────────────────
+  openPrintWindow(invoiceHtml, `فاتورة ضريبية - ${displayInvoiceNumber}`, { paperWidth: '80mm', autoPrint: true });
 }
 
 export async function printCustomerPickupReceipt(data: TaxInvoiceData & { deliveryType?: string; deliveryTypeAr?: string }): Promise<void> {
@@ -896,7 +885,8 @@ export async function printCustomerPickupReceipt(data: TaxInvoiceData & { delive
     <div class="total-section">
       <p style="font-size: 14px; color: #92400e;">الإجمالي المدفوع</p>
       <p class="total-amount">${data.total} ر.س</p>
-      <p style="font-size: 12px; color: #666; margin-top: 4px;">${data.paymentMethod}</p>
+      <p style="font-size: 12px; color: #666; margin-top: 4px;">${data.paymentMethod === 'split' ? 'مجزأ' : data.paymentMethod === 'cash' ? 'نقدي' : data.paymentMethod === 'card' ? 'شبكة' : data.paymentMethod}</p>
+      ${data.paymentMethod === 'split' && (data.splitCash != null || data.splitCard != null) ? `<p style="font-size:10px;color:#888;">نقدي: ${Number(data.splitCash ?? 0).toFixed(2)} | شبكة: ${Number(data.splitCard ?? 0).toFixed(2)}</p>` : ''}
     </div>
 
     <div class="qr-section">
@@ -984,7 +974,7 @@ export async function printCashierReceipt(data: TaxInvoiceData & { deliveryType?
       <div class="total-row"><span>المجموع الفرعي:</span><span>${data.subtotal} ر.س</span></div>
       ${data.discount ? `<div class="total-row" style="color: green;"><span>الخصم (${data.discount.percentage}%):</span><span>-${data.discount.amount} ر.س</span></div>` : ''}
       <div class="total-row total-grand"><span>الإجمالي:</span><span>${totalAmount.toFixed(2)} ر.س</span></div>
-      <div class="total-row"><span>طريقة الدفع:</span><span>${data.paymentMethod}</span></div>
+      <div class="total-row"><span>طريقة الدفع:</span><span>${data.paymentMethod === 'split' ? 'مجزأ' : data.paymentMethod === 'cash' ? 'نقدي' : data.paymentMethod === 'card' ? 'شبكة' : data.paymentMethod}${data.paymentMethod === 'split' && data.splitCash != null ? ` (نقدي: ${Number(data.splitCash).toFixed(2)} | شبكة: ${Number(data.splitCard ?? 0).toFixed(2)})` : ''}</span></div>
     </div>
 
     <div class="signature">
@@ -1186,7 +1176,7 @@ export async function printSimpleReceipt(data: TaxInvoiceData): Promise<void> {
       </div>
       <div class="total-row" style="margin-top: 12px;">
         <span>طريقة الدفع:</span>
-        <span><strong>${data.paymentMethod}</strong></span>
+        <span><strong>${data.paymentMethod === 'split' ? 'مجزأ' : data.paymentMethod === 'cash' ? 'نقدي' : data.paymentMethod === 'card' ? 'شبكة' : data.paymentMethod}${data.paymentMethod === 'split' && data.splitCash != null ? ` (نقدي: ${Number(data.splitCash).toFixed(2)} | شبكة: ${Number(data.splitCard ?? 0).toFixed(2)})` : ''}</strong></span>
       </div>
     </div>
 

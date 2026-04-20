@@ -26,6 +26,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useNotifications } from "@/hooks/use-notifications";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { CoffeeItem, Order, Table, Employee } from "@shared/schema";
+import {
+  connectPrinter, disconnectPrinter, isPrinterConnected, isWebSerialSupported,
+  testPrint, printReceiptToThermal
+} from "@/lib/thermal-printer";
 import { 
   printSimpleReceipt, 
   printTaxInvoice, 
@@ -113,6 +117,10 @@ export default function PosSystem() {
   const [billPaymentMethod, setBillPaymentMethod] = useState<PaymentMethod>("cash");
   const [showPOSSettings, setShowPOSSettings] = useState(false);
   const [autoPrint, setAutoPrint] = useState(() => localStorage.getItem("pos-auto-print") !== "false");
+  const [showPrinterDialog, setShowPrinterDialog] = useState(false);
+  const [printerConnected, setPrinterConnected] = useState(false);
+  const [printerStatus, setPrinterStatus] = useState<'idle' | 'connecting' | 'testing' | 'ok' | 'error'>('idle');
+  const [printerMsg, setPrinterMsg] = useState('');
   const [showVatLabel, setShowVatLabel] = useState(() => localStorage.getItem("pos-show-vat-label") === "true");
   const [posCustomizationItem, setPosCustomizationItem] = useState<{ item: CoffeeItem; group: CoffeeItem[] } | null>(null);
   const [showOrderReview, setShowOrderReview] = useState(false);
@@ -595,6 +603,8 @@ export default function PosSystem() {
           serviceFee: serviceFeeAmount > 0 ? serviceFeeAmount : undefined,
           loyaltyDiscount: pointsDiscount > 0 ? pointsDiscount : undefined,
           paymentMethod: PAYMENT_METHOD_LABELS[paymentMethod] || paymentMethod,
+          splitCash: paymentMethod === "split" ? Math.max(0, parseFloat(splitCashAmount) || 0) : undefined,
+          splitCard: paymentMethod === "split" ? Math.max(0, total - (parseFloat(splitCashAmount) || 0)) : undefined,
           employeeName: employee?.fullName || t('pos.employee_fallback'),
           tableNumber: orderType === "dine_in" ? tableNumber : undefined,
           orderType: orderType as any,
@@ -602,8 +612,37 @@ export default function PosSystem() {
           crNumber: businessConfig?.commercialRegistration,
           vatNumber: businessConfig?.vatNumber,
         };
-        setTimeout(() => {
-          printTaxInvoice(printData).catch((e) => console.warn('[POS] Auto-print failed:', e));
+        setTimeout(async () => {
+          // If thermal printer is connected, use direct ESC/POS printing
+          if (isPrinterConnected()) {
+            const thermalData = {
+              orderNumber: printData.orderNumber,
+              date: printData.date,
+              employeeName: printData.employeeName,
+              tableNumber: printData.tableNumber,
+              customerName: printData.customerName,
+              items: printData.items.map(i => ({
+                nameAr: i.coffeeItem.nameAr,
+                quantity: i.quantity,
+                price: Number(i.coffeeItem.price),
+                addons: i.addons,
+              })),
+              subtotal: Number(printData.subtotal),
+              vatAmount: Number(printData.total) * 0.15 / 1.15,
+              total: Number(printData.total),
+              paymentMethod: paymentMethod,
+              splitCash: printData.splitCash,
+              splitCard: printData.splitCard,
+              vatNumber: printData.vatNumber,
+            };
+            const r = await printReceiptToThermal(thermalData);
+            if (!r.ok) {
+              // Fallback to iframe printing on thermal error
+              printTaxInvoice(printData).catch((e) => console.warn('[POS] Fallback print failed:', e));
+            }
+          } else {
+            printTaxInvoice(printData).catch((e) => console.warn('[POS] Auto-print failed:', e));
+          }
         }, 400);
       }
       broadcastToDisplay("payment_success", {
@@ -665,10 +704,33 @@ export default function PosSystem() {
     setPointsDiscount(0);
   };
 
-  const handlePrintReceipt = () => {
+  const handlePrintReceipt = async () => {
     if (!lastOrder) return;
-    // Cancel pending auto-print since the user is printing manually
     pendingPrintRef.current = null;
+    if (isPrinterConnected()) {
+      const r = await printReceiptToThermal({
+        orderNumber: lastOrder.orderNumber,
+        date: lastOrder.date,
+        employeeName: lastOrder.employeeName,
+        tableNumber: lastOrder.tableNumber,
+        customerName: lastOrder.customerName,
+        items: lastOrder.items.map((i: any) => ({
+          nameAr: i.coffeeItem.nameAr,
+          quantity: i.quantity,
+          price: Number(i.coffeeItem.price),
+          addons: i.addons,
+        })),
+        subtotal: lastOrder.subtotal,
+        vatAmount: lastOrder.total * 0.15 / 1.15,
+        total: lastOrder.total,
+        paymentMethod: lastOrder.paymentMethod,
+        splitCash: lastOrder.splitCash,
+        splitCard: lastOrder.splitCard,
+        vatNumber: businessConfig?.vatNumber,
+      });
+      if (r.ok) return; // Success — don't fallback
+    }
+    // Fallback: browser iframe print
     printTaxInvoice({
       orderNumber: lastOrder.orderNumber,
       customerName: lastOrder.customerName || t('pos.customer_cash'),
@@ -677,6 +739,8 @@ export default function PosSystem() {
       subtotal: lastOrder.subtotal.toFixed(2),
       total: lastOrder.total.toFixed(2),
       paymentMethod: PAYMENT_METHOD_LABELS[lastOrder.paymentMethod] || lastOrder.paymentMethod,
+      splitCash: lastOrder.splitCash,
+      splitCard: lastOrder.splitCard,
       employeeName: lastOrder.employeeName,
       tableNumber: lastOrder.tableNumber,
       orderType: lastOrder.orderType,
@@ -800,6 +864,22 @@ export default function PosSystem() {
             <span className="text-xs">{posTerminalConnected ? t('pos.terminal_connected') : t('pos.terminal_disconnected')}</span>
             <div className={`w-2 h-2 rounded-full ${posTerminalConnected ? 'bg-green-400' : 'bg-orange-400'}`} />
           </Button>
+
+          {/* Direct USB Thermal Printer Button */}
+          {isWebSerialSupported() && (
+            <Button
+              variant={printerConnected ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowPrinterDialog(true)}
+              className="hidden sm:flex gap-1"
+              data-testid="button-printer-connect"
+              title="ربط الطابعة الحرارية"
+            >
+              <Printer className="w-4 h-4" />
+              <span className="text-xs">{printerConnected ? 'طابعة متصلة' : 'ربط طابعة'}</span>
+              <div className={`w-2 h-2 rounded-full ${printerConnected ? 'bg-green-400' : 'bg-gray-400'}`} />
+            </Button>
+          )}
 
           <Button
             variant="outline"
@@ -2317,6 +2397,98 @@ export default function PosSystem() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ── Direct Thermal Printer Dialog ── */}
+      <Dialog open={showPrinterDialog} onOpenChange={setShowPrinterDialog}>
+        <DialogContent className="max-w-sm font-cairo" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Printer className="w-5 h-5" />
+              ربط الطابعة الحرارية المباشرة
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className={`flex items-center gap-2 rounded-lg p-3 ${
+              printerConnected ? 'bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700' :
+              'bg-muted text-muted-foreground'}`}>
+              <div className={`w-3 h-3 rounded-full ${printerConnected ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+              <span className="text-sm font-medium">{printerConnected ? 'الطابعة متصلة' : 'الطابعة غير متصلة'}</span>
+            </div>
+            {printerMsg && (
+              <p className={`text-sm rounded-lg p-2 ${printerStatus === 'error' ? 'bg-red-50 text-red-700 dark:bg-red-950/20' : 'bg-blue-50 text-blue-700 dark:bg-blue-950/20'}`}>
+                {printerMsg}
+              </p>
+            )}
+            <div className="text-xs text-muted-foreground space-y-1 bg-muted/50 rounded-lg p-3">
+              <p>• الطابعة تتصل عبر USB/Serial</p>
+              <p>• تدعم ESC/POS (Epson, Bixolon, Xprinter)</p>
+              <p>• تأكد من تشغيل Chrome أو Edge</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {!printerConnected ? (
+                <Button
+                  className="col-span-2"
+                  disabled={printerStatus === 'connecting'}
+                  onClick={async () => {
+                    setPrinterStatus('connecting');
+                    setPrinterMsg('جاري الاتصال بالطابعة...');
+                    const r = await connectPrinter();
+                    if (r.ok) {
+                      setPrinterConnected(true);
+                      setPrinterStatus('ok');
+                      setPrinterMsg('تم الاتصال بنجاح!');
+                    } else {
+                      setPrinterStatus('error');
+                      setPrinterMsg(r.error || 'فشل الاتصال');
+                    }
+                  }}
+                  data-testid="button-printer-connect-action"
+                >
+                  {printerStatus === 'connecting' ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Printer className="w-4 h-4 ml-2" />}
+                  {printerStatus === 'connecting' ? 'جاري الاتصال...' : 'اتصال بالطابعة'}
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    variant="outline"
+                    disabled={printerStatus === 'testing'}
+                    onClick={async () => {
+                      setPrinterStatus('testing');
+                      setPrinterMsg('جاري اختبار الطباعة...');
+                      const r = await testPrint();
+                      setPrinterStatus(r.ok ? 'ok' : 'error');
+                      setPrinterMsg(r.ok ? 'تمت الطباعة بنجاح!' : (r.error || 'خطأ في الطباعة'));
+                    }}
+                    data-testid="button-printer-test"
+                  >
+                    {printerStatus === 'testing' ? <Loader2 className="w-4 h-4 ml-1 animate-spin" /> : <CheckCircle className="w-4 h-4 ml-1" />}
+                    اختبار الطباعة
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={async () => {
+                      await disconnectPrinter();
+                      setPrinterConnected(false);
+                      setPrinterStatus('idle');
+                      setPrinterMsg('تم قطع الاتصال');
+                    }}
+                    data-testid="button-printer-disconnect"
+                  >
+                    <X className="w-4 h-4 ml-1" />
+                    قطع الاتصال
+                  </Button>
+                </>
+              )}
+            </div>
+            {printerConnected && (
+              <p className="text-xs text-center text-muted-foreground">
+                عند الطباعة، سيتم الإرسال مباشرة للطابعة بدون أي نافذة خارجية
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </div>
     </div>
   );

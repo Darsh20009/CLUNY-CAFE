@@ -7726,6 +7726,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Sales Analytics Endpoint (fast aggregated, no enrichment) ─────────────────
+  app.get("/api/orders/analytics", async (req: any, res) => {
+    try {
+      const { from, to } = req.query;
+      const tenantId = getTenantIdFromRequest(req as any) || 'demo-tenant';
+      const { OrderModel } = await import("@shared/schema");
+
+      const fromDate = from ? new Date(from as string) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const toDate = to ? new Date(to as string) : new Date();
+      toDate.setHours(23, 59, 59, 999);
+
+      const orders = await OrderModel.find({
+        tenantId,
+        createdAt: { $gte: fromDate, $lte: toDate },
+        status: { $nin: ['cancelled'] }
+      }).select('totalAmount items createdAt paymentMethod channel orderType').lean();
+
+      const totalRevenue = orders.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+      const totalOrders = orders.length;
+
+      const productMap = new Map<string, { name: string; quantity: number; revenue: number }>();
+      orders.forEach((order: any) => {
+        (order.items || []).forEach((item: any) => {
+          const name = item.nameAr || item.name || 'غير معروف';
+          const qty = Number(item.quantity || 1);
+          const rev = Number(item.price || 0) * qty;
+          const key = String(item.coffeeItemId || name);
+          const curr = productMap.get(key) || { name, quantity: 0, revenue: 0 };
+          curr.quantity += qty;
+          curr.revenue += rev;
+          productMap.set(key, curr);
+        });
+      });
+
+      const dayMap = new Map<string, number>();
+      orders.forEach((order: any) => {
+        const day = new Date(order.createdAt).toISOString().slice(0, 10);
+        dayMap.set(day, (dayMap.get(day) || 0) + (order.totalAmount || 0));
+      });
+
+      const payMap = new Map<string, number>();
+      orders.forEach((order: any) => {
+        const m = order.paymentMethod || 'other';
+        payMap.set(m, (payMap.get(m) || 0) + (order.totalAmount || 0));
+      });
+
+      const channelMap = new Map<string, number>();
+      orders.forEach((order: any) => {
+        const ch = order.channel || 'other';
+        channelMap.set(ch, (channelMap.get(ch) || 0) + 1);
+      });
+
+      res.json({
+        totalRevenue,
+        totalOrders,
+        avgOrderValue: totalOrders > 0 ? totalRevenue / totalOrders : 0,
+        topProducts: Array.from(productMap.values()).sort((a, b) => b.quantity - a.quantity).slice(0, 12),
+        revenueByDay: Array.from(dayMap.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, revenue]) => ({ date, revenue })),
+        paymentBreakdown: Array.from(payMap.entries()).map(([method, revenue]) => ({ method, revenue })),
+        channelBreakdown: Array.from(channelMap.entries()).map(([channel, count]) => ({ channel, count })),
+      });
+    } catch (error) {
+      res.status(500).json({ error: 'Analytics failed' });
+    }
+  });
+
   // Get all orders (branch-filtered for non-admin/owner roles)
   app.get("/api/orders", async (req: any, res) => {
     try {
