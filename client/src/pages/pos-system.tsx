@@ -38,7 +38,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import DrinkCustomizationDialog, { type DrinkCustomization } from "@/components/drink-customization-dialog";
 
 type OrderType = "dine_in" | "takeaway" | "delivery" | "car_pickup";
-type PaymentMethod = "cash" | "card";
+type PaymentMethod = "cash" | "card" | "split";
 
 const ORDER_TYPES = [
   { id: "dine_in", name: "محلي", nameEn: "Dine-in", icon: Coffee },
@@ -50,11 +50,13 @@ const ORDER_TYPES = [
 const PAYMENT_METHODS = [
   { id: "cash", icon: Banknote, tKey: "pos.payment_cash" },
   { id: "card", icon: CreditCard, tKey: "pos.payment_card" },
+  { id: "split", icon: SplitSquareVertical, tKey: "pos.payment_split" },
 ];
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   cash: "كاش",
   card: "شبكة",
+  split: "مدفوع مجزأ",
   loyalty_points: "نقاط الولاء",
 };
 
@@ -115,6 +117,7 @@ export default function PosSystem() {
   const [posCustomizationItem, setPosCustomizationItem] = useState<{ item: CoffeeItem; group: CoffeeItem[] } | null>(null);
   const [showOrderReview, setShowOrderReview] = useState(false);
   const [orderNote, setOrderNote] = useState("");
+  const [splitCashAmount, setSplitCashAmount] = useState("");
   // Stores auto-print data; executed after receipt closes to avoid print-dialog freezing the UI
   const pendingPrintRef = useRef<Parameters<typeof printTaxInvoice>[0] | null>(null);
   const [posZoom, setPosZoom] = useState<number>(() => {
@@ -511,6 +514,10 @@ export default function PosSystem() {
         serviceFee: serviceFeeAmount > 0 ? serviceFeeAmount : undefined,
         orderType,
         paymentMethod: paymentMethod,
+        paymentDetails: paymentMethod === "split" ? JSON.stringify({
+          cash: Math.max(0, parseFloat(splitCashAmount) || 0),
+          card: Math.max(0, total - (parseFloat(splitCashAmount) || 0)),
+        }) : undefined,
         tableNumber: orderType === "dine_in" ? tableNumber : undefined,
         customerName,
         customerPhone,
@@ -552,6 +559,8 @@ export default function PosSystem() {
         tax,
         total,
         paymentMethod: paymentMethod,
+        splitCash: paymentMethod === "split" ? Math.max(0, parseFloat(splitCashAmount) || 0) : undefined,
+        splitCard: paymentMethod === "split" ? Math.max(0, total - (parseFloat(splitCashAmount) || 0)) : undefined,
         customerName,
         customerPhone,
         employeeName: employee?.fullName || t('pos.employee_fallback'),
@@ -613,6 +622,7 @@ export default function PosSystem() {
       setCustomerPoints(0);
       setPointsApplied(false);
       setPointsDiscount(0);
+      setSplitCashAmount("");
 
       queryClient.invalidateQueries({ queryKey: ["/api/orders/live"] });
     } catch (error) {
@@ -1222,7 +1232,7 @@ export default function PosSystem() {
                   key={method.id}
                   variant={paymentMethod === method.id ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setPaymentMethod(method.id as PaymentMethod)}
+                  onClick={() => { setPaymentMethod(method.id as PaymentMethod); setSplitCashAmount(""); }}
                   className={`flex flex-col gap-0.5 h-auto py-2 text-[10px] sm:text-xs ${
                     paymentMethod === method.id ? '' : ''
                   }`}
@@ -1248,6 +1258,39 @@ export default function PosSystem() {
                     <AlertTriangle className="w-3 h-3" />
                     <span className="font-medium">{t('pos.terminal_disconnected_status')}</span>
                   </div>
+                )}
+              </div>
+            )}
+            {paymentMethod === "split" && (
+              <div className="mt-2 space-y-2 bg-muted/40 rounded-xl p-2.5">
+                <p className="text-[10px] sm:text-xs font-bold text-center text-muted-foreground">
+                  {i18n.language === 'ar' ? 'أدخل المبلغ المدفوع كاشاً' : 'Enter cash amount paid'}
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <Banknote className="w-4 h-4 text-green-600 shrink-0" />
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder={i18n.language === 'ar' ? 'مبلغ الكاش' : 'Cash amount'}
+                    value={splitCashAmount}
+                    onChange={(e) => setSplitCashAmount(e.target.value)}
+                    className="h-8 text-sm text-center"
+                    data-testid="input-split-cash"
+                  />
+                  <span className="text-xs text-muted-foreground shrink-0">{t('pos.currency')}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <CreditCard className="w-4 h-4 text-blue-600 shrink-0" />
+                  <div className="flex-1 h-8 rounded-md border bg-background px-3 flex items-center justify-center text-sm font-bold text-blue-700">
+                    {Math.max(0, finalOrderTotal - (parseFloat(splitCashAmount) || 0)).toFixed(2)}
+                  </div>
+                  <span className="text-xs text-muted-foreground shrink-0">{t('pos.currency')}</span>
+                </div>
+                {parseFloat(splitCashAmount) > finalOrderTotal && (
+                  <p className="text-[10px] text-destructive text-center font-medium">
+                    {i18n.language === 'ar' ? 'مبلغ الكاش أكبر من الإجمالي' : 'Cash exceeds total'}
+                  </p>
                 )}
               </div>
             )}
@@ -1666,22 +1709,36 @@ export default function PosSystem() {
             </div>
 
             {/* Payment method (read-only summary) */}
-            <div className="flex items-center gap-2 bg-card border rounded-xl px-4 py-2.5">
+            <div className="bg-card border rounded-xl px-4 py-2.5 space-y-2">
               {(() => {
                 const m = PAYMENT_METHODS.find(m => m.id === paymentMethod);
                 if (!m) return null;
                 const IconComp = m.icon;
                 return (
                   <>
-                    <IconComp className="w-4 h-4 text-primary shrink-0" />
-                    <span className="text-sm font-bold flex-1">{t(m.tKey)}</span>
-                    <button
-                      className="text-xs text-muted-foreground underline"
-                      onClick={() => setShowOrderReview(false)}
-                      data-testid="review-change-payment"
-                    >
-                      {i18n.language === 'ar' ? 'تغيير' : 'Change'}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <IconComp className="w-4 h-4 text-primary shrink-0" />
+                      <span className="text-sm font-bold flex-1">{t(m.tKey)}</span>
+                      <button
+                        className="text-xs text-muted-foreground underline"
+                        onClick={() => setShowOrderReview(false)}
+                        data-testid="review-change-payment"
+                      >
+                        {i18n.language === 'ar' ? 'تغيير' : 'Change'}
+                      </button>
+                    </div>
+                    {paymentMethod === "split" && (
+                      <div className="text-xs space-y-1 pt-1 border-t">
+                        <div className="flex justify-between items-center">
+                          <span className="flex items-center gap-1 text-green-700 font-medium"><Banknote className="w-3 h-3" />{i18n.language === 'ar' ? 'كاش' : 'Cash'}</span>
+                          <span className="font-black text-green-700">{Math.max(0, parseFloat(splitCashAmount) || 0).toFixed(2)} {t('pos.currency')}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="flex items-center gap-1 text-blue-700 font-medium"><CreditCard className="w-3 h-3" />{i18n.language === 'ar' ? 'بطاقة' : 'Card'}</span>
+                          <span className="font-black text-blue-700">{Math.max(0, finalOrderTotal - (parseFloat(splitCashAmount) || 0)).toFixed(2)} {t('pos.currency')}</span>
+                        </div>
+                      </div>
+                    )}
                   </>
                 );
               })()}
@@ -1700,7 +1757,7 @@ export default function PosSystem() {
               </Button>
               <Button
                 className="h-11 font-black gap-2 shadow-lg shadow-primary/20"
-                disabled={orderItems.length === 0 || syncing}
+                disabled={orderItems.length === 0 || syncing || (paymentMethod === "split" && parseFloat(splitCashAmount) > finalOrderTotal)}
                 onClick={async () => {
                   setShowOrderReview(false);
                   // Wait for the review dialog overlay close animation to fully unmount
@@ -1907,6 +1964,18 @@ export default function PosSystem() {
                 <span className="text-muted-foreground">{t('pos.payment_label')}</span>
                 <span className="font-bold">{PAYMENT_METHOD_LABELS[lastOrder.paymentMethod] || lastOrder.paymentMethod}</span>
               </div>
+              {lastOrder.paymentMethod === "split" && (
+                <div className="space-y-0.5 mt-1 bg-muted/40 rounded-lg p-1.5">
+                  <div className="flex justify-between items-center">
+                    <span className="flex items-center gap-1 text-green-700"><Banknote className="w-3 h-3" />{i18n.language === 'ar' ? 'كاش' : 'Cash'}</span>
+                    <span className="font-black text-green-700">{(lastOrder.splitCash || 0).toFixed(2)} {t('pos.currency')}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="flex items-center gap-1 text-blue-700"><CreditCard className="w-3 h-3" />{i18n.language === 'ar' ? 'بطاقة' : 'Card'}</span>
+                    <span className="font-black text-blue-700">{(lastOrder.splitCard || 0).toFixed(2)} {t('pos.currency')}</span>
+                  </div>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">{t('pos.employee_label')}</span>
                 <span className="font-bold">{lastOrder.employeeName}</span>
