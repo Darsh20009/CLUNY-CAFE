@@ -85,11 +85,26 @@ interface KitchenOrderData {
   timestamp: string;
 }
 
+// System font stack that supports Arabic on all platforms without any network request.
+// Eliminates the Google Fonts loading delay that caused blank pages on thermal printers.
+const SYSTEM_FONT_CSS = `
+  <style>
+    /* Override any @import Google Fonts — use local Arabic-capable system fonts instead */
+    * { font-family: 'Segoe UI', 'Tahoma', 'Arial Unicode MS', 'Arial', sans-serif !important; }
+    body { font-family: 'Segoe UI', 'Tahoma', 'Arial Unicode MS', 'Arial', sans-serif !important; }
+  </style>
+`;
+
 // ── Iframe-based printing — no popup, no freeze, works with popup-blockers ────
 function openPrintWindow(html: string, _title: string, config: PrintConfig = {}): void {
-  const { paperWidth = '80mm', autoClose = false, autoPrint = true, showPrintButton = false } = config;
+  const { paperWidth = '80mm', autoPrint = true, showPrintButton = false } = config;
+
+  // Remove all Google Fonts @import — they cause blank pages because
+  // the font network request does not complete before window.print() fires.
+  const cleanHtml = html.replace(/@import\s+url\(['"]?https:\/\/fonts\.googleapis\.com[^;]*;?\s*/gi, '');
 
   const dynamicStyles = `
+    ${SYSTEM_FONT_CSS}
     <style>
       @media print {
         @page { size: ${paperWidth} auto; margin: 0; }
@@ -99,29 +114,21 @@ function openPrintWindow(html: string, _title: string, config: PrintConfig = {})
     </style>
   `;
 
-  // Wait for fonts then print — prevents blank-page output on thermal printers.
-  // Uses document.fonts.ready so Arabic/Latin fonts are loaded before the OS dialog opens.
+  // Print immediately on load — system fonts are always available, no waiting needed.
   const autoPrintScript = autoPrint ? `
     <script>
       window.addEventListener('load', function() {
-        var doPrint = function() {
+        setTimeout(function() {
           window.print();
           window.addEventListener('afterprint', function() {
             try { window.parent.postMessage('__cluny_print_done__', '*'); } catch(e){}
           });
-        };
-        if (document.fonts && document.fonts.ready) {
-          document.fonts.ready.then(function() {
-            setTimeout(doPrint, 200);
-          });
-        } else {
-          setTimeout(doPrint, 1200);
-        }
+        }, 100);
       });
     <\/script>
   ` : '';
 
-  let modifiedHtml = html.replace('</head>', `${dynamicStyles}${autoPrintScript}</head>`);
+  let modifiedHtml = cleanHtml.replace('</head>', `${dynamicStyles}${autoPrintScript}</head>`);
 
   if (showPrintButton && !autoPrint) {
     const btnHtml = `<div class="no-print" style="text-align:center;padding:20px;">
@@ -130,9 +137,8 @@ function openPrintWindow(html: string, _title: string, config: PrintConfig = {})
     modifiedHtml = modifiedHtml.replace('</body>', `${btnHtml}</body>`);
   }
 
-  // The iframe must NOT be visibility:hidden or 1×1px — doing so prevents
-  // the browser from rendering fonts/layout, which causes blank printed pages.
-  // Instead we place it far off-screen at a proper render size.
+  // iframe must NOT be visibility:hidden or 1×1px — the browser skips layout/rendering
+  // for such frames, producing blank output. Use opacity:0 at a real size instead.
   const iframe = document.createElement('iframe');
   iframe.setAttribute('data-print-frame', '1');
   iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;height:600px;border:none;opacity:0;pointer-events:none;';
