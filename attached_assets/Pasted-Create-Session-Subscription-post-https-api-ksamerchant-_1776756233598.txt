@@ -1,0 +1,145 @@
+Create Session - Subscription
+post
+https://api.ksamerchant.geidea.net/payment-intent/api/v2/direct/session-subscription
+
+
+Recent Requests
+Log in to see full request history
+Time	Status	User Agent	
+Make a request to see history.
+0 Requests This Month
+
+Body Params
+amount
+float
+required
+Defaults to 1850
+The total amount value of the payment. This parameter is required, and the format is a double - a number with 2 digits after the decimal point. For example 19.99
+
+1850
+currency
+string
+required
+Defaults to SAR
+The currency of the payment. This is a 3-digit alphabetic code, following the ISO 4217 currency code standard. For example: SAR
+
+SAR
+timestamp
+string
+Defaults to 2/21/2024 5:16:48 AM
+The timestamp of the moment at which the create session request has been initiated.
+
+2/21/2024 5:16:48 AM
+merchantReferenceId
+string
+Defaults to 10
+The unique identifier for the session given added by the merchant. Must be a valid UUID
+
+10
+signature
+string
+required
+Defaults to tF04+uS/SE+z4Bx6JxtO7UAd/srkX9KK7pM3Ertp2iM=
+A parameter to ensure the security and authenticity of API communications. It involves generating a signature using the contents of the API request and secret keys, which is then sent along with the request.
+
+tF04+uS/SE+z4Bx6JxtO7UAd/srkX9KK7pM3Ertp2iM=
+subscriptionId
+string
+required
+The subscription Id for which the payment is initiated. Must be a valid GUID. Subscription ID (generated from the create subscription API) can be passed in the request to capture the card on file details during the first transaction and later Geidea will auto-debit the customers as per the set frequency and interval based on securely stored token.
+
+paymentIntentId
+string
+If you have previously generated a payment intent, you can use this parameter to link your order to the payment intent. This will process a payment for the specified payment intent.
+
+paymentOperation
+string
+enum
+Defaults to Pay
+The type of payment operation to be performed. This is an optional parameter - if not submitted, the Geidea gateway will process a 'Pay' operation by default.
+
+
+Pay
+Allowed:
+
+Pay
+
+PreAuthorize
+
+AuthorizeCapture
+cardOnFile
+boolean
+Indicates whether to store the payment method for future use. If you pass 'true' in this field, Geidea will save the card and will return a tokenId in the callback after the order. This tokenId can be used later to process a payment for the same customer using the saved payment method.
+
+
+language
+string
+enum
+Defaults to en
+The language to be used on the checkout page.
+
+
+en
+Allowed:
+
+en
+
+ar
+callbackUrl
+string
+Defaults to https://www.callbackurl.com
+The URL where the payment gateway should send the callback after the transaction is completed. It must have a valid SSL certificate and start with 'https://'
+
+https://www.callbackurl.com
+Updated 10 months ago
+
+Create Session
+Standalone Save Card
+Did this page help you?
+Language
+
+Shell
+
+Node
+
+Ruby
+
+PHP
+
+JSON
+Credentials
+Basic
+base64
+username
+:
+password
+
+URL
+
+https://api.ksamerchant.geidea.net
+/payment-intent/api/v2/direct/session-subscription
+Request
+1
+{
+2
+  "amount": 1850,
+3
+  "currency": "SAR",
+4
+  "timestamp": "2/21/2024 5:16:48 AM",
+5
+  "merchantReferenceId": "10",
+6
+  "signature": "tF04+uS/SE+z4Bx6JxtO7UAd/srkX9KK7pM3Ertp2iM=",
+7
+  "paymentOperation": "Pay",
+8
+  "language": "en",
+9
+  "callbackUrl": "https://www.callbackurl.com"
+10
+}
+
+Try It!
+Response
+Click Try It! to start a request and see the response here!

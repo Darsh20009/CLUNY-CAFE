@@ -1,0 +1,129 @@
+https://api.geidea.ae/pgw/api/v6/direct/authenticate/payer
+
+Recent Requests
+Log in to see full request history
+Time	Status	User Agent	
+Make a request to see history.
+0 Requests This Month
+
+Go Back
+Body Params
+sessionId
+string
+required
+A session ID, is a unique identifier that a server generates as part of the create session API call and assigns to a merchant transaction for the duration of the session (15 min).
+
+orderId
+string
+required
+This is a unique identifier for this order to discern it from others order you created. If orderId is not sent with the request, an orderId is created by the server and returned in the response. The orderid can be used to refer to this order in subsequent transactions and in retrieving meta data about the order. The orderId must always be unique for every order created under your merchant profile. This must be a valid GUID.
+
+source
+string
+enum
+Defaults to DirectAPI
+Source of capturing the transaction. Use "DirectAPI" for this call.
+
+
+DirectAPI
+Allowed:
+
+HPP
+
+MobileApp
+
+DirectAPI
+paymentMethod
+object
+required
+Details of the card used for the purchase.
+
+
+paymentMethod object
+deviceIdentification
+object
+required
+Unique device identifier
+
+
+deviceIdentification object
+timeZone
+string
+Time in minutes from UTC timezone.
+
+Responses
+
+200
+200
+
+
+400
+400
+
+Updated 8 months ago
+
+Initiate Authentication
+Pay
+Did this page help you?
+Language
+
+Shell
+
+Node
+
+Ruby
+
+PHP
+
+JSON
+Credentials
+Basic
+base64
+username
+:
+password
+
+Request
+1
+{
+2
+  "source": "DirectAPI",
+3
+  "paymentMethod": {
+4
+    "cardholderName": "Ahmed",
+5
+    "cardNumber": "5123450000000008",
+6
+    "cvv": "100",
+7
+    "expiryDate": {
+8
+      "month": "01",
+9
+      "year": "39"
+10
+    }
+11
+  },
+12
+  "deviceIdentification": {
+13
+    "providerDeviceId": "6fd571631df9d1e58269af54eeb4c1f0",
+14
+    "language": "en",
+15
+    "userAgent": "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.79 Safari/537.36"
+16
+  }
+17
+}
+
+Try It!
+Response
+Click Try It! to start a request and see the response here! Or choose an example:
+application/json
+
+200 - Result
+
+400 - Result

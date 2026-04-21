@@ -1,0 +1,104 @@
+https://api.ksamerchant.geidea.net/pgw/api/v2/direct/pay/token
+
+Recent Requests
+Log in to see full request history
+Time	Status	User Agent	
+Make a request to see history.
+0 Requests This Month
+
+Body Params
+sessionid
+string
+required
+A session ID, is a unique identifier that a server generates as part of the create session API call and assigns to a merchant transaction for the duration of the session (15 min).
+
+signature
+string
+required
+A parameter to ensure the security and authenticity of API communications. It involves generating a signature using the contents of the API request and secret keys, which is then sent along with the request.
+
+initiatedBy
+string
+required
+Defaults to Merchant
+A value indicating whether the request is started from Merchant.
+
+Merchant
+agreementId
+string
+required
+This is a string value that represents the unique identifier of the card-on-file agreement to use. This ID must be agreed upon between the merchant and the payment gateway before the COF service can be used. It is recommended to use a unique value for each card-on-file agreement to avoid confusion or conflicts.
+
+agreementType
+string
+required
+Defaults to Unscheduled
+This is a string value that represents the type of card-on-file agreement to use. There are different types of card-on-file agreements available, and the type of agreement used can affect how the customer's card information is stored and processed. The currently supported values are RECURRING and UNSCHEDULED.
+
+Unscheduled
+callbackUrl
+string
+Defaults to https://www.callbackurl.com
+The URL where the payment gateway should send the callback after the transaction is completed. It must have a valid SSL certificate and start with 'https://'
+
+https://www.callbackurl.com
+merchantReferenceId
+string
+A unique merchant identifier for the order. You can send your own reference ID using this field.
+
+Responses
+
+200
+200
+
+
+400
+400
+
+Updated 10 months ago
+
+Pay
+Capture Transaction
+Did this page help you?
+Language
+
+Shell
+
+Node
+
+Ruby
+
+PHP
+
+JSON
+Credentials
+Basic
+base64
+username
+:
+password
+
+URL
+
+https://api.ksamerchant.geidea.net
+/pgw/api/v2/direct/pay/token
+Request
+1
+{
+2
+  "initiatedBy": "Merchant",
+3
+  "agreementType": "Unscheduled",
+4
+  "callbackUrl": "https://www.callbackurl.com"
+5
+}
+
+Try It!
+Response
+Click Try It! to start a request and see the response here! Or choose an example:
+application/json
+
+200 - Result
+
+400 - Result

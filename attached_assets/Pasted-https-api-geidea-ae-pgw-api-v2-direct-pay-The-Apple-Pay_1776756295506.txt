@@ -1,0 +1,148 @@
+https://api.geidea.ae/pgw/api/v2/direct/pay
+
+The Apple Pay API allows merchants to process payments using Apple Pay.This API accepts a decrypted Apple Pay payment token, validates it, and processes the transaction through the payment gateway.
+
+Recent Requests
+Log in to see full request history
+Time	Status	User Agent	
+Make a request to see history.
+0 Requests This Month
+
+Go Back
+Body Params
+sessionId
+string
+required
+A session ID, is a unique identifier that a server generates as part of the create session API call and assigns to a merchant transaction for the duration of the session (15 min).
+
+orderId
+string
+required
+This is a unique identifier for this order to discern it from others order you created. If orderId is not sent with the request, an orderId is created by the server and returned in the response. The orderid can be used to refer to this order in subsequent transactions and in retrieving meta data about the order. The orderId must always be unique for every order created under your merchant profile. This must be a valid GUID.
+
+threeDSecureId
+string
+required
+3D Secure ID of the order created through the Authenticate Payer operation.
+
+paymentMethod
+object
+required
+Details of the card used for the purchase.
+
+
+paymentMethod object
+source
+string
+enum
+Defaults to DirectAPI
+Source of capturing the transaction. Use "DirectAPI" for this call.
+
+
+DirectAPI
+Allowed:
+
+HPP
+
+MobileApp
+
+DirectAPI
+paymentOperation
+string
+enum
+Defaults to Pay
+Type of payment operation that is carried out with this transaction
+
+
+Pay
+Allowed:
+
+PreAuthorize
+
+AuthorizeCapture
+
+Pay
+customerPhoneNumber
+string
+Customer's phone number eg: "511111111". If phoneCountryCode is passed, phoneNumber must be passed.
+
+customerPhoneCountryCode
+string
+Country code of customer's phone number eg: "+971". If phoneNumber is passed, phoneCountryCode must be passed
+
+ReturnUrl
+string
+Defaults to https://somereturnurl.com
+The URL where the client will be automatically redirected to once the Authentication process has been successful. Must be dynamic, based on the order being created. Must be a URL with a HTTPS protocol.
+
+https://somereturnurl.com
+Responses
+
+200
+200
+
+
+400
+400
+
+Updated 8 months ago
+
+Authenticate Payer
+Merchant Initiated Transactions
+Did this page help you?
+Language
+
+Shell
+
+Node
+
+Ruby
+
+PHP
+
+JSON
+Credentials
+Basic
+base64
+username
+:
+password
+
+Request
+1
+{
+2
+  "paymentMethod": {
+3
+    "cardholderName": "Ahmed",
+4
+    "cardNumber": "5123450000000008",
+5
+    "cvv": "100",
+6
+    "expiryDate": {
+7
+      "month": "01",
+8
+      "year": "39"
+9
+    }
+10
+  },
+11
+  "source": "DirectAPI",
+12
+  "paymentOperation": "Pay",
+13
+  "ReturnUrl": "https://somereturnurl.com"
+14
+}
+
+Try It!
+Response
+Click Try It! to start a request and see the response here! Or choose an example:
+application/json
+
+200 - Result
+
+400 - Result

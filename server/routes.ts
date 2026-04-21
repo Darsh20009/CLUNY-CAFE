@@ -2759,36 +2759,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? paymentDataObj
         : JSON.stringify(paymentDataObj);
 
-      const directBody = {
-        sessionId,
-        method: "encrypted",
-        walletData: walletDataStr,
-        source: "DirectAPI",
-        initiatedBy: "Internet",
-      };
+      // Try multiple Apple Pay endpoints AND multiple body shapes.
+      // KSA merchants often have to route Apple Pay through api.geidea.ae infra.
+      // Per Geidea docs, "decrypted" is the documented enum value but several
+      // tenants accept "encrypted" too — try both.
+      const applePayEndpoints = [
+        `${baseUrl}/pgw/api/v2/direct/apple/pay`,
+        `${baseUrl}/pgw/api/v1/direct/apple/pay`,
+        `https://api.geidea.ae/pgw/api/v2/direct/apple/pay`,
+        `https://api.geidea.ae/pgw/api/v1/direct/apple/pay`,
+      ];
+
+      const bodyVariants = [
+        { sessionId, orderId, method: "encrypted", walletData: walletDataStr, source: "DirectAPI", initiatedBy: "Internet" },
+        { sessionId, orderId, method: "decrypted", walletData: walletDataStr, source: "DirectAPI", initiatedBy: "Internet" },
+        // Without orderId (Geidea will generate one)
+        { sessionId, method: "encrypted", walletData: walletDataStr, source: "DirectAPI", initiatedBy: "Internet" },
+        { sessionId, method: "decrypted", walletData: walletDataStr, source: "DirectAPI", initiatedBy: "Internet" },
+      ];
 
       console.log('[Apple Pay] Calling Geidea Direct Apple Pay API, sessionId:', sessionId, 'orderId:', orderId);
 
-      const geideaRes = await fetch(`${baseUrl}/pgw/api/v2/direct/apple/pay`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
-        body: JSON.stringify(directBody),
-      });
+      const attempts: Array<{ url: string; status: number; body: string; method: string }> = [];
+      let successData: any = null;
+      let successUrl = '';
 
-      const geideaData = await geideaRes.json() as any;
-      console.log('[Apple Pay] Direct API response:', JSON.stringify(geideaData));
+      outer:
+      for (const url of applePayEndpoints) {
+        for (const body of bodyVariants) {
+          try {
+            const r = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            const txt = await r.text();
+            attempts.push({ url, status: r.status, body: txt.substring(0, 250), method: body.method });
+            console.log(`[Apple Pay] ${url} method=${body.method} → ${r.status}: ${txt.substring(0, 200)}`);
 
-      if (!geideaRes.ok || (geideaData.responseCode && geideaData.responseCode !== '000')) {
-        return res.status(400).json({
-          error: geideaData.detailedResponseMessage || geideaData.responseMessage || "فشلت عملية الدفع",
-          responseCode: geideaData.responseCode,
-        });
+            if (r.ok && txt.trim().startsWith('{')) {
+              try {
+                const parsed = JSON.parse(txt);
+                if (!parsed.responseCode || parsed.responseCode === '000') {
+                  successData = parsed;
+                  successUrl = url;
+                  break outer;
+                }
+              } catch {}
+            }
+            // 404 = try next URL; other status codes (400/401) = try next body variant
+            if (r.status === 404) break;
+          } catch (fetchErr: any) {
+            attempts.push({ url, status: 0, body: fetchErr.message, method: body.method });
+            console.warn(`[Apple Pay] fetch error ${url}:`, fetchErr.message);
+            break;
+          }
+        }
       }
 
+      if (!successData) {
+        console.error('[Apple Pay] ❌ All Direct API attempts failed:', JSON.stringify(attempts));
+        const allNotFound = attempts.every(a => a.status === 404 || a.status === 0);
+        const hasAuthError = attempts.some(a => a.status === 401 || a.status === 403);
+        const lastWithBody = attempts.find(a => a.body && a.status >= 400 && a.status < 500 && a.status !== 404);
+        let errorMsg = 'فشلت عملية الدفع';
+        if (allNotFound) {
+          errorMsg = 'Apple Pay Direct API غير مفعّل على حساب Geidea. تواصل مع support@geidea.net أو 920000038 وأطلب تفعيل Apple Pay Direct API.';
+        } else if (hasAuthError) {
+          errorMsg = 'Apple Pay Direct API غير مفعّل على حساب Geidea (401). تواصل مع support@geidea.net أو 920000038.';
+        } else if (lastWithBody) {
+          try {
+            const parsed = JSON.parse(lastWithBody.body);
+            errorMsg = parsed.detailedResponseMessage || parsed.responseMessage || parsed.message || errorMsg;
+          } catch {
+            errorMsg = lastWithBody.body.substring(0, 200);
+          }
+        }
+        return res.status(400).json({ error: errorMsg, diagnostic: attempts });
+      }
+
+      console.log('[Apple Pay] ✅ Payment successful via:', successUrl);
       res.json({
         success: true,
-        transactionId: geideaData.order?.id || geideaData.orderId || sessionId,
-        responseCode: geideaData.responseCode,
+        transactionId: successData.order?.id || successData.orderId || sessionId,
+        responseCode: successData.responseCode,
       });
     } catch (err: any) {
       console.error('[Apple Pay] process error:', err);
