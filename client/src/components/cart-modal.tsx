@@ -3,25 +3,67 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useCartStore } from "@/lib/cart-store";
 import { ShoppingCart, Trash2, Plus, Minus } from "lucide-react";
-import { memo } from "react";
+import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import SarIcon from "@/components/sar-icon";
+import QuickCheckoutDialog from "@/components/quick-checkout-dialog";
+import { customerStorage } from "@/lib/customer-storage";
 
 const CartModal = memo(() => {
   const { t, i18n } = useTranslation();
   const dir = i18n.language === 'ar' ? 'rtl' : 'ltr';
+  const [, setLocation] = useLocation();
+  const [showQuickDialog, setShowQuickDialog] = useState(false);
   const {
     cartItems,
     isCartOpen,
     hideCart,
     updateQuantity,
     removeFromCart,
-    getTotalPrice
+    getTotalPrice,
+    setDeliveryInfo,
   } = useCartStore();
 
+  const { data: branches = [] } = useQuery<any[]>({
+    queryKey: ["/api/branches"],
+    staleTime: 300000,
+  });
+
+  const isAuthed = () => {
+    return !!(
+      localStorage.getItem("qahwa-customer") ||
+      localStorage.getItem("currentCustomer") ||
+      (customerStorage.isGuestMode() && customerStorage.getGuestInfo())
+    );
+  };
+
+  const proceedToCheckout = () => {
+    const activeBranches = branches.filter((b: any) => b.isActive === 1 || b.isActive === true || b.isActive === undefined);
+    if (activeBranches.length === 1) {
+      const b = activeBranches[0];
+      setDeliveryInfo({
+        type: 'pickup',
+        branchId: b.id,
+        branchName: b.nameAr,
+        branchAddress: b.address,
+        deliveryFee: 0,
+      });
+      hideCart();
+      setLocation('/checkout');
+    } else {
+      hideCart();
+      setLocation('/delivery');
+    }
+  };
+
   const handleCheckout = () => {
-    hideCart();
-    window.location.href = "/delivery";
+    if (isAuthed()) {
+      proceedToCheckout();
+    } else {
+      setShowQuickDialog(true);
+    }
   };
 
   return (
@@ -142,6 +184,11 @@ const CartModal = memo(() => {
           )}
         </div>
       </DialogContent>
+      <QuickCheckoutDialog
+        open={showQuickDialog}
+        onOpenChange={setShowQuickDialog}
+        onProceed={proceedToCheckout}
+      />
     </Dialog>
   );
 });

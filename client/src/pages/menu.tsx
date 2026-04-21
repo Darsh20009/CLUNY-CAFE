@@ -964,6 +964,8 @@ export default function MenuPage() {
                       <div className="aspect-video rounded-xl overflow-hidden bg-secondary">
                         <img 
                           src={offer.imageUrl} 
+                          loading="lazy"
+                          decoding="async"
                           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" 
                           alt={i18n.language === 'ar' ? offer.nameAr : offer.nameEn || offer.nameAr} 
                         />
@@ -1038,6 +1040,8 @@ export default function MenuPage() {
                   <div className="aspect-square rounded-xl overflow-hidden bg-secondary">
                     <img 
                       src={item.imageUrl} 
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" 
                       alt={i18n.language === 'ar' ? item.nameAr : item.nameEn || item.nameAr} 
                       onError={(e) => {

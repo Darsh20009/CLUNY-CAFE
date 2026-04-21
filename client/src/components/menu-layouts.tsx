@@ -54,6 +54,8 @@ export function ClassicMenuLayout({ items, onAddItem, lang, currency, favoriteId
             >
               <div className="w-20 h-20 rounded-xl overflow-hidden bg-secondary flex-shrink-0">
                 <img
+                  loading="lazy"
+                  decoding="async"
                   src={item.imageUrl || "/placeholder-coffee.png"}
                   className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                   alt={getItemName(item, lang)}
@@ -112,6 +114,8 @@ export function CardsMenuLayout({ items, onAddItem, lang, currency, favoriteIds,
             >
               <div className="relative aspect-square overflow-hidden bg-secondary">
                 <img
+                  loading="lazy"
+                  decoding="async"
                   src={item.imageUrl || "/placeholder-coffee.png"}
                   className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                   alt={getItemName(item, lang)}
@@ -175,6 +179,8 @@ export function ListMenuLayout({ items, onAddItem, lang, currency, favoriteIds, 
             >
               <div className="w-14 h-14 rounded-xl overflow-hidden bg-secondary flex-shrink-0">
                 <img
+                  loading="lazy"
+                  decoding="async"
                   src={item.imageUrl || "/placeholder-coffee.png"}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   alt={getItemName(item, lang)}

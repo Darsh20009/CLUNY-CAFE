@@ -295,6 +295,21 @@ export default function DeliverySelectionPage() {
     queryKey: ["/api/branches"],
   });
 
+  // Auto-skip this page if there's only one branch
+  useEffect(() => {
+    if (!isLoading && branches.length === 1 && cartItems && cartItems.length > 0) {
+      const b = branches[0];
+      setDeliveryInfo({
+        type: 'pickup',
+        branchId: b.id,
+        branchName: (b as any).nameAr,
+        branchAddress: (b as any).address,
+        deliveryFee: 0,
+      });
+      setLocation('/checkout');
+    }
+  }, [isLoading, branches, cartItems]);
+
   const handleContinue = () => {
     // Validate cart is not empty
     if (!cartItems || cartItems.length === 0) {
