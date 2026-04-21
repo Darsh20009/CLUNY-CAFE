@@ -55,7 +55,7 @@ interface MenuCategory {
 }
 
 export default function MenuPage() {
-  const { cartItems, addToCart } = useCartStore();
+  const { cartItems, addToCart, showCart } = useCartStore();
   const { isAuthenticated, customer } = useCustomer();
   const queryClient = useQueryClient();
 
@@ -1122,7 +1122,7 @@ export default function MenuPage() {
           className="fixed bottom-6 inset-x-4 z-50"
         >
           <Button 
-            onClick={() => setLocation("/cart")}
+            onClick={() => showCart()}
             className="w-full h-14 bg-primary hover:bg-primary/90 text-primary-foreground rounded-2xl shadow-lg flex items-center justify-between px-5"
             data-testid="button-view-cart"
           >

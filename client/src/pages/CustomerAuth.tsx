@@ -396,25 +396,6 @@ export default function CustomerAuth() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="register-referral" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 flex items-center gap-2 text-[#1f2025]">
-                    <Gift className="w-4 h-4" />
-                    {i18n.language === 'ar' ? "كود الإحالة (اختياري)" : "Referral Code (Optional)"}
-                  </Label>
-                  <Input
-                    id="register-referral"
-                    type="text"
-                    placeholder={i18n.language === 'ar' ? "أدخل كود الإحالة للحصول على نقاط إضافية" : "Enter referral code for bonus points"}
-                    value={referralCode}
-                    onChange={(e) => setReferralCode(e.target.value)}
-                    className="bg-stone-800/50 border-amber-900/50 text-amber-50 placeholder:text-amber-200/40 focus:border-amber-600 focus:ring-amber-600/30"
-                    data-testid="input-referral-code"
-                  />
-                  <p className="text-xs text-green-400/70 mt-1">
-                    {i18n.language === 'ar' ? "ستحصل أنت ومن أحالك على 50 نقطة لكل منكما!" : "You and your referrer will each get 50 bonus points!"}
-                  </p>
-                </div>
-
                 <Button
                   type="submit"
                   disabled={loading}
