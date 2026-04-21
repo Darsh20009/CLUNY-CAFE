@@ -1065,11 +1065,17 @@ export default function CheckoutPage() {
                   </div>
                 ) : (
                   <>
-                    {/* Apple Pay Express Button — direct in-app sheet, no redirect */}
+                    {/* Apple Pay Express Button — opens Geidea drop-in which renders Apple Pay natively */}
                     {applePayAvailable && (
                       <div className="space-y-3">
                         <button
-                          onClick={beginApplePaySession}
+                          onClick={() => {
+                            // Route through Geidea SDK drop-in. The SDK shows the
+                            // Apple Pay button using Geidea's own Merchant Identity
+                            // certificate, so we don't need our own apple-pay/validate-merchant.
+                            setSelectedPaymentMethod('geidea' as any);
+                            setTimeout(() => handleProceedPayment(), 0);
+                          }}
                           data-testid="button-apple-pay-express"
                           className="w-full flex items-center justify-center gap-2 active:opacity-80 transition-opacity"
                           style={{
