@@ -48,6 +48,7 @@ const MyOffers = lazy(() => import("@/pages/my-offers"));
 const ManagerEmployees = lazy(() => import("@/pages/manager-employees"));
 const EmployeeActivation = lazy(() => import("@/pages/employee-activation"));
 const ManagerDashboard = lazy(() => import("@/pages/manager-dashboard"));
+const ManagerStatistics = lazy(() => import("@/pages/manager-statistics"));
 const ManagerLogin = lazy(() => import("@/pages/manager-login"));
 const ManagerDrivers = lazy(() => import("@/pages/manager-drivers"));
 const ManagerTables = lazy(() => import("@/pages/manager-tables"));
@@ -269,6 +270,7 @@ function AppRouter() {
       <Route path="/manager/employees"><AuthGuard userType="employee" allowedRoles={["manager", "admin", "owner"]}><ManagerEmployees /></AuthGuard></Route>
       <Route path="/manager/drivers"><AuthGuard userType="manager"><ManagerDrivers /></AuthGuard></Route>
       <Route path="/manager/dashboard"><AuthGuard userType="manager"><ManagerDashboard /></AuthGuard></Route>
+      <Route path="/manager/statistics"><AuthGuard userType="manager"><ManagerStatistics /></AuthGuard></Route>
       <Route path="/manager/tables"><AuthGuard userType="manager"><ManagerTables /></AuthGuard></Route>
       <Route path="/manager/attendance"><AuthGuard userType="manager"><ManagerAttendance /></AuthGuard></Route>
       <Route path="/manager/inventory"><AuthGuard userType="manager"><InventorySmartPage /></AuthGuard></Route>

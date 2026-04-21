@@ -20,7 +20,7 @@ import {
  Coffee, Users, ShoppingBag, TrendingUp, DollarSign, 
  Package, MapPin, Layers, ArrowLeft, Calendar, Warehouse,
  UserCheck, Receipt, BarChart3, Download, TrendingDown, Activity, Plus, Trash2, ExternalLink, Edit2, Search,
- Gift, Star, Banknote
+ Gift, Star, Banknote, LineChart as LineChartIcon
 } from "lucide-react";
 import * as XLSX from 'xlsx';
 import { 
@@ -708,9 +708,9 @@ export default function ManagerDashboard() {
  })();
 
  return (
- <div className="min-h-screen bg-background p-6" dir="rtl">
+ <div className="min-h-screen bg-background p-3 sm:p-6 pb-24 sm:pb-6" dir="rtl">
  <div className="max-w-7xl mx-auto">
- <header className="bg-card backdrop-blur-sm rounded-2xl border border-border p-6 mb-6">
+ <header className="bg-card backdrop-blur-sm rounded-2xl border border-border p-4 sm:p-6 mb-4 sm:mb-6">
  <div className="flex items-center justify-between gap-4 flex-wrap">
  <div className="flex items-center gap-4">
  <div className="w-14 h-14 bg-primary rounded-xl flex items-center justify-center shadow-lg">
@@ -743,44 +743,52 @@ export default function ManagerDashboard() {
  </div>
  </header>
 
- <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
+ <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-3 mb-4 sm:mb-6">
  <Button
  onClick={() => setLocation("/employee/pos")}
- className="h-20 flex flex-col gap-2 rounded-xl"
+ className="h-16 sm:h-20 flex flex-col gap-1 sm:gap-2 rounded-xl"
  data-testid="button-pos"
  >
- <Package className="w-6 h-6" />
- <span className="text-sm">نقاط البيع</span>
+ <Package className="w-5 h-5 sm:w-6 sm:h-6" />
+ <span className="text-xs sm:text-sm">نقاط البيع</span>
+ </Button>
+ <Button
+ onClick={() => setLocation("/manager/statistics")}
+ className="h-16 sm:h-20 flex flex-col gap-1 sm:gap-2 rounded-xl bg-accent text-accent-foreground hover:bg-accent/90"
+ data-testid="button-statistics"
+ >
+ <LineChartIcon className="w-5 h-5 sm:w-6 sm:h-6" />
+ <span className="text-xs sm:text-sm">إحصائيات دقيقة</span>
  </Button>
  <Button
  onClick={() => setLocation("/manager/inventory")}
  variant="outline"
- className="h-20 flex flex-col gap-2 rounded-xl"
+ className="h-16 sm:h-20 flex flex-col gap-1 sm:gap-2 rounded-xl"
  data-testid="button-inventory"
  >
- <Warehouse className="w-6 h-6" />
- <span className="text-sm">المخزون</span>
+ <Warehouse className="w-5 h-5 sm:w-6 sm:h-6" />
+ <span className="text-xs sm:text-sm">المخزون</span>
  </Button>
  <Button
  onClick={() => setLocation("/manager/attendance")}
  variant="outline"
- className="h-20 flex flex-col gap-2 rounded-xl"
+ className="h-16 sm:h-20 flex flex-col gap-1 sm:gap-2 rounded-xl"
  data-testid="button-attendance"
  >
- <UserCheck className="w-6 h-6" />
- <span className="text-sm">الحضور</span>
+ <UserCheck className="w-5 h-5 sm:w-6 sm:h-6" />
+ <span className="text-xs sm:text-sm">الحضور</span>
  </Button>
  <Button
  onClick={handleExportData}
  variant="outline"
- className="h-20 flex flex-col gap-2 rounded-xl"
+ className="h-16 sm:h-20 flex flex-col gap-1 sm:gap-2 rounded-xl"
  data-testid="button-export"
  >
- <Download className="w-6 h-6" />
- <span className="text-sm">تصدير Excel</span>
+ <Download className="w-5 h-5 sm:w-6 sm:h-6" />
+ <span className="text-xs sm:text-sm">تصدير Excel</span>
  </Button>
  <Select value={dateFilter} onValueChange={(value: any) => setDateFilter(value)}>
- <SelectTrigger className="h-20 flex flex-col gap-2 bg-card border-border rounded-xl">
+ <SelectTrigger className="h-16 sm:h-20 flex flex-col gap-1 sm:gap-2 bg-card border-border rounded-xl">
  <Calendar className="w-6 h-6" />
  <span className="text-sm">
  {dateFilter === "today" ? "اليوم" : dateFilter === "week" ? "أسبوع" : dateFilter === "month" ? "شهر" : "الكل"}
@@ -893,16 +901,18 @@ export default function ManagerDashboard() {
  </div>
 
  <Tabs defaultValue="orders" className="space-y-4">
- <TabsList className="grid w-full grid-cols-8 h-14">
- <TabsTrigger value="orders" className="rounded-lg">الطلبات</TabsTrigger>
- <TabsTrigger value="analytics" className="rounded-lg">التحليلات</TabsTrigger>
- <TabsTrigger value="top-items" className="rounded-lg">الأكثر مبيعاً</TabsTrigger>
- <TabsTrigger value="employees" className="rounded-lg">أداء الموظفين</TabsTrigger>
- <TabsTrigger value="branches" className="rounded-lg">الفروع</TabsTrigger>
- <TabsTrigger value="coupons" className="rounded-lg">الكوبونات</TabsTrigger>
- <TabsTrigger value="delivery" className="rounded-lg">التوصيل</TabsTrigger>
- <TabsTrigger value="erp" className="rounded-lg">المحاسبة</TabsTrigger>
+ <div className="-mx-3 sm:mx-0 overflow-x-auto scrollbar-hide">
+ <TabsList className="inline-flex w-max min-w-full sm:grid sm:w-full sm:grid-cols-8 h-12 sm:h-14 px-3 sm:px-0 gap-1">
+ <TabsTrigger value="orders" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">الطلبات</TabsTrigger>
+ <TabsTrigger value="analytics" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">التحليلات</TabsTrigger>
+ <TabsTrigger value="top-items" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">الأكثر مبيعاً</TabsTrigger>
+ <TabsTrigger value="employees" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">أداء الموظفين</TabsTrigger>
+ <TabsTrigger value="branches" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">الفروع</TabsTrigger>
+ <TabsTrigger value="coupons" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">الكوبونات</TabsTrigger>
+ <TabsTrigger value="delivery" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">التوصيل</TabsTrigger>
+ <TabsTrigger value="erp" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">المحاسبة</TabsTrigger>
  </TabsList>
+ </div>
 
  <TabsContent value="orders" className="space-y-4">
  <Card>

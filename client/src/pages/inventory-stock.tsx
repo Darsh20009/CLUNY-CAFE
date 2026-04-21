@@ -154,8 +154,11 @@ export default function InventoryStockPage() {
     notes: "",
   });
 
-  const { data: stockData = [], isLoading } = useQuery<BranchStock[]>({
+  const { data: stockData = [], isLoading, dataUpdatedAt } = useQuery<BranchStock[]>({
     queryKey: ["/api/inventory/stock"],
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    staleTime: 2000,
   });
 
   const { data: branches = [] } = useQuery<Branch[]>({
@@ -385,31 +388,45 @@ export default function InventoryStockPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-background/30 dark:from-slate-950 dark:via-slate-900 dark:to-amber-950/10 p-4 md:p-6" dir="rtl">
-      <div className="max-w-7xl mx-auto space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="p-3 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 shadow-lg shadow-amber-500/20">
-              <Warehouse className="h-8 w-8 text-white" />
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-background/30 dark:from-slate-950 dark:via-slate-900 dark:to-amber-950/10 p-3 md:p-6 pb-24 sm:pb-6" dir="rtl">
+      <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="p-2.5 sm:p-3 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 shadow-lg shadow-amber-500/20">
+              <Warehouse className="h-6 w-6 sm:h-8 sm:w-8 text-white" />
             </div>
-            <div>
-              <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-amber-600 to-orange-600 bg-clip-text text-transparent">
+            <div className="min-w-0">
+              <h1 className="text-lg sm:text-2xl md:text-3xl font-bold bg-gradient-to-r from-amber-600 to-orange-600 bg-clip-text text-transparent">
                 إدارة المخزون
               </h1>
-              <p className="text-muted-foreground text-sm">تحكم كامل في المواد الخام والمخزون</p>
+              <p className="text-muted-foreground text-xs sm:text-sm flex items-center gap-2 flex-wrap">
+                <span>تتبع مباشر للمواد الخام</span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                  <span className="text-green-600 dark:text-green-500 font-medium">مباشر</span>
+                </span>
+                {dataUpdatedAt && (
+                  <span className="text-[10px] text-muted-foreground">
+                    آخر تحديث: {new Date(dataUpdatedAt).toLocaleTimeString("ar-SA")}
+                  </span>
+                )}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Button
               onClick={() => setIsNewBatchOpen(true)}
-              className="bg-gradient-to-r from-amber-500 to-background0 hover:from-amber-600 hover:to-orange-600 text-white shadow-lg shadow-amber-500/20"
+              size="sm"
+              className="bg-gradient-to-r from-amber-500 to-background0 hover:from-amber-600 hover:to-orange-600 text-white shadow-lg shadow-amber-500/20 sm:size-default"
               data-testid="button-new-batch"
             >
               <PackagePlus className="h-4 w-4 ml-2" />
-              إضافة دفعة جديدة
+              <span className="hidden sm:inline">إضافة دفعة جديدة</span>
+              <span className="sm:hidden">دفعة</span>
             </Button>
             <Button
               variant="outline"
+              size="sm"
               onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/inventory/stock"] })}
               data-testid="button-refresh"
             >
@@ -419,7 +436,7 @@ export default function InventoryStockPage() {
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-4">
           <Card className="border-0 shadow-lg bg-gradient-to-br from-green-50 to-emerald-100 dark:from-green-950/50 dark:to-emerald-900/30">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
