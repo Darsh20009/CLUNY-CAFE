@@ -214,16 +214,29 @@ export default function QuickCheckoutDialog({ open, onOpenChange, onProceed }: Q
               <Label htmlFor="quick-phone" className="text-sm font-semibold">
                 <Phone className="w-4 h-4 inline ml-1" /> رقم الجوال
               </Label>
-              <Input
-                id="quick-phone"
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="05xxxxxxxx"
-                dir="ltr"
-                className="h-12 text-right"
-                data-testid="input-quick-phone"
-              />
+              <div className="flex h-12 rounded-md border border-input bg-background overflow-hidden focus-within:ring-2 focus-within:ring-ring" dir="ltr">
+                <span className="flex items-center px-3 bg-muted text-foreground font-bold text-sm border-l border-input shrink-0">
+                  +966
+                </span>
+                <Input
+                  id="quick-phone"
+                  type="tel"
+                  inputMode="numeric"
+                  value={phone}
+                  onChange={(e) => {
+                    let v = e.target.value.replace(/\D/g, "");
+                    if (v.startsWith("966")) v = v.slice(3);
+                    if (v.startsWith("0")) v = v.slice(1);
+                    if (v.length > 9) v = v.slice(0, 9);
+                    setPhone(v);
+                  }}
+                  placeholder="5xxxxxxxx"
+                  dir="ltr"
+                  className="flex-1 h-full border-0 rounded-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                  data-testid="input-quick-phone"
+                />
+              </div>
+              <p className="text-[11px] text-muted-foreground">يبدأ بالرقم 5 — 9 أرقام</p>
             </div>
 
             <div className="flex gap-2 pt-2">
