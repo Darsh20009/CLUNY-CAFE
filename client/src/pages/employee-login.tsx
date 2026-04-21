@@ -10,6 +10,12 @@ import type { Employee } from "@shared/schema";
 import { Html5QrcodeScanner } from "html5-qrcode";
 import clunyLogoStaff from "@assets/cluny-logo-staff.png";
 
+function getDashboardForRole(role?: string): string {
+  if (role === "admin" || role === "owner") return "/admin/dashboard";
+  if (role === "manager") return "/manager/dashboard";
+  return "/employee/dashboard";
+}
+
 export default function EmployeeLogin() {
   const [location, setLocation] = useLocation();
   const [username, setUsername] = useState("");
@@ -39,7 +45,7 @@ export default function EmployeeLogin() {
       try {
         const parsed = JSON.parse(stored);
         if (parsed && parsed.id) {
-           window.location.href = "/employee/dashboard";
+           window.location.href = getDashboardForRole(parsed.role);
            return;
         }
       } catch (e) { console.warn('[EmployeeLogin] Failed to parse stored employee:', e); }
@@ -75,7 +81,7 @@ export default function EmployeeLogin() {
         delete employee.restoreKey;
       }
       localStorage.setItem("currentEmployee", JSON.stringify(employee));
-      window.location.href = "/employee/dashboard";
+      window.location.href = getDashboardForRole(employee.role);
     },
     onError: (err: any) => {
       setError(err?.message || "بيانات تسجيل الدخول غير صحيحة");

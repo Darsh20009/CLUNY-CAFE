@@ -42,7 +42,10 @@ export default function ManagerLogin() {
         delete employee.restoreKey;
       }
       localStorage.setItem("currentEmployee", JSON.stringify(employee));
-      setLocation("/manager/dashboard");
+      const dest = (employee.role === "admin" || employee.role === "owner")
+        ? "/admin/dashboard"
+        : "/manager/dashboard";
+      setLocation(dest);
     },
     onError: () => {
       setError("اسم المستخدم أو كلمة المرور غير صحيحة ");
