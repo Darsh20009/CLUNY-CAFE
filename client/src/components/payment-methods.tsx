@@ -153,8 +153,9 @@ export default function PaymentMethods({
      <div className="space-y-4">
      {paymentMethods.map((method) => {
     const isQahwaCard = (method.id as string) === 'qahwa-card';
-    const isNeoLeap = (method.id as string) === 'neoleap' || (method.id as string) === 'neoleap-apple-pay' || (method.id as string) === 'apple_pay';
     const isApplePay = (method.id as string) === 'apple_pay' || (method.id as string) === 'neoleap-apple-pay';
+    // Treat Apple Pay as a standard option (not the special NeoLeap visual block)
+    const isNeoLeap = ((method.id as string) === 'neoleap' || (method.id as string) === 'neoleap-apple-pay') && !isApplePay;
     const isLoyaltyCard = (method.id as string) === 'loyalty-card';
     const isSelected = selectedMethod === method.id;
     const isComingSoon = COMING_SOON_METHODS.includes(method.id as string);
@@ -425,7 +426,7 @@ export default function PaymentMethods({
                           ? 'font-amiri text-xl text-amber-900' 
                           : 'text-foreground group-hover:text-primary'
                       }`}>
-                        {method.nameAr}
+                        {isApplePay ? 'التوجه للدفع عبر Apple Pay' : method.nameAr}
                       </h4>
                       {isSelected && (
                         <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center animate-in zoom-in duration-300">
