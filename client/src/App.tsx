@@ -90,6 +90,7 @@ const AdminNotificationsPage = lazy(() => import("@/pages/admin-notifications"))
 const CustomerReservations = lazy(() => import("@/pages/customer-reservations"));
 const AdminDashboard = lazy(() => import("@/pages/admin-dashboard"));
 const AdminEmployees = lazy(() => import("@/pages/admin-employees"));
+const AdminCustomers = lazy(() => import("@/pages/admin-customers"));
 const AdminReports = lazy(() => import("@/pages/admin-reports"));
 const AdminSettings = lazy(() => import("@/pages/admin-settings"));
 const AdminBranches = lazy(() => import("@/pages/admin-branches"));
@@ -313,6 +314,7 @@ function AppRouter() {
       {/* Admin protected routes */}
       <Route path="/admin/dashboard"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminDashboard /></AdminLayout></AuthGuard></Route>
       <Route path="/admin/employees"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminEmployees /></AdminLayout></AuthGuard></Route>
+      <Route path="/admin/customers"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminCustomers /></AdminLayout></AuthGuard></Route>
       <Route path="/admin/reports"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminReports /></AdminLayout></AuthGuard></Route>
       <Route path="/admin/settings"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminSettings /></AdminLayout></AuthGuard></Route>
       <Route path="/admin/branches"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminBranches /></AdminLayout></AuthGuard></Route>

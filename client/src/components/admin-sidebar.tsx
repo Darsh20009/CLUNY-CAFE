@@ -1,5 +1,5 @@
 import { useLocation } from 'wouter';
-import { LayoutDashboard, Users, FileText, Settings, LogOut, Bell, MonitorSmartphone, CreditCard } from 'lucide-react';
+import { LayoutDashboard, Users, FileText, Settings, LogOut, Bell, MonitorSmartphone, CreditCard, UserCog } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Sidebar,
@@ -19,6 +19,7 @@ export const adminNavItems = [
   { id: 'dashboard', label: 'لوحة التحكم', shortLabel: 'الرئيسية', icon: LayoutDashboard, path: '/admin/dashboard' },
   { id: 'reports', label: 'التقارير التفصيلية', shortLabel: 'التقارير', icon: FileText, path: '/admin/reports' },
   { id: 'employees', label: 'الموظفون', shortLabel: 'الموظفون', icon: Users, path: '/admin/employees' },
+  { id: 'customers', label: 'إدارة العملاء', shortLabel: 'العملاء', icon: UserCog, path: '/admin/customers' },
   { id: 'notifications', label: 'إرسال الإشعارات', shortLabel: 'الإشعارات', icon: Bell, path: '/admin/notifications' },
   { id: 'settings', label: 'الإعدادات', shortLabel: 'الإعدادات', icon: Settings, path: '/admin/settings' },
   { id: 'apple-pay', label: 'فحص Apple Pay', shortLabel: 'Apple Pay', icon: CreditCard, path: '/admin/apple-pay-health' },
