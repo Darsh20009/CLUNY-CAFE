@@ -192,7 +192,7 @@ export default function ManagerStatistics() {
     });
     return Object.entries(items).map(([name, v]) => ({
       name, count: v.count, revenue: Number(v.revenue.toFixed(2)),
-    })).sort((a, b) => b.revenue - a.revenue).slice(0, 10);
+    })).sort((a, b) => b.revenue - a.revenue);
   }, [current]);
 
   const paymentBreakdown = useMemo(() => {
@@ -414,13 +414,16 @@ export default function ManagerStatistics() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
           <Card className="lg:col-span-2">
             <CardHeader className="pb-2">
-              <CardTitle className="text-base sm:text-lg">أعلى 10 منتجات مبيعاً</CardTitle>
+              <CardTitle className="text-base sm:text-lg flex items-center justify-between gap-2">
+                <span>مبيعات جميع المنتجات</span>
+                <Badge variant="secondary" className="text-xs" data-testid="badge-products-count">{topItems.length}</Badge>
+              </CardTitle>
             </CardHeader>
             <CardContent>
               {topItems.length === 0 ? (
                 <EmptyChart label="لا توجد منتجات" />
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
                   {topItems.map((item, idx) => {
                     const max = topItems[0]?.revenue || 1;
                     const pct = (item.revenue / max) * 100;
