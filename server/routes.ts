@@ -16636,14 +16636,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
         organizationName: "Cluny Cafe",
         description: "بطاقة كلوني للولاء",
         logoText: "CLUNY CAFE",
-        foregroundColor: "rgb(35, 60, 80)",
-        backgroundColor: "rgb(200, 215, 222)",
-        labelColor: "rgb(90, 115, 130)",
+        foregroundColor: "rgb(255, 248, 240)",
+        backgroundColor: "rgb(33, 24, 18)",
+        labelColor: "rgb(217, 167, 116)",
         storeCard: {
-          headerFields: [],
-          primaryFields: [],
-          secondaryFields: [],
-          auxiliaryFields: [],
+          headerFields: [
+            {
+              key: "points_header",
+              label: "النقاط",
+              value: points < 0 ? 0 : points,
+              textAlignment: "PKTextAlignmentRight"
+            }
+          ],
+          primaryFields: [
+            {
+              key: "balance",
+              label: "الرصيد القابل للاستبدال",
+              value: points < 0 ? "0.00 ر.س" : `${pointsValueSAR} ر.س`,
+              textAlignment: "PKTextAlignmentLeft"
+            }
+          ],
+          secondaryFields: [
+            {
+              key: "member",
+              label: "العضو",
+              value: customerName,
+              textAlignment: "PKTextAlignmentLeft"
+            },
+            {
+              key: "tier",
+              label: "العضوية",
+              value: "كلوني للولاء",
+              textAlignment: "PKTextAlignmentRight"
+            }
+          ],
+          auxiliaryFields: [
+            {
+              key: "card_no",
+              label: "رقم البطاقة",
+              value: cardNumber,
+              textAlignment: "PKTextAlignmentLeft"
+            }
+          ],
           backFields: [
             {
               key: "member_name",
@@ -16706,9 +16740,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const icon3xBuf  = readImg('pass-icon@3x.png');
       const logoBuf    = readImg('pass-logo.png');
       const logo2xBuf  = readImg('pass-logo@2x.png');
-      const stripBuf   = readImg('pass-strip.png');
-      const strip2x    = readImg('pass-strip@2x.png');
-      const strip3x    = readImg('pass-strip@3x.png');
+      // Note: strip image intentionally omitted so the card uses
+      // the rich fields-based layout (primary/secondary/auxiliary)
 
       const files: Record<string, Buffer> = {
         "pass.json": Buffer.from(JSON.stringify(passJson)),
@@ -16722,9 +16755,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       if (logoBuf)    files["logo.png"]      = logoBuf;
       if (logo2xBuf)  files["logo@2x.png"]   = logo2xBuf;
-      if (stripBuf)   files["strip.png"]     = stripBuf;
-      if (strip2x)    files["strip@2x.png"]  = strip2x;
-      if (strip3x)    files["strip@3x.png"]  = strip3x;
 
       const pass = new PKPass(files, { wwdr, signerCert, signerKey });
 
