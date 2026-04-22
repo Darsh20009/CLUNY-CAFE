@@ -110,8 +110,11 @@ export default function KitchenDisplay() {
 
   const { data: orders = [], isLoading, refetch } = useQuery<Order[]>({
     queryKey: ["/api/orders/kitchen"],
-    refetchInterval: autoRefresh ? 60000 : false,
-    staleTime: 30000,
+    refetchInterval: autoRefresh ? 10000 : false,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    staleTime: 5000,
   });
 
   const { data: businessConfig } = useQuery<any>({

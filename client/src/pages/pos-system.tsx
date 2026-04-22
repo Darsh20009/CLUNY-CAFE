@@ -167,6 +167,14 @@ export default function PosSystem() {
     enabled: true,
   });
 
+  // Catch-up: when WebSocket reconnects, immediately refresh live orders
+  // so any orders that arrived during a disconnect are not delayed
+  useEffect(() => {
+    if (wsConnected) {
+      queryClient.invalidateQueries({ queryKey: ["/api/orders/live"] });
+    }
+  }, [wsConnected]);
+
   const broadcastToDisplay = useCallback((event: string, data?: any) => {
     if (typeof wsSend === 'function') {
       wsSend({ type: "pos_cart_update", payload: { event, ...data } });
@@ -269,8 +277,11 @@ export default function PosSystem() {
 
   const { data: liveOrders } = useQuery<Order[]>({
     queryKey: ["/api/orders/live"],
-    refetchInterval: 60000,
-    staleTime: 30000,
+    refetchInterval: 10000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    staleTime: 5000,
   });
 
   const { data: businessConfig } = useQuery<any>({
