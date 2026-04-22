@@ -16090,39 +16090,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================
   app.get("/api/analytics/advanced", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const { period = 'today', branchId: qBranch } = req.query;
+      const { period = 'today', branchId: qBranch, from, to } = req.query as Record<string, string>;
       const finalBranchId = qBranch || req.employee?.branchId;
       const { OrderModel, CoffeeItemModel, EmployeeModel } = await import("@shared/schema");
 
       const now = new Date();
       let startDate: Date;
+      let endDate: Date | null = null;
       let prevStartDate: Date;
       let prevEndDate: Date;
 
-      switch (period) {
-        case 'week':
-          startDate = new Date(now); startDate.setDate(now.getDate() - 7); startDate.setHours(0,0,0,0);
-          prevStartDate = new Date(startDate); prevStartDate.setDate(startDate.getDate() - 7);
-          prevEndDate = new Date(startDate);
-          break;
-        case 'month':
-          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-          prevStartDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-          prevEndDate = new Date(startDate);
-          break;
-        case 'year':
-          startDate = new Date(now.getFullYear(), 0, 1);
-          prevStartDate = new Date(now.getFullYear() - 1, 0, 1);
-          prevEndDate = new Date(startDate);
-          break;
-        default: // today
-          startDate = new Date(now); startDate.setHours(0,0,0,0);
-          prevStartDate = new Date(startDate); prevStartDate.setDate(startDate.getDate() - 1);
-          prevEndDate = new Date(startDate);
+      if (from || to) {
+        // Custom date range overrides period
+        startDate = from ? new Date(from) : new Date(0);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = to ? new Date(to) : new Date();
+        endDate.setHours(23, 59, 59, 999);
+        const rangeMs = endDate.getTime() - startDate.getTime();
+        prevEndDate = new Date(startDate);
+        prevStartDate = new Date(startDate.getTime() - rangeMs);
+      } else {
+        switch (period) {
+          case 'week':
+            startDate = new Date(now); startDate.setDate(now.getDate() - 7); startDate.setHours(0,0,0,0);
+            prevStartDate = new Date(startDate); prevStartDate.setDate(startDate.getDate() - 7);
+            prevEndDate = new Date(startDate);
+            break;
+          case 'month':
+            startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+            prevStartDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            prevEndDate = new Date(startDate);
+            break;
+          case 'year':
+            startDate = new Date(now.getFullYear(), 0, 1);
+            prevStartDate = new Date(now.getFullYear() - 1, 0, 1);
+            prevEndDate = new Date(startDate);
+            break;
+          default: // today
+            startDate = new Date(now); startDate.setHours(0,0,0,0);
+            prevStartDate = new Date(startDate); prevStartDate.setDate(startDate.getDate() - 1);
+            prevEndDate = new Date(startDate);
+        }
       }
 
       const baseMatch: any = {
-        createdAt: { $gte: startDate },
+        createdAt: endDate ? { $gte: startDate, $lte: endDate } : { $gte: startDate },
         status: { $ne: 'cancelled' }
       };
       if (finalBranchId) baseMatch.branchId = finalBranchId;
@@ -16177,18 +16189,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           itemCountMap[id].revenue += (Number(item.price) || 0) * (Number(item.quantity) || 1);
         }
       }
-      // Attach images
-      const allItemIds = Object.keys(itemCountMap);
-      if (allItemIds.length > 0) {
-        const coffeeItems = await CoffeeItemModel.find({ id: { $in: allItemIds } }, { id: 1, imageUrl: 1 }).lean();
-        for (const ci of coffeeItems) {
-          if (itemCountMap[ci.id]) itemCountMap[ci.id].imageUrl = ci.imageUrl;
+      // Attach images AND include all products from catalog (even with 0 sales)
+      const allCoffeeItems = await CoffeeItemModel.find({}, { id: 1, nameAr: 1, nameEn: 1, imageUrl: 1, category: 1 }).lean();
+      for (const ci of allCoffeeItems) {
+        if (!itemCountMap[ci.id]) {
+          itemCountMap[ci.id] = { nameAr: ci.nameAr || 'منتج', nameEn: ci.nameEn || '', qty: 0, revenue: 0, imageUrl: ci.imageUrl };
+        } else {
+          // Prefer canonical names/images from catalog
+          itemCountMap[ci.id].nameAr = ci.nameAr || itemCountMap[ci.id].nameAr;
+          itemCountMap[ci.id].nameEn = ci.nameEn || itemCountMap[ci.id].nameEn;
+          itemCountMap[ci.id].imageUrl = ci.imageUrl || itemCountMap[ci.id].imageUrl;
         }
       }
       const topProducts = Object.entries(itemCountMap)
         .map(([id, d]) => ({ id, ...d, revenue: Math.round(d.revenue * 100) / 100 }))
-        .sort((a, b) => b.qty - a.qty)
-        .slice(0, 10);
+        .sort((a, b) => b.qty - a.qty || b.revenue - a.revenue);
 
       // ---- Employee performance ----
       const empMap: Record<string, { name: string; orders: number; revenue: number }> = {};

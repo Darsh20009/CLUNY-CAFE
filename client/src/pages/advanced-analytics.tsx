@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -65,10 +67,24 @@ export default function AdvancedAnalyticsPage() {
   const [, setLocation] = useLocation();
   const [period, setPeriod] = useState("today");
   const [activeTab, setActiveTab] = useState("overview");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [productSearch, setProductSearch] = useState("");
+
+  const useCustomRange = !!(fromDate || toDate);
 
   const { data, isLoading, refetch } = useQuery<AnalyticsResponse>({
-    queryKey: ["/api/analytics/advanced", period],
-    queryFn: () => fetch(`/api/analytics/advanced?period=${period}`).then(r => r.json()),
+    queryKey: ["/api/analytics/advanced", period, fromDate, toDate],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (useCustomRange) {
+        if (fromDate) params.set("from", fromDate);
+        if (toDate) params.set("to", toDate);
+      } else {
+        params.set("period", period);
+      }
+      return fetch(`/api/analytics/advanced?${params.toString()}`).then(r => r.json());
+    },
   });
 
   const summary = data?.summary;
@@ -117,8 +133,8 @@ export default function AdvancedAnalyticsPage() {
           <h1 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-2">
             <Activity className="w-8 h-8 text-cyan-400" />التحليلات المتقدمة
           </h1>
-          <div className="flex gap-2">
-            <Select value={period} onValueChange={setPeriod}>
+          <div className="flex gap-2 items-center">
+            <Select value={period} onValueChange={(v) => { setPeriod(v); setFromDate(""); setToDate(""); }} disabled={useCustomRange}>
               <SelectTrigger className="w-36 bg-slate-800 border-slate-700 text-white" data-testid="select-period">
                 <SelectValue />
               </SelectTrigger>
@@ -134,6 +150,52 @@ export default function AdvancedAnalyticsPage() {
             </Button>
           </div>
         </div>
+
+        {/* Custom date range */}
+        <Card className="bg-slate-800/50 border-slate-700 mb-6">
+          <CardContent className="p-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs text-slate-400">من تاريخ</Label>
+                <Input
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                  max={toDate || undefined}
+                  className="bg-slate-900 border-slate-700 text-white w-44"
+                  data-testid="input-date-from"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs text-slate-400">إلى تاريخ</Label>
+                <Input
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                  min={fromDate || undefined}
+                  className="bg-slate-900 border-slate-700 text-white w-44"
+                  data-testid="input-date-to"
+                />
+              </div>
+              {useCustomRange && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-slate-700 text-slate-300"
+                  onClick={() => { setFromDate(""); setToDate(""); }}
+                  data-testid="btn-clear-range"
+                >
+                  مسح التاريخ
+                </Button>
+              )}
+              <p className="text-xs text-slate-500 mr-auto">
+                {useCustomRange
+                  ? `النطاق المحدد: ${fromDate || "البداية"} → ${toDate || "اليوم"}`
+                  : "اختر نطاق تاريخ مخصص أو استخدم القائمة أعلاه"}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
         {isLoading ? (
           <div className="flex items-center justify-center h-60">
@@ -252,41 +314,94 @@ export default function AdvancedAnalyticsPage() {
               <TabsContent value="products" className="space-y-6">
                 <Card className="bg-slate-800/50 border-slate-700">
                   <CardHeader>
-                    <CardTitle className="text-white flex items-center gap-2">
-                      <Star className="w-5 h-5 text-amber-400" />أفضل المنتجات مبيعاً
-                    </CardTitle>
-                    <CardDescription className="text-slate-400">ترتيب المنتجات حسب الكميات والإيرادات</CardDescription>
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                      <div>
+                        <CardTitle className="text-white flex items-center gap-2">
+                          <Star className="w-5 h-5 text-amber-400" />جميع المنتجات والمشروبات
+                        </CardTitle>
+                        <CardDescription className="text-slate-400">
+                          عدد القطع المباعة والإيرادات لكل منتج — يشمل المنتجات التي لم تُبَع
+                        </CardDescription>
+                      </div>
+                      <Input
+                        placeholder="بحث عن منتج..."
+                        value={productSearch}
+                        onChange={(e) => setProductSearch(e.target.value)}
+                        className="w-full md:w-64 bg-slate-900 border-slate-700 text-white"
+                        data-testid="input-product-search"
+                      />
+                    </div>
                   </CardHeader>
                   <CardContent>
-                    {topProducts.length === 0 ? (
-                      <p className="text-slate-400 text-center py-8">لا توجد بيانات مبيعات في هذه الفترة</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {topProducts.map((product, idx) => {
-                          const maxQty = Math.max(...topProducts.map(p => p.qty), 1);
-                          const pct = (product.qty / maxQty) * 100;
-                          const medals = ['🥇', '🥈', '🥉'];
-                          return (
-                            <div key={product.id} className="flex items-center gap-4 p-3 bg-card/50 rounded-xl" data-testid={`row-product-${idx}`}>
-                              <span className="text-2xl w-8 text-center">{medals[idx] || (idx + 1)}</span>
-                              <div className="flex-1">
-                                <div className="flex justify-between mb-1">
-                                  <div>
-                                    <p className="text-white font-medium">{product.nameAr}</p>
-                                    {product.nameEn && <p className="text-slate-400 text-xs">{product.nameEn}</p>}
-                                  </div>
-                                  <div className="text-right">
-                                    <p className="text-amber-400 font-bold">{product.qty} حبة</p>
-                                    <p className="text-slate-400 text-xs">{product.revenue.toLocaleString()} <SarIcon /></p>
-                                  </div>
-                                </div>
-                                <Progress value={pct} className="h-1.5" />
-                              </div>
+                    {(() => {
+                      const q = productSearch.trim().toLowerCase();
+                      const filtered = q
+                        ? topProducts.filter(p =>
+                            (p.nameAr || "").toLowerCase().includes(q) ||
+                            (p.nameEn || "").toLowerCase().includes(q)
+                          )
+                        : topProducts;
+                      const totalUnits = topProducts.reduce((s, p) => s + p.qty, 0);
+                      const soldCount = topProducts.filter(p => p.qty > 0).length;
+                      const maxQty = Math.max(...topProducts.map(p => p.qty), 1);
+                      const medals = ['🥇', '🥈', '🥉'];
+
+                      return (
+                        <>
+                          <div className="grid grid-cols-3 gap-3 mb-4">
+                            <div className="bg-slate-900/60 rounded-lg p-3 text-center">
+                              <p className="text-slate-400 text-xs">إجمالي المنتجات</p>
+                              <p className="text-white font-bold text-xl">{topProducts.length}</p>
                             </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                            <div className="bg-slate-900/60 rounded-lg p-3 text-center">
+                              <p className="text-slate-400 text-xs">منتجات مُباعة</p>
+                              <p className="text-green-400 font-bold text-xl">{soldCount}</p>
+                            </div>
+                            <div className="bg-slate-900/60 rounded-lg p-3 text-center">
+                              <p className="text-slate-400 text-xs">إجمالي القطع المباعة</p>
+                              <p className="text-amber-400 font-bold text-xl">{totalUnits}</p>
+                            </div>
+                          </div>
+
+                          {filtered.length === 0 ? (
+                            <p className="text-slate-400 text-center py-8">لا توجد نتائج</p>
+                          ) : (
+                            <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
+                              {filtered.map((product, idx) => {
+                                const pct = (product.qty / maxQty) * 100;
+                                const isUnsold = product.qty === 0;
+                                return (
+                                  <div
+                                    key={product.id}
+                                    className={`flex items-center gap-4 p-3 rounded-xl ${isUnsold ? 'bg-slate-900/40 opacity-70' : 'bg-card/50'}`}
+                                    data-testid={`row-product-${product.id}`}
+                                  >
+                                    <span className="text-xl w-8 text-center">
+                                      {!isUnsold && idx < 3 && !q ? medals[idx] : (idx + 1)}
+                                    </span>
+                                    <div className="flex-1">
+                                      <div className="flex justify-between mb-1 gap-2">
+                                        <div className="min-w-0">
+                                          <p className="text-white font-medium truncate">{product.nameAr}</p>
+                                          {product.nameEn && <p className="text-slate-400 text-xs truncate">{product.nameEn}</p>}
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                          <p className={`font-bold ${isUnsold ? 'text-slate-500' : 'text-amber-400'}`}>
+                                            {product.qty} {product.qty === 0 ? '— لم يُبَع' : 'حبة'}
+                                          </p>
+                                          <p className="text-slate-400 text-xs">{product.revenue.toLocaleString()} <SarIcon /></p>
+                                        </div>
+                                      </div>
+                                      <Progress value={pct} className="h-1.5" />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </CardContent>
                 </Card>
               </TabsContent>
