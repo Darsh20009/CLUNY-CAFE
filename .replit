@@ -6,6 +6,7 @@ packages = ["unzip"]
 [agent]
 expertMode = true
 integrations = ["javascript_object_storage:2.0.0"]
+stack = "FULLSTACK_JS"
 
 [workflows]
 runButton = "Project"
