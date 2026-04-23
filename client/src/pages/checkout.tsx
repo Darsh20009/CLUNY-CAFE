@@ -12,7 +12,7 @@ import { useCartStore } from "@/lib/cart-store";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import PaymentMethods from "@/components/payment-methods";
-import GeideaCheckoutWidget from "@/components/geidea-checkout";
+import GeideaCheckoutWidget, { preloadGeideaSDK } from "@/components/geidea-checkout";
 import { customerStorage } from "@/lib/customer-storage";
 import { useCustomer } from "@/contexts/CustomerContext";
 import { useLoyaltyCard } from "@/hooks/useLoyaltyCard";
@@ -166,6 +166,9 @@ export default function CheckoutPage() {
   const [applePayAvailable, setApplePayAvailable] = useState(false);
   useEffect(() => {
     try { setApplePayAvailable(!!(window as any).ApplePaySession?.canMakePayments()); } catch {}
+    // Warm up the Geidea SDK in the background so the card-payment flow
+    // doesn't pay the script-download cost when the user clicks "Card".
+    preloadGeideaSDK();
   }, []);
   const [orderDetails, setOrderDetails] = useState<any>(null);
   const [showSuccessPage, setShowSuccessPage] = useState(false);

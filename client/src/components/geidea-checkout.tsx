@@ -30,6 +30,13 @@ declare global {
   }
 }
 
+// Exported so the checkout page can warm up the SDK as soon as it mounts —
+// this way clicking "Card payment" doesn't have to wait for a 1-2s download.
+export function preloadGeideaSDK(): void {
+  // fire-and-forget; ignore errors — startDropIn will retry/handle them.
+  loadGeideaSDK().catch(() => {});
+}
+
 async function loadGeideaSDK(): Promise<void> {
   if (window._geideaSdkLoaded && typeof window.GeideaCheckout !== "undefined") return;
   return new Promise((resolve, reject) => {
@@ -119,12 +126,12 @@ export default function GeideaCheckoutWidget({
 
     try {
       setState("loading-sdk");
-      await loadGeideaSDK();
-      if (!mountedRef.current) return;
+      // Run SDK loading and session creation in PARALLEL so users don't wait for
+      // a sequential 1-2s SDK download followed by a 1-2s session round-trip.
+      const sdkPromise = loadGeideaSDK();
 
-      setState("creating-session");
       const returnUrl = `${window.location.origin}/payment-return?orderNumber=${encodeURIComponent(orderNumber)}`;
-      const initRes = await fetch("/api/payments/init", {
+      const initPromise = fetch("/api/payments/init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -136,6 +143,12 @@ export default function GeideaCheckoutWidget({
           returnUrl,
         }),
       });
+
+      // Update UI label while requests are in flight
+      setState("creating-session");
+
+      const [, initRes] = await Promise.all([sdkPromise, initPromise]);
+      if (!mountedRef.current) return;
 
       if (!initRes.ok) {
         const err = await initRes.json().catch(() => ({}));

@@ -2399,69 +2399,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const appleMerchantId = resolveApplePayMerchantId(applePayMerchantId);
 
-      // Derive domain from incoming request so it matches the page's actual domain
-      const reqOrigin = (req.headers.origin as string || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
-      const reqHost = (req.headers.host as string || '').replace(/\/$/, '').split(':')[0];
-      const replitDev = (process.env.REPLIT_DEV_DOMAIN || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
-      const merchantDomain = reqOrigin || replitDev || reqHost || APPLE_PAY_DOMAIN;
+      // ⚠️ Apple Pay merchant validation MUST use the domain that is registered
+      // with Apple AND with Geidea (cluny.cafe). Using the request origin (e.g. a
+      // *.replit.dev preview URL) makes Apple/Geidea reject the validation.
+      // Always pass the registered production domain.
+      const merchantDomain = APPLE_PAY_DOMAIN;
 
       console.log('[Apple Pay] validate-merchant → merchantId:', appleMerchantId, 'domain:', merchantDomain, 'validationURL:', validationURL);
 
       const results: { url: string; status: number; body: string }[] = [];
 
-      // ── Body format variants to try ──
-      // Geidea KSA may expect different field names across API versions
+      // Helper: fetch with timeout so we don't block for tens of seconds
+      const fetchWithTimeout = async (url: string, init: RequestInit, ms = 5000) => {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), ms);
+        try {
+          return await fetch(url, { ...init, signal: ctrl.signal });
+        } finally {
+          clearTimeout(t);
+        }
+      };
+
+      // ── Body format variants to try (slimmed to the ones Geidea actually accepts) ──
       const bodyVariants = [
-        // v1: standard fields
         JSON.stringify({ validationUrl: validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE' }),
-        // v2: URL in "url" field
-        JSON.stringify({ url: validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE' }),
-        // v3: camelCase validationURL
         JSON.stringify({ validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE' }),
-        // v4: minimal – just the validation URL (let Geidea fill in merchant details from credentials)
-        JSON.stringify({ validationUrl: validationURL }),
-        // v5: with merchantName instead of displayName
-        JSON.stringify({ validationUrl: validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, merchantName: 'CLUNY CAFE' }),
       ];
 
-      // ── Step 1: Try all Geidea endpoints with all body variants ──
+      // ── Geidea endpoints (only the documented ones) ──
       const geideaEndpoints = [
         `${baseUrl}/pgw/api/v2/direct/apple/merchant-session`,
         `${baseUrl}/pgw/api/v1/direct/apple/merchant-session`,
-        `${baseUrl}/pgw/api/v2/direct/apple/sessions`,
-        `${baseUrl}/pgw/api/v1/direct/apple/sessions`,
-        `${baseUrl}/payment-intent/api/v2/direct/apple/merchant-session`,
-        `${baseUrl}/payment-intent/api/v2/direct/apple/sessions`,
         `${baseUrl}/payment/api/v1/direct/apple/merchant-session`,
-        `${baseUrl}/pgw/api/v2/direct/apple/validate-merchant`,
-        `${baseUrl}/pgw/api/v2/apple/merchant-session`,
-        // AE fallback (in case KSA routes to same backend)
-        `https://api.geidea.ae/pgw/api/v2/direct/apple/merchant-session`,
-        `https://api.geidea.ae/pgw/api/v2/direct/apple/sessions`,
       ];
 
       outer:
       for (const url of geideaEndpoints) {
         for (const body of bodyVariants) {
           try {
-            const geideaRes = await fetch(url, {
+            const geideaRes = await fetchWithTimeout(url, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
               body,
-            });
+            }, 5000);
             const responseText = await geideaRes.text();
             results.push({ url, status: geideaRes.status, body: responseText.substring(0, 300) });
-            console.log(`[Apple Pay] ${url} [${body.substring(0, 60)}] → ${geideaRes.status}: ${responseText.substring(0, 150)}`);
+            console.log(`[Apple Pay] ${url} → ${geideaRes.status}: ${responseText.substring(0, 150)}`);
 
             if (geideaRes.ok && responseText.trim().startsWith('{')) {
               try {
                 const merchantSession = JSON.parse(responseText);
-                // A valid Apple Pay merchant session has epochTimestamp
                 if (merchantSession.epochTimestamp || merchantSession.merchantSessionIdentifier || merchantSession.signature) {
                   console.log('[Apple Pay] ✅ Merchant session obtained via:', url);
                   return res.json(merchantSession);
                 }
-                // Geidea might wrap it
                 if (merchantSession.session || merchantSession.data || merchantSession.merchantSession) {
                   const inner = merchantSession.session || merchantSession.data || merchantSession.merchantSession;
                   if (typeof inner === 'object') {
@@ -2469,16 +2460,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     return res.json(inner);
                   }
                 }
-              } catch {
-                // not valid JSON object
-              }
+              } catch {}
             }
-            // 404 = endpoint doesn't exist — stop trying body variants, go to next endpoint
+            // 404 → try next URL; auth/server errors → stop entirely (no point trying more variants)
             if (geideaRes.status === 404) break;
+            if (geideaRes.status === 401 || geideaRes.status === 403 || geideaRes.status >= 500) break outer;
           } catch (fetchErr: any) {
             results.push({ url, status: 0, body: fetchErr.message });
             console.warn(`[Apple Pay] fetch error ${url}:`, fetchErr.message);
-            break; // network error — try next endpoint
+            break;
           }
         }
       }
@@ -2630,7 +2620,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         `${baseUrl}/payment-intent/api/v2/direct/session`,
         `${baseUrl}/payment-intent/api/v1/session`,
         `${baseUrl}/pgw/api/v2/direct/session`,
-        `${baseUrl}/pgw/api/v1/direct/session`,
       ];
 
       let sessionData: any = null;
@@ -2638,11 +2627,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const sessionUrl of sessionEndpoints) {
         try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 6000);
           const sessionRes = await fetch(sessionUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
             body: JSON.stringify(sessionBody),
-          });
+            signal: ctrl.signal,
+          }).finally(() => clearTimeout(timer));
           sessionData = await sessionRes.json() as any;
           console.log(`[Apple Pay] Session ${sessionUrl} → ${sessionRes.status}:`, JSON.stringify(sessionData).substring(0, 200));
           geideaSessionId = sessionData?.session?.id || sessionData?.sessionId || sessionData?.id;
@@ -2650,7 +2642,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log('[Apple Pay] ✅ Session created via:', sessionUrl, 'id:', geideaSessionId);
             break;
           }
-          // If we got a 404, try next; otherwise stop (auth error etc)
           if (sessionRes.status !== 404) break;
         } catch (sessionErr: any) {
           console.warn('[Apple Pay] Session endpoint error:', sessionUrl, sessionErr.message);
@@ -2759,23 +2750,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? paymentDataObj
         : JSON.stringify(paymentDataObj);
 
-      // Try multiple Apple Pay endpoints AND multiple body shapes.
-      // KSA merchants often have to route Apple Pay through api.geidea.ae infra.
-      // Per Geidea docs, "decrypted" is the documented enum value but several
-      // tenants accept "encrypted" too — try both.
+      // Try Geidea's documented Apple Pay endpoints. Per Geidea docs the
+      // documented enum is "encrypted" — try that first, then "decrypted" as fallback.
       const applePayEndpoints = [
         `${baseUrl}/pgw/api/v2/direct/apple/pay`,
         `${baseUrl}/pgw/api/v1/direct/apple/pay`,
-        `https://api.geidea.ae/pgw/api/v2/direct/apple/pay`,
-        `https://api.geidea.ae/pgw/api/v1/direct/apple/pay`,
       ];
 
       const bodyVariants = [
         { sessionId, orderId, method: "encrypted", walletData: walletDataStr, source: "DirectAPI", initiatedBy: "Internet" },
         { sessionId, orderId, method: "decrypted", walletData: walletDataStr, source: "DirectAPI", initiatedBy: "Internet" },
-        // Without orderId (Geidea will generate one)
-        { sessionId, method: "encrypted", walletData: walletDataStr, source: "DirectAPI", initiatedBy: "Internet" },
-        { sessionId, method: "decrypted", walletData: walletDataStr, source: "DirectAPI", initiatedBy: "Internet" },
       ];
 
       console.log('[Apple Pay] Calling Geidea Direct Apple Pay API, sessionId:', sessionId, 'orderId:', orderId);
@@ -3026,6 +3010,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
 
+          // Fetch with a 7s timeout so a slow Geidea response doesn't hang the user.
+          const geideaCtrl = new AbortController();
+          const geideaTimer = setTimeout(() => geideaCtrl.abort(), 7000);
           const geideaResponse = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session`, {
             method: 'POST',
             headers: {
@@ -3034,14 +3021,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
               'Accept': 'application/json',
             },
             body: JSON.stringify(geideaBody),
-          });
+            signal: geideaCtrl.signal,
+          }).finally(() => clearTimeout(geideaTimer));
 
           const geideaData = await geideaResponse.json() as any;
           console.log('[Geidea] Session response:', JSON.stringify(geideaData));
 
-          // Fallback: try v1/session if v2 fails
-          if (!geideaResponse.ok || geideaData.responseCode !== '000') {
-            console.log('[Geidea] v2 failed, trying v1/session...');
+          // Only fall back to v1 when v2 truly doesn't exist (404). For business
+          // errors (4xx with a response body) the v1 endpoint will return the
+          // exact same error — re-trying just doubles the latency.
+          if (geideaResponse.status === 404) {
+            console.log('[Geidea] v2 not found, trying v1/session...');
+            const ctrl2 = new AbortController();
+            const timer2 = setTimeout(() => ctrl2.abort(), 7000);
             const geideaResponse2 = await fetch(`${baseUrl}/payment-intent/api/v1/session`, {
               method: 'POST',
               headers: {
@@ -3050,7 +3042,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 'Accept': 'application/json',
               },
               body: JSON.stringify(geideaBody),
-            });
+              signal: ctrl2.signal,
+            }).finally(() => clearTimeout(timer2));
             const geideaData2 = await geideaResponse2.json() as any;
             console.log('[Geidea] v1/session response:', JSON.stringify(geideaData2));
 
@@ -3073,6 +3066,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
               error: "فشل في إنشاء جلسة الدفع عبر جيديا",
               details: geideaData2.detailedResponseMessage || geideaData2.responseMessage || 'خطأ غير معروف',
               raw: geideaData2,
+            });
+          }
+
+          if (!geideaResponse.ok || geideaData.responseCode !== '000') {
+            return res.status(400).json({
+              error: "فشل في إنشاء جلسة الدفع عبر جيديا",
+              details: geideaData.detailedResponseMessage || geideaData.responseMessage || 'خطأ غير معروف',
+              raw: geideaData,
             });
           }
 
