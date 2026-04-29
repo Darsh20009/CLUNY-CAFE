@@ -2384,8 +2384,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // the merchant identity certificate.
   app.post("/api/payments/apple-pay/validate-merchant", async (req, res) => {
     try {
-      const { validationURL } = req.body;
+      const { validationURL, sessionId } = req.body;
       if (!validationURL) return res.status(400).json({ error: "validationURL مطلوب" });
+      if (!sessionId) return res.status(400).json({ error: "sessionId مطلوب — يجب إنشاء جلسة Geidea قبل التحقق من التاجر" });
 
       const config = await BusinessConfigModel.findOne({ tenantId: 'demo-tenant' });
       const pg = config?.paymentGateway;
@@ -2405,7 +2406,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Always pass the registered production domain.
       const merchantDomain = APPLE_PAY_DOMAIN;
 
-      console.log('[Apple Pay] validate-merchant → merchantId:', appleMerchantId, 'domain:', merchantDomain, 'validationURL:', validationURL);
+      console.log('[Apple Pay] validate-merchant → merchantId:', appleMerchantId, 'domain:', merchantDomain, 'sessionId:', sessionId, 'validationURL:', validationURL);
 
       const results: { url: string; status: number; body: string }[] = [];
 
@@ -2420,17 +2421,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       };
 
-      // ── Body format variants to try (slimmed to the ones Geidea actually accepts) ──
+      // ── Body format variants to try ──
+      // Geidea KSA Direct Apple Pay REQUIRES sessionId in the body so it can
+      // authenticate the merchant validation against the active payment intent.
+      // Without sessionId, Geidea returns 401 Unauthorized even with valid Basic Auth.
       const bodyVariants = [
-        JSON.stringify({ validationUrl: validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE' }),
-        JSON.stringify({ validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE' }),
+        JSON.stringify({ sessionId, validationUrl: validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE', initiative: 'web', initiativeContext: merchantDomain }),
+        JSON.stringify({ sessionId, validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE', initiative: 'web', initiativeContext: merchantDomain }),
+        JSON.stringify({ sessionId, validationUrl: validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE' }),
       ];
 
-      // ── Geidea endpoints (only the documented ones) ──
+      // ── Geidea endpoints (v1 first, since diagnose shows that's the active one on KSA) ──
       const geideaEndpoints = [
-        `${baseUrl}/pgw/api/v2/direct/apple/merchant-session`,
-        `${baseUrl}/pgw/api/v1/direct/apple/merchant-session`,
         `${baseUrl}/payment/api/v1/direct/apple/merchant-session`,
+        `${baseUrl}/pgw/api/v1/direct/apple/merchant-session`,
+        `${baseUrl}/pgw/api/v2/direct/apple/merchant-session`,
       ];
 
       outer:

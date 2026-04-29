@@ -519,25 +519,28 @@ export default function CheckoutPage() {
 
     apSession.onvalidatemerchant = async (event: any) => {
       try {
-        // Run Geidea session creation and merchant validation in parallel.
-        // Both are async but onvalidatemerchant is allowed to be async.
-        const [initData, validRes] = await Promise.all([
-          fetch("/api/payments/apple-pay/init-session", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              amount: apAmount, currency: "SAR", orderId: apOrderId,
-              customerEmail: customerEmail || customer?.email,
-              customerPhone: customerPhone || customer?.phone,
-            }),
-          }).then(r => r.json()),
-          fetch("/api/payments/apple-pay/validate-merchant", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ validationURL: event.validationURL }),
+        // Geidea Direct Apple Pay flow REQUIRES an active sessionId before
+        // calling merchant-session, so we must run these sequentially:
+        // 1) init-session → get Geidea sessionId
+        // 2) validate-merchant → pass sessionId so Geidea authorizes the call
+        const initRes = await fetch("/api/payments/apple-pay/init-session", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: apAmount, currency: "SAR", orderId: apOrderId,
+            customerEmail: customerEmail || customer?.email,
+            customerPhone: customerPhone || customer?.phone,
           }),
-        ]);
-        // Save Geidea sessionId for onpaymentauthorized
-        if (initData?.sessionId) geideaSessionId = initData.sessionId;
+        });
+        const initData = await initRes.json().catch(() => ({}));
+        if (!initRes.ok || !initData?.sessionId) {
+          throw new Error(initData?.error || "فشل إنشاء جلسة الدفع");
+        }
+        geideaSessionId = initData.sessionId;
 
+        const validRes = await fetch("/api/payments/apple-pay/validate-merchant", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ validationURL: event.validationURL, sessionId: geideaSessionId }),
+        });
         const validData = await validRes.json().catch(() => ({}));
         if (!validRes.ok) throw new Error(validData.error || "فشل التحقق من التاجر");
         apSession.completeMerchantValidation(validData);
