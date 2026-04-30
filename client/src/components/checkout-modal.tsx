@@ -19,7 +19,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import GeideaCheckoutWidget from "./geidea-checkout";
-import ExpressCheckoutWallet from "./express-checkout-wallet";
+import ExpressCheckoutWallet, { isExpressWalletAvailable } from "./express-checkout-wallet";
 import SarIcon from "@/components/sar-icon";
 
 const GEIDEA_METHODS = ['geidea', 'neoleap', 'neoleap-apple-pay'];
@@ -411,8 +411,9 @@ const CheckoutModal = memo(() => {
    ) : (
      <>
        {/* Apple Pay via Geidea Express Checkout SDK.
-           SDK auto-hides the button on unsupported browsers (non-Safari/non-Apple). */}
-       {customerName && customerPhone && getTotalPrice() > 0 && (
+           Only render on Safari/Apple devices that can actually show the
+           Apple Pay button — otherwise customers see a blank area + divider. */}
+       {customerName && customerPhone && getTotalPrice() > 0 && isExpressWalletAvailable("apple-pay") && (
          <div className="space-y-3 mb-3">
            <ExpressCheckoutWallet
              amount={getTotalPrice()}

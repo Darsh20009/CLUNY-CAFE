@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import PaymentMethods from "@/components/payment-methods";
 import GeideaCheckoutWidget, { preloadGeideaSDK } from "@/components/geidea-checkout";
-import ExpressCheckoutWallet from "@/components/express-checkout-wallet";
+import ExpressCheckoutWallet, { isExpressWalletAvailable } from "@/components/express-checkout-wallet";
 import { customerStorage } from "@/lib/customer-storage";
 import { useCustomer } from "@/contexts/CustomerContext";
 import { useLoyaltyCard } from "@/hooks/useLoyaltyCard";
@@ -988,8 +988,10 @@ export default function CheckoutPage() {
                 ) : (
                   <>
                     {/* Apple Pay via Geidea Express Checkout SDK.
-                        SDK auto-hides the button on browsers/devices that don't support Apple Pay. */}
-                    {customerName.trim() && getFinalTotalWithPoints() > 0 && (
+                        Only render on Safari/Apple devices that can actually
+                        show the Apple Pay button — otherwise customers see a
+                        blank area and a useless "or pick another method" divider. */}
+                    {customerName.trim() && getFinalTotalWithPoints() > 0 && isExpressWalletAvailable("apple-pay") && (
                       <div className="space-y-3 mb-3">
                         <ExpressCheckoutWallet
                           amount={getFinalTotalWithPoints()}

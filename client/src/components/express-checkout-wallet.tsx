@@ -1,5 +1,31 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, AlertCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react";
+
+// ── Synchronous capability check ─────────────────────────────────────────────
+// Apple Pay can ONLY render in Safari on Apple devices (iPhone/iPad/Mac) with a
+// payment card set up in Wallet. Every other browser (Chrome, Firefox, Edge,
+// Samsung Internet, even Chrome/Firefox on iOS) returns false.
+//
+// Parent components should call this BEFORE rendering the wallet section so
+// customers on unsupported browsers don't see a loading spinner, blank space,
+// or the "or pick another payment method" divider — they see nothing at all.
+export function isExpressWalletAvailable(
+  wallet: "apple-pay" | "google-pay" | "samsung-pay" = "apple-pay"
+): boolean {
+  if (typeof window === "undefined") return false;
+  if (wallet === "apple-pay") {
+    const ApplePaySession = (window as any).ApplePaySession;
+    if (!ApplePaySession) return false;
+    try {
+      return !!ApplePaySession.canMakePayments();
+    } catch {
+      return false;
+    }
+  }
+  // We only support apple-pay right now; other wallets return false until we
+  // wire up Google Pay / Samsung Pay capability detection.
+  return false;
+}
 
 declare global {
   interface Window {
@@ -172,13 +198,20 @@ export default function ExpressCheckoutWallet({
   onError,
   onCancel,
 }: ExpressCheckoutWalletProps) {
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [state, setState] = useState<"loading" | "ready" | "error" | "unsupported">(
+    () => (isExpressWalletAvailable(wallet) ? "loading" : "unsupported")
+  );
   const [errorMsg, setErrorMsg] = useState("");
   const initStartedRef = useRef(false);
 
   useEffect(() => {
     if (initStartedRef.current) return;
     initStartedRef.current = true;
+
+    // Bail out immediately on unsupported browsers — no network calls, no SDK
+    // load, no spinner, no blank space. The parent should also be hiding this
+    // component via isExpressWalletAvailable(), this is just defense in depth.
+    if (!isExpressWalletAvailable(wallet)) return;
 
     let cancelled = false;
 
@@ -307,13 +340,21 @@ export default function ExpressCheckoutWallet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // On browsers that can't show Apple Pay we render absolutely nothing — no
+  // wrapper, no skeleton, no divider artefacts.
+  if (state === "unsupported") return null;
+
   return (
     <div className="w-full">
       {state === "loading" && (
-        <div className="flex items-center justify-center gap-2 py-3 text-sm text-muted-foreground" data-testid="status-express-checkout-loading">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          جاري تحضير الدفع السريع...
-        </div>
+        // Skeleton sized like an Apple Pay button so the layout doesn't jump
+        // when the real button appears. No spinner, no Arabic loading text —
+        // the wait is short (~1s) and a quiet placeholder feels faster than a
+        // loading message.
+        <div
+          className="w-full h-12 rounded-lg bg-black/90 dark:bg-white/10 animate-pulse"
+          data-testid="skeleton-express-checkout-loading"
+        />
       )}
       {state === "error" && (
         <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900" data-testid="status-express-checkout-error">
