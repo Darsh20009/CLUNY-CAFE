@@ -2462,7 +2462,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const sessionUrl of sessionEndpoints) {
         try {
           const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 7000);
+          // Geidea's session endpoint can take 5-15s during peak times.
+          // Use a generous 25s timeout so we don't fall back to v1 (which has
+          // a different request schema and rejects our v2 payload).
+          const timer = setTimeout(() => ctrl.abort(), 25000);
           const sessionRes = await fetch(sessionUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
