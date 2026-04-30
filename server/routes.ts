@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import mongoose from "mongoose";
 import type { Express } from "express";
-import { getSaudiDayBounds, getSaudiToday, getSaudiTomorrow, getSaudiDaysAgo, getSaudiMonthStart, getSaudiYearStart } from "./utils/timezone";
+import { getSaudiDayBounds, getSaudiToday, getSaudiTomorrow, getSaudiDaysAgo, getSaudiMonthStart, getSaudiYearStart, getSaudiDateString } from "./utils/timezone";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { 
@@ -7994,15 +7994,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ── Sales Analytics Endpoint (fast aggregated, no enrichment) ─────────────────
+  // IMPORTANT: All date boundaries use Asia/Riyadh (UTC+3) to match the
+  // Accounting Dashboard. Without this, the admin dashboard and accounting
+  // would disagree on what "today" means (3-hour drift).
   app.get("/api/orders/analytics", async (req: any, res) => {
     try {
-      const { from, to } = req.query;
+      const { from, to, period } = req.query as { from?: string; to?: string; period?: string };
       const tenantId = getTenantIdFromRequest(req as any) || 'demo-tenant';
       const { OrderModel } = await import("@shared/schema");
 
-      const fromDate = from ? new Date(from as string) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      const toDate = to ? new Date(to as string) : new Date();
-      toDate.setHours(23, 59, 59, 999);
+      let fromDate: Date;
+      let toDate: Date;
+
+      if (period) {
+        // Saudi-aware preset periods (mirror /api/accounting/dashboard)
+        switch (period) {
+          case 'today': {
+            const b = getSaudiDayBounds();
+            fromDate = b.start; toDate = b.end;
+            break;
+          }
+          case 'yesterday': {
+            const b = getSaudiDayBounds(getSaudiDaysAgo(1));
+            fromDate = b.start; toDate = b.end;
+            break;
+          }
+          case 'week': {
+            fromDate = getSaudiDaysAgo(7);
+            toDate = getSaudiDayBounds().end;
+            break;
+          }
+          case 'month': {
+            fromDate = getSaudiMonthStart();
+            toDate = getSaudiDayBounds().end;
+            break;
+          }
+          case 'year': {
+            fromDate = getSaudiYearStart();
+            toDate = getSaudiDayBounds().end;
+            break;
+          }
+          default: {
+            fromDate = getSaudiDaysAgo(30);
+            toDate = getSaudiDayBounds().end;
+          }
+        }
+      } else if (from || to) {
+        // Backward compatible: caller passes ISO timestamps (UTC) directly
+        fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        toDate = to ? new Date(to) : new Date();
+      } else {
+        // Default: last 30 days in Saudi time
+        fromDate = getSaudiDaysAgo(30);
+        toDate = getSaudiDayBounds().end;
+      }
 
       const orders = await OrderModel.find({
         tenantId,
@@ -8027,9 +8072,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       });
 
+      // Group revenue by day using SAUDI calendar date so labels align with
+      // what the cashier/manager actually consider "today" locally.
       const dayMap = new Map<string, number>();
       orders.forEach((order: any) => {
-        const day = new Date(order.createdAt).toISOString().slice(0, 10);
+        const day = getSaudiDateString(new Date(order.createdAt));
         dayMap.set(day, (dayMap.get(day) || 0) + (order.totalAmount || 0));
       });
 

@@ -21,6 +21,7 @@ import {
 } from "recharts";
 import type { Employee, Order } from "@shared/schema";
 import SarIcon from "@/components/sar-icon";
+import { getSaudiTodayRange, getSaudiDaysAgoBounds, getSaudiLastNDaysRange, getSaudiDateString } from "@/lib/saudi-time";
 
 export default function ExecutiveDashboard() {
   const [, setLocation] = useLocation();
@@ -61,29 +62,32 @@ export default function ExecutiveDashboard() {
     return <LoadingState message="جاري التحميل..." />;
   }
 
+  // All ranges are computed in Asia/Riyadh time so this dashboard agrees
+  // with the Accounting Dashboard. Without this, the boundary for "today"
+  // shifts by 3 hours and revenue numbers diverge.
+  const getRange = (filter: string): { start: Date; end: Date } => {
+    switch (filter) {
+      case "today":
+        return getSaudiTodayRange();
+      case "week":
+        return getSaudiLastNDaysRange(7);
+      case "month":
+        return getSaudiLastNDaysRange(30);
+      case "year":
+        return getSaudiLastNDaysRange(365);
+      default:
+        return { start: new Date(0), end: new Date() };
+    }
+  };
+
   const getFilteredOrders = () => {
-    const now = new Date();
+    const { start, end } = getRange(dateFilter);
     return orders.filter(order => {
       if (order.status === 'cancelled') return false;
       if (!order.createdAt) return dateFilter === "year";
       const orderDate = new Date(order.createdAt);
       if (isNaN(orderDate.getTime())) return false;
-      
-      switch (dateFilter) {
-        case "today":
-          return orderDate.toDateString() === now.toDateString();
-        case "week":
-          const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-          return orderDate >= weekAgo;
-        case "month":
-          const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-          return orderDate >= monthAgo;
-        case "year":
-          const yearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-          return orderDate >= yearAgo;
-        default:
-          return true;
-      }
+      return orderDate >= start && orderDate <= end;
     });
   };
 
@@ -93,11 +97,12 @@ export default function ExecutiveDashboard() {
   const completedRevenue = completedOrders.reduce((sum, o) => sum + Number(o.totalAmount || 0), 0);
   const avgOrderValue = filteredOrders.length > 0 ? totalRevenue / filteredOrders.length : 0;
 
+  const { start: todayStart, end: todayEnd } = getSaudiTodayRange();
   const todayOrders = orders.filter(o => {
     if (o.status === 'cancelled') return false;
     if (!o.createdAt) return false;
     const d = new Date(o.createdAt);
-    return d.toDateString() === new Date().toDateString();
+    return d >= todayStart && d <= todayEnd;
   });
   const todayRevenue = todayOrders.reduce((sum, o) => sum + Number(o.totalAmount || 0), 0);
 
@@ -107,13 +112,19 @@ export default function ExecutiveDashboard() {
       if (!order.createdAt) return;
       const date = new Date(order.createdAt);
       if (isNaN(date.getTime())) return;
-      const key = date.toLocaleDateString('ar-SA', { month: 'short', day: 'numeric' });
+      // Bucket by Saudi calendar day (YYYY-MM-DD) so days don't get split
+      // across the midnight UTC boundary.
+      const key = getSaudiDateString(date);
       if (!days[key]) days[key] = { revenue: 0, orders: 0 };
       days[key].revenue += Number(order.totalAmount || 0);
       days[key].orders += 1;
     });
     return Object.entries(days)
-      .map(([date, data]) => ({ date, ...data }))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([iso, data]) => {
+        const [, m, d] = iso.split("-");
+        return { date: `${parseInt(d)}/${parseInt(m)}`, ...data };
+      })
       .slice(-14);
   })();
 
@@ -158,32 +169,30 @@ export default function ExecutiveDashboard() {
     }> = {};
     
     const getPreviousPeriodOrders = () => {
-      const now = new Date();
+      // Saudi-aware previous-period bounds (mirror the current-period range).
+      let prev: { start: Date; end: Date };
+      switch (dateFilter) {
+        case "today":
+          prev = getSaudiDaysAgoBounds(1);
+          break;
+        case "week":
+          prev = { start: getSaudiDaysAgoBounds(13).start, end: getSaudiDaysAgoBounds(7).end };
+          break;
+        case "month":
+          prev = { start: getSaudiDaysAgoBounds(59).start, end: getSaudiDaysAgoBounds(30).end };
+          break;
+        case "year":
+          prev = { start: getSaudiDaysAgoBounds(729).start, end: getSaudiDaysAgoBounds(365).end };
+          break;
+        default:
+          return [] as typeof orders;
+      }
       return orders.filter(order => {
         if (order.status === 'cancelled') return false;
         if (!order.createdAt) return false;
         const orderDate = new Date(order.createdAt);
         if (isNaN(orderDate.getTime())) return false;
-        
-        switch (dateFilter) {
-          case "today":
-            const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-            return orderDate.toDateString() === yesterday.toDateString();
-          case "week":
-            const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-            const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-            return orderDate >= twoWeeksAgo && orderDate < oneWeekAgo;
-          case "month":
-            const twoMonthsAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-            const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-            return orderDate >= twoMonthsAgo && orderDate < oneMonthAgo;
-          case "year":
-            const twoYearsAgo = new Date(now.getTime() - 730 * 24 * 60 * 60 * 1000);
-            const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-            return orderDate >= twoYearsAgo && orderDate < oneYearAgo;
-          default:
-            return false;
-        }
+        return orderDate >= prev.start && orderDate < prev.end;
       });
     };
     

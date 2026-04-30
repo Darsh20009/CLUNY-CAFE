@@ -18,6 +18,7 @@ import {
 } from "recharts";
 import type { Order, Employee, Customer } from "@shared/schema";
 import SarIcon from "@/components/sar-icon";
+import { getSaudiDaysAgoBounds, getSaudiTodayRange, getSaudiLastNDaysRange, getSaudiHour, getSaudiDateString } from "@/lib/saudi-time";
 
 const COLORS = ["hsl(var(--primary))", "hsl(var(--accent))", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"];
 
@@ -69,37 +70,46 @@ export default function ManagerStatistics() {
   );
 
   const { current, previous, periodLabel } = useMemo(() => {
-    const now = new Date();
-    const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
+    // All ranges are computed in Asia/Riyadh time so this page agrees with
+    // the Accounting Dashboard. Mixing browser local time and Saudi time is
+    // what was making the totals look "inverted" between the two pages.
     let start: Date, end: Date, prevStart: Date, prevEnd: Date, label: string;
     switch (range) {
       case "today": {
-        start = startOfDay(now); end = now;
-        prevEnd = start; prevStart = new Date(start.getTime() - 24*60*60*1000);
+        const t = getSaudiTodayRange();
+        start = t.start; end = t.end;
+        const y = getSaudiDaysAgoBounds(1);
+        prevStart = y.start; prevEnd = y.end;
         label = "اليوم";
         break;
       }
       case "yesterday": {
-        end = startOfDay(now);
-        start = new Date(end.getTime() - 24*60*60*1000);
-        prevEnd = start; prevStart = new Date(start.getTime() - 24*60*60*1000);
+        const y = getSaudiDaysAgoBounds(1);
+        start = y.start; end = y.end;
+        const dby = getSaudiDaysAgoBounds(2);
+        prevStart = dby.start; prevEnd = dby.end;
         label = "أمس";
         break;
       }
       case "week": {
-        end = now; start = new Date(now.getTime() - 7*24*60*60*1000);
-        prevEnd = start; prevStart = new Date(start.getTime() - 7*24*60*60*1000);
+        const w = getSaudiLastNDaysRange(7);
+        start = w.start; end = w.end;
+        const pw = getSaudiDaysAgoBounds(13);
+        prevStart = pw.start;
+        prevEnd = getSaudiDaysAgoBounds(7).end;
         label = "آخر 7 أيام";
         break;
       }
       case "month": {
-        end = now; start = new Date(now.getTime() - 30*24*60*60*1000);
-        prevEnd = start; prevStart = new Date(start.getTime() - 30*24*60*60*1000);
+        const m = getSaudiLastNDaysRange(30);
+        start = m.start; end = m.end;
+        prevStart = getSaudiDaysAgoBounds(59).start;
+        prevEnd = getSaudiDaysAgoBounds(30).end;
         label = "آخر 30 يوم";
         break;
       }
       default: {
-        end = now; start = new Date(0);
+        end = new Date(); start = new Date(0);
         prevEnd = start; prevStart = new Date(0);
         label = "كل الفترة";
       }
@@ -151,8 +161,10 @@ export default function ManagerStatistics() {
     for (let i = 0; i < 24; i++) hours[i] = { count: 0, revenue: 0 };
     current.forEach(o => {
       if (!o.createdAt) return;
-      const h = new Date(o.createdAt).getHours();
-      if (isNaN(h)) return;
+      const d = new Date(o.createdAt);
+      if (isNaN(d.getTime())) return;
+      // Bucket by Saudi hour-of-day so the curve matches what staff see at the till.
+      const h = getSaudiHour(d);
       hours[h].count++;
       hours[h].revenue += Number(o.totalAmount || 0);
     });
@@ -169,14 +181,24 @@ export default function ManagerStatistics() {
       if (!o.createdAt) return;
       const d = new Date(o.createdAt);
       if (isNaN(d.getTime())) return;
-      const k = d.toLocaleDateString("ar-SA", { month: "short", day: "numeric" });
+      // Use Saudi date string (YYYY-MM-DD) as the key so days don't get split
+      // across the midnight UTC boundary.
+      const k = getSaudiDateString(d);
       if (!days[k]) days[k] = { revenue: 0, count: 0 };
       days[k].revenue += Number(o.totalAmount || 0);
       days[k].count++;
     });
-    return Object.entries(days).map(([date, v]) => ({
-      date, revenue: Number(v.revenue.toFixed(2)), count: v.count,
-    })).slice(-30);
+    return Object.entries(days)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([iso, v]) => {
+        const [, m, day] = iso.split("-");
+        return {
+          date: `${parseInt(day)}/${parseInt(m)}`,
+          revenue: Number(v.revenue.toFixed(2)),
+          count: v.count,
+        };
+      })
+      .slice(-30);
   }, [current]);
 
   const topItems = useMemo(() => {

@@ -13,9 +13,11 @@ import {
 } from 'recharts';
 import SarIcon from "@/components/sar-icon";
 
-const PERIOD_OPTIONS = [
-  { label: 'اليوم', days: 0 },
-  { label: 'أمس', days: 1 },
+// IMPORTANT: `period` values map to Saudi-aware date ranges on the server
+// (see /api/orders/analytics). Anything else falls back to from/to ISO strings.
+const PERIOD_OPTIONS: Array<{ label: string; days: number; period?: string }> = [
+  { label: 'اليوم', days: 0, period: 'today' },
+  { label: 'أمس', days: 1, period: 'yesterday' },
   { label: '7 أيام', days: 7 },
   { label: '30 يوم', days: 30 },
   { label: '90 يوم', days: 90 },
@@ -40,21 +42,26 @@ export default function AdminDashboard() {
   const [periodIdx, setPeriodIdx] = useState(2); // 7 days default
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const { days } = PERIOD_OPTIONS[periodIdx];
+  const { days, period } = PERIOD_OPTIONS[periodIdx];
+  // For the "today" / "yesterday" buckets we hand the server a Saudi-aware
+  // `period` so the date math matches the Accounting Dashboard exactly. For
+  // longer ranges (7/30/90 days) we still send from/to as ISO timestamps.
   const { from, to } = useMemo(() => {
+    if (period) return { from: '', to: '' };
     const toDate = new Date();
     const fromDate = new Date();
-    if (days === 0) { fromDate.setHours(0, 0, 0, 0); }
-    else if (days === 1) {
-      toDate.setDate(toDate.getDate() - 1); toDate.setHours(23, 59, 59, 999);
-      fromDate.setDate(fromDate.getDate() - 1); fromDate.setHours(0, 0, 0, 0);
-    } else { fromDate.setDate(fromDate.getDate() - days); }
+    fromDate.setDate(fromDate.getDate() - days);
     return { from: fromDate.toISOString(), to: toDate.toISOString() };
-  }, [days]);
+  }, [days, period]);
 
   const { data: analytics, isLoading, refetch } = useQuery<any>({
-    queryKey: ['/api/orders/analytics', from, to, refreshKey],
-    queryFn: () => fetch(`/api/orders/analytics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`).then(r => r.json()),
+    queryKey: ['/api/orders/analytics', period || '', from, to, refreshKey],
+    queryFn: () => {
+      const url = period
+        ? `/api/orders/analytics?period=${encodeURIComponent(period)}`
+        : `/api/orders/analytics?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+      return fetch(url).then(r => r.json());
+    },
     staleTime: 60_000,
   });
 
