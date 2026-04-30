@@ -2471,7 +2471,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }).finally(() => clearTimeout(timer));
           lastStatus = sessionRes.status;
           sessionData = await sessionRes.json().catch(() => ({}));
-          console.log(`[Express Checkout] ${sessionUrl} → ${sessionRes.status}:`, JSON.stringify(sessionData).substring(0, 300));
+          console.log(`[Express Checkout] ${sessionUrl} → ${sessionRes.status}:`, JSON.stringify(sessionData).substring(0, 1500));
           geideaSessionId = sessionData?.session?.id || sessionData?.sessionId || sessionData?.id;
           if (geideaSessionId) {
             console.log('[Express Checkout] ✅ Session created:', geideaSessionId);

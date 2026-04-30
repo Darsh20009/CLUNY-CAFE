@@ -103,26 +103,85 @@ export default function ExpressCheckoutWallet({
           throw new Error("لم يتم تحميل مكتبة Geidea بشكل صحيح");
         }
 
-        const api = new window.GeideaExpressCheckout();
-        const expressCheckout = await api.create({
-          sessionId: sessionData.sessionId,
-          onSuccess: (data: any) => {
-            if (data?.responseCode === "000" || data?.detailedResponseCode === "000") {
-              onSuccess(data);
-            } else {
-              onError(data?.detailedResponseMessage || data?.responseMessage || "فشل الدفع");
-            }
-          },
-          onError: (data: any) => {
-            const msg = data?.detailedResponseMessage || data?.responseMessage || "فشل الدفع";
-            onError(msg);
-          },
-          onCancel: () => {
-            if (onCancel) onCancel();
-          },
-        });
+        // Intercept SDK's console.error + console.log so we can capture the underlying
+        // "Failed to load wallet information" error AND any network errors logged by bt().
+        let sdkInternalError: any = null;
+        const originalConsoleError = console.error;
+        const originalConsoleLog = console.log;
+        const captureSdkError = (label: string, args: any[]) => {
+          try {
+            const payload = args?.[1] ?? args?.[0];
+            sdkInternalError = sdkInternalError || payload;
+            const msg = (() => {
+              try {
+                if (payload?.message) return payload.message;
+                if (typeof payload === "string") return payload;
+                return JSON.stringify(payload).substring(0, 400);
+              } catch {
+                return String(payload);
+              }
+            })();
+            originalConsoleLog.call(console, `[ExpressCheckout][${label}]`, msg);
+          } catch {}
+        };
+        console.error = (...args: any[]) => {
+          const first = args?.[0];
+          if (typeof first === "string" && first.includes("Failed to load wallet information")) {
+            captureSdkError("WALLET-FAIL", args);
+          }
+          originalConsoleError.apply(console, args);
+        };
+        console.log = (...args: any[]) => {
+          // bt() rejection in SDK does `console.log(e)` with the error object
+          const first = args?.[0];
+          if (
+            first &&
+            typeof first === "object" &&
+            (first.detailedResponseCode || first.responseCode || first.detailedResponseMessage)
+          ) {
+            captureSdkError("NETWORK", args);
+          }
+          originalConsoleLog.apply(console, args);
+        };
 
-        if (cancelled) return;
+        const restoreLoggers = () => {
+          console.error = originalConsoleError;
+          console.log = originalConsoleLog;
+        };
+
+        let expressCheckout: { mount: (selector: string) => void } | null = null;
+        try {
+          const api = new window.GeideaExpressCheckout();
+          expressCheckout = await api.create({
+            sessionId: sessionData.sessionId,
+            onSuccess: (data: any) => {
+              if (data?.responseCode === "000" || data?.detailedResponseCode === "000") {
+                onSuccess(data);
+              } else {
+                onError(data?.detailedResponseMessage || data?.responseMessage || "فشل الدفع");
+              }
+            },
+            onError: (data: any) => {
+              const msg = data?.detailedResponseMessage || data?.responseMessage || "فشل الدفع";
+              onError(msg);
+            },
+            onCancel: () => {
+              if (onCancel) onCancel();
+            },
+          });
+        } catch (sdkErr: any) {
+          restoreLoggers();
+          const detail = sdkInternalError
+            ? sdkInternalError?.detailedResponseMessage ||
+              sdkInternalError?.responseMessage ||
+              sdkInternalError?.message ||
+              JSON.stringify(sdkInternalError).substring(0, 300)
+            : sdkErr?.message || String(sdkErr);
+          throw new Error(`[Geidea] ${detail}`);
+        }
+        restoreLoggers();
+
+        if (cancelled || !expressCheckout) return;
         expressCheckout.mount(`#${containerId}`);
         setState("ready");
       } catch (err: any) {
