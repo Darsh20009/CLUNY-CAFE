@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import GeideaCheckoutWidget from "./geidea-checkout";
+import ExpressCheckoutWallet from "./express-checkout-wallet";
 import SarIcon from "@/components/sar-icon";
 
 const GEIDEA_METHODS = ['geidea', 'neoleap', 'neoleap-apple-pay'];
@@ -43,10 +44,6 @@ const CheckoutModal = memo(() => {
  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod | null>(null);
  const [currentStep, setCurrentStep] = useState<CheckoutStep>('review');
  const [orderDetails, setOrderDetails] = useState<any>(null);
- const [applePayAvailable, setApplePayAvailable] = useState(false);
- useEffect(() => {
-   try { setApplePayAvailable(!!(window as any).ApplePaySession?.canMakePayments()); } catch {}
- }, []);
 
  // State for customer form fields
  const [customerName, setCustomerName] = useState(customer?.name || "");
@@ -184,74 +181,20 @@ const CheckoutModal = memo(() => {
    return;
  }
 
- // Apple Pay: start native session directly from this user gesture click
- if (selectedPaymentMethod === 'apple_pay') {
-   beginApplePaySession();
-   return;
- }
-
+ // Apple Pay is now handled by Geidea Express Checkout SDK button (rendered below).
+ // The user taps the SDK-rendered Apple Pay button directly — no need to call
+ // a function from "Confirm Order".
  createOrderMutation.mutate(buildModalOrderData());
  };
 
- const beginApplePaySession = () => {
-   if (!customerName || !customerPhone) {
-     toast({ variant: "destructive", title: t("checkout.enter_customer_name") });
-     return;
-   }
-   if (!(window as any).ApplePaySession?.canMakePayments()) {
-     toast({ variant: "destructive", title: "Apple Pay غير متاح", description: "يرجى استخدام Safari على جهاز Apple مع بطاقة في Wallet" });
-     return;
-   }
-   const amount = getTotalPrice();
-   const orderId = `CLN-${Date.now()}`;
-   let session: any;
-   try {
-     session = new (window as any).ApplePaySession(3, {
-       countryCode: "SA", currencyCode: "SAR",
-       supportedNetworks: ["visa", "masterCard", "mada"],
-       merchantCapabilities: ["supports3DS"],
-       total: { label: "CLUNY CAFE", amount: amount.toFixed(2), type: "final" },
-     });
-   } catch (e: any) {
-     toast({ variant: "destructive", title: "تعذّر فتح Apple Pay", description: e.message });
-     return;
-   }
-   session.onvalidatemerchant = async (event: any) => {
-     try {
-       const res = await fetch("/api/payments/apple-pay/validate-merchant", {
-         method: "POST", headers: { "Content-Type": "application/json" },
-         body: JSON.stringify({ validationURL: event.validationURL }),
-       });
-       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "فشل التحقق");
-       session.completeMerchantValidation(await res.json());
-     } catch (err: any) {
-       session.abort();
-       toast({ variant: "destructive", title: "خطأ في Apple Pay", description: err.message });
-     }
-   };
-   session.onpaymentmethodselected = () => {
-     session.completePaymentMethodSelection({ newTotal: { label: "CLUNY CAFE", amount: amount.toFixed(2), type: "final" } });
-   };
-   session.onpaymentauthorized = async (event: any) => {
-     try {
-       const payRes = await fetch("/api/payments/apple-pay/process", {
-         method: "POST", headers: { "Content-Type": "application/json" },
-         body: JSON.stringify({ applePayToken: event.payment.token, amount, currency: "SAR", orderId, customerEmail: customer?.email, customerPhone }),
-       });
-       const payData = await payRes.json();
-       if (!payRes.ok || !payData.success) throw new Error(payData.error || "فشل الدفع");
-       session.completePayment((window as any).ApplePaySession.STATUS_SUCCESS);
-       createOrderMutation.mutate(buildModalOrderData({
-         paymentMethod: 'apple_pay', status: 'payment_confirmed',
-         paymentStatus: 'paid', paymentReference: orderId, paymentSessionId: payData.transactionId,
-       }));
-     } catch (err: any) {
-       session.completePayment((window as any).ApplePaySession.STATUS_FAILURE);
-       toast({ variant: "destructive", title: "فشل الدفع", description: err.message });
-     }
-   };
-   session.oncancel = () => toast({ title: "تم إلغاء الدفع", description: "يمكنك المحاولة مرة أخرى" });
-   session.begin();
+ // Called when Geidea Express Checkout SDK reports a successful Apple Pay payment.
+ const onApplePayExpressSuccess = (data: any) => {
+   const geideaOrderId = data?.orderId || data?.reference;
+   createOrderMutation.mutate(buildModalOrderData({
+     paymentMethod: 'apple_pay', status: 'payment_confirmed',
+     paymentStatus: 'paid', paymentReference: geideaOrderId,
+     paymentSessionId: geideaOrderId,
+   }));
  };
 
   const handlePaymentConfirmed = async (order: any) => {
@@ -467,23 +410,20 @@ const CheckoutModal = memo(() => {
      </div>
    ) : (
      <>
-       {/* Apple Pay Express Button — single tap to pay, only on supported devices */}
-       {applePayAvailable && (
+       {/* Apple Pay via Geidea Express Checkout SDK.
+           SDK auto-hides the button on unsupported browsers (non-Safari/non-Apple). */}
+       {customerName && customerPhone && getTotalPrice() > 0 && (
          <div className="space-y-3 mb-3">
-           <button
-             onClick={beginApplePaySession}
-             data-testid="button-apple-pay-express-modal"
-             style={{
-               WebkitAppearance: "-apple-pay-button" as any,
-               "--apple-pay-button-type": "pay",
-               "--apple-pay-button-style": "black",
-               display: "block",
-               width: "100%",
-               height: "48px",
-               borderRadius: "14px",
-               border: "none",
-               cursor: "pointer",
-             } as any}
+           <ExpressCheckoutWallet
+             amount={getTotalPrice()}
+             orderId={`CLN-${Date.now()}`}
+             wallet="apple-pay"
+             customerEmail={customer?.email}
+             customerPhone={customerPhone}
+             containerId="apple-pay-express-modal-container"
+             onSuccess={onApplePayExpressSuccess}
+             onError={(msg) => toast({ variant: "destructive", title: "فشل الدفع", description: msg })}
+             onCancel={() => toast({ title: "تم إلغاء الدفع" })}
            />
            <div className="flex items-center gap-3">
              <div className="flex-1 h-px bg-border" />

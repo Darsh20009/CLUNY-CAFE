@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import PaymentMethods from "@/components/payment-methods";
 import GeideaCheckoutWidget, { preloadGeideaSDK } from "@/components/geidea-checkout";
+import ExpressCheckoutWallet from "@/components/express-checkout-wallet";
 import { customerStorage } from "@/lib/customer-storage";
 import { useCustomer } from "@/contexts/CustomerContext";
 import { useLoyaltyCard } from "@/hooks/useLoyaltyCard";
@@ -163,11 +164,10 @@ export default function CheckoutPage() {
   const [cashDistanceChecking, setCashDistanceChecking] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [showInlineGeidea, setShowInlineGeidea] = useState(false);
-  const [applePayAvailable, setApplePayAvailable] = useState(false);
   useEffect(() => {
-    try { setApplePayAvailable(!!(window as any).ApplePaySession?.canMakePayments()); } catch {}
     // Warm up the Geidea SDK in the background so the card-payment flow
     // doesn't pay the script-download cost when the user clicks "Card".
+    // (The same SDK script also serves the Express Checkout wallets API.)
     preloadGeideaSDK();
   }, []);
   const [orderDetails, setOrderDetails] = useState<any>(null);
@@ -484,115 +484,31 @@ export default function CheckoutPage() {
     } finally { setIsValidatingDiscount(false); }
   };
 
-  const beginApplePaySession = () => {
-    // NOTE: This function MUST remain synchronous (no await before begin()).
-    // Apple Pay requires apSession.begin() to be called within the same user-gesture
-    // call stack (the click event). Any async/await before begin() causes Safari to
-    // silently reject the session with InvalidAccessError.
-    if (!customerName.trim()) {
-      toast({ variant: "destructive", title: t("checkout.enter_customer_name") });
-      return;
-    }
-    if (!(window as any).ApplePaySession?.canMakePayments()) {
-      toast({ variant: "destructive", title: "Apple Pay غير متاح", description: "يرجى استخدام Safari على جهاز Apple مع بطاقة في Wallet" });
-      return;
-    }
-    const apAmount = getFinalTotalWithPoints();
-    const apOrderId = `CLN-${Date.now()}`;
-
-    // geideaSessionId is populated during onvalidatemerchant (in parallel with merchant validation)
-    // so it is ready by the time onpaymentauthorized fires.
-    let geideaSessionId: string | null = null;
-
-    let apSession: any;
-    try {
-      apSession = new (window as any).ApplePaySession(3, {
-        countryCode: "SA", currencyCode: "SAR",
-        supportedNetworks: ["visa", "masterCard", "mada"],
-        merchantCapabilities: ["supports3DS"],
-        total: { label: "CLUNY CAFE", amount: apAmount.toFixed(2), type: "final" },
-      });
-    } catch (e: any) {
-      toast({ variant: "destructive", title: "تعذّر فتح Apple Pay", description: e.message });
-      return;
-    }
-
-    apSession.onvalidatemerchant = async (event: any) => {
-      try {
-        // Geidea Direct Apple Pay flow REQUIRES an active sessionId before
-        // calling merchant-session, so we must run these sequentially:
-        // 1) init-session → get Geidea sessionId
-        // 2) validate-merchant → pass sessionId so Geidea authorizes the call
-        const initRes = await fetch("/api/payments/apple-pay/init-session", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            amount: apAmount, currency: "SAR", orderId: apOrderId,
-            customerEmail: customerEmail || customer?.email,
-            customerPhone: customerPhone || customer?.phone,
-          }),
-        });
-        const initData = await initRes.json().catch(() => ({}));
-        if (!initRes.ok || !initData?.sessionId) {
-          throw new Error(initData?.error || "فشل إنشاء جلسة الدفع");
-        }
-        geideaSessionId = initData.sessionId;
-
-        const validRes = await fetch("/api/payments/apple-pay/validate-merchant", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ validationURL: event.validationURL, sessionId: geideaSessionId }),
-        });
-        const validData = await validRes.json().catch(() => ({}));
-        if (!validRes.ok) throw new Error(validData.error || "فشل التحقق من التاجر");
-        apSession.completeMerchantValidation(validData);
-      } catch (err: any) {
-        apSession.abort();
-        toast({ variant: "destructive", title: "خطأ في Apple Pay", description: err.message, duration: 8000 });
-      }
-    };
-    apSession.onpaymentmethodselected = () => {
-      apSession.completePaymentMethodSelection({ newTotal: { label: "CLUNY CAFE", amount: apAmount.toFixed(2), type: "final" } });
-    };
-    apSession.onpaymentauthorized = async (event: any) => {
-      try {
-        const payRes = await fetch("/api/payments/apple-pay/process", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            applePayToken: event.payment.token, amount: apAmount, currency: "SAR",
-            orderId: apOrderId, geideaSessionId,
-            customerEmail: customerEmail || customer?.email,
-            customerPhone: customerPhone || customer?.phone,
-          }),
-        });
-        const payData = await payRes.json();
-        if (!payRes.ok || !payData.success) throw new Error(payData.error || "فشل الدفع");
-        apSession.completePayment((window as any).ApplePaySession.STATUS_SUCCESS);
-        createOrderMutation.mutate({
-          customerId: customer?.id, customerName, customerPhone, customerEmail,
-          items: cartItems.map(i => {
-            const inlineAddons = (i as any).selectedItemAddons || [];
-            const addonsExtra = inlineAddons.reduce((s: number, a: any) => s + (Number(a.price) || 0), 0);
-            return { coffeeItemId: i.coffeeItemId, quantity: i.quantity, price: (i.coffeeItem?.price || 0) + addonsExtra, nameAr: i.coffeeItem?.nameAr || "", nameEn: i.coffeeItem?.nameEn || "", customization: inlineAddons.length > 0 ? { selectedItemAddons: inlineAddons } : undefined };
-          }),
-          totalAmount: apAmount, serviceFee: getServiceFee(), paymentMethod: 'apple_pay' as any, status: 'payment_confirmed', paymentStatus: 'paid',
-          paymentReference: apOrderId, paymentSessionId: payData.transactionId,
-          branchId: deliveryInfo?.branchId || "default",
-          orderType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup' : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup' : (deliveryInfo?.type === 'pickup' && deliveryInfo?.dineIn ? 'dine-in' : 'regular'),
-          deliveryType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup' : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup' : deliveryInfo?.type || 'pickup',
-          customerNotes, discountCode: appliedDiscount?.code,
-          pointsRedeemed: usePointsAsDiscount ? pointsToRedeem : 0,
-          pointsValue: usePointsAsDiscount ? Math.min(pointsDiscountSAR, getBaseTotal()) : 0,
-          bypassPointsVerification: true,
-          ...(deliveryInfo?.type === 'car-pickup' && deliveryInfo?.carInfo ? { carType: deliveryInfo.carInfo.carType, carColor: deliveryInfo.carInfo.carColor, plateNumber: deliveryInfo.carInfo.plateNumber } : {}),
-          ...(deliveryInfo?.scheduledPickupTime ? { scheduledPickupTime: deliveryInfo.scheduledPickupTime, arrivalTime: deliveryInfo.scheduledPickupTime } : {}),
-          channel: "online",
-        });
-      } catch (err: any) {
-        apSession.completePayment((window as any).ApplePaySession.STATUS_FAILURE);
-        toast({ variant: "destructive", title: "فشل الدفع", description: err.message });
-      }
-    };
-    apSession.oncancel = () => toast({ title: "تم إلغاء الدفع", description: "يمكنك المحاولة مرة أخرى" });
-    apSession.begin();
+  // Apple Pay is now rendered via Geidea Express Checkout SDK (see ExpressCheckoutWallet).
+  // The SDK renders a native Apple Pay button that handles merchant validation,
+  // the Apple Pay sheet, and payment processing internally — no manual ApplePaySession.
+  const onApplePayExpressSuccess = (data: any, apAmount: number, apOrderId: string) => {
+    const geideaOrderId = data?.orderId || data?.reference || apOrderId;
+    createOrderMutation.mutate({
+      customerId: customer?.id, customerName, customerPhone, customerEmail,
+      items: cartItems.map(i => {
+        const inlineAddons = (i as any).selectedItemAddons || [];
+        const addonsExtra = inlineAddons.reduce((s: number, a: any) => s + (Number(a.price) || 0), 0);
+        return { coffeeItemId: i.coffeeItemId, quantity: i.quantity, price: (i.coffeeItem?.price || 0) + addonsExtra, nameAr: i.coffeeItem?.nameAr || "", nameEn: i.coffeeItem?.nameEn || "", customization: inlineAddons.length > 0 ? { selectedItemAddons: inlineAddons } : undefined };
+      }),
+      totalAmount: apAmount, serviceFee: getServiceFee(), paymentMethod: 'apple_pay' as any, status: 'payment_confirmed', paymentStatus: 'paid',
+      paymentReference: geideaOrderId, paymentSessionId: geideaOrderId,
+      branchId: deliveryInfo?.branchId || "default",
+      orderType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup' : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup' : (deliveryInfo?.type === 'pickup' && deliveryInfo?.dineIn ? 'dine-in' : 'regular'),
+      deliveryType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup' : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup' : deliveryInfo?.type || 'pickup',
+      customerNotes, discountCode: appliedDiscount?.code,
+      pointsRedeemed: usePointsAsDiscount ? pointsToRedeem : 0,
+      pointsValue: usePointsAsDiscount ? Math.min(pointsDiscountSAR, getBaseTotal()) : 0,
+      bypassPointsVerification: true,
+      ...(deliveryInfo?.type === 'car-pickup' && deliveryInfo?.carInfo ? { carType: deliveryInfo.carInfo.carType, carColor: deliveryInfo.carInfo.carColor, plateNumber: deliveryInfo.carInfo.plateNumber } : {}),
+      ...(deliveryInfo?.scheduledPickupTime ? { scheduledPickupTime: deliveryInfo.scheduledPickupTime, arrivalTime: deliveryInfo.scheduledPickupTime } : {}),
+      channel: "online",
+    });
   };
 
   const handleProceedPayment = () => {
@@ -1070,11 +986,35 @@ export default function CheckoutPage() {
                     </div>
                   </div>
                 ) : (
-                  <PaymentMethods
-                    paymentMethods={paymentMethods.filter(m => m.id !== 'qahwa-card')}
-                    selectedMethod={selectedPaymentMethod}
-                    onSelectMethod={setSelectedPaymentMethod}
-                  />
+                  <>
+                    {/* Apple Pay via Geidea Express Checkout SDK.
+                        SDK auto-hides the button on browsers/devices that don't support Apple Pay. */}
+                    {customerName.trim() && getFinalTotalWithPoints() > 0 && (
+                      <div className="space-y-3 mb-3">
+                        <ExpressCheckoutWallet
+                          amount={getFinalTotalWithPoints()}
+                          orderId={`CLN-${Date.now()}`}
+                          wallet="apple-pay"
+                          customerEmail={customerEmail || customer?.email}
+                          customerPhone={customerPhone || customer?.phone}
+                          containerId="apple-pay-express-page-container"
+                          onSuccess={(data) => onApplePayExpressSuccess(data, getFinalTotalWithPoints(), data?.orderId || `CLN-${Date.now()}`)}
+                          onError={(msg) => toast({ variant: "destructive", title: "فشل الدفع", description: msg })}
+                          onCancel={() => toast({ title: "تم إلغاء الدفع" })}
+                        />
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 h-px bg-border" />
+                          <span className="text-xs text-muted-foreground">أو اختر طريقة دفع أخرى</span>
+                          <div className="flex-1 h-px bg-border" />
+                        </div>
+                      </div>
+                    )}
+                    <PaymentMethods
+                      paymentMethods={paymentMethods.filter(m => m.id !== 'qahwa-card' && m.id !== 'apple_pay')}
+                      selectedMethod={selectedPaymentMethod}
+                      onSelectMethod={setSelectedPaymentMethod}
+                    />
+                  </>
                 )}
 
                 {selectedPaymentMethod === 'cash' && cashDistanceChecking && (

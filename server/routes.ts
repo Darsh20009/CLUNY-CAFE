@@ -2378,6 +2378,125 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Geidea Express Checkout (Wallets) — OFFICIAL integration ──────
+  // This is the supported way to render Apple Pay / Google Pay / Samsung Pay
+  // via Geidea's SDK. Creates a session with `expressCheckouts` array set so
+  // Geidea's GeideaExpressCheckout SDK can mount the wallet button. Geidea
+  // handles merchant validation, the Apple Pay sheet, and payment processing.
+  // See: Geidea KSA — Express Checkout (Wallets) docs.
+  app.post("/api/payments/express-checkout/init-session", async (req, res) => {
+    try {
+      const { amount, orderId, currency = 'SAR', wallet = 'apple-pay', label, customerEmail, customerPhone, returnUrl } = req.body;
+      if (!amount || amount <= 0) return res.status(400).json({ error: "المبلغ مطلوب" });
+
+      const config = await BusinessConfigModel.findOne({ tenantId: 'demo-tenant' });
+      const pg = config?.paymentGateway;
+      if (!pg?.geidea?.publicKey || !pg?.geidea?.apiPassword) {
+        return res.status(400).json({ error: "بيانات Geidea غير مكتملة" });
+      }
+
+      const { publicKey, apiPassword, baseUrl: cfgBase } = pg.geidea as any;
+      const baseUrl = (cfgBase || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
+      const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
+
+      const merchantReferenceId = orderId || `EXP-${nanoid()}`;
+      const amountFormatted = Number(amount).toFixed(2);
+
+      const crypto = await import('crypto');
+      const now = new Date();
+      const pad2x = (n: number) => String(n).padStart(2, '0');
+      const hx = now.getHours();
+      const ampmx = hx >= 12 ? 'PM' : 'AM';
+      const h12x = hx % 12 || 12;
+      const timestamp = `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear()} ${h12x}:${pad2x(now.getMinutes())}:${pad2x(now.getSeconds())} ${ampmx}`;
+      const rawSignature = `${publicKey}${amountFormatted}${currency}${merchantReferenceId}${timestamp}`;
+      const signature = crypto.createHmac('sha256', apiPassword).update(rawSignature).digest('base64');
+
+      // Build a public callback URL (must be HTTPS, never localhost).
+      const requestOrigin = req.headers.origin as string | undefined;
+      const requestHost = req.headers.host as string | undefined;
+      const isPublicUrl = (u: string) => !!(u && u.startsWith('https://') && !u.includes('localhost') && !u.includes('127.0.0.1'));
+      const replitDomain = process.env.REPLIT_DEV_DOMAIN;
+      const publicBase = isPublicUrl(requestOrigin || '') ? requestOrigin :
+        (requestHost && !requestHost.includes('localhost') ? `https://${requestHost}` :
+        (replitDomain ? `https://${replitDomain}` : 'https://cluny.cafe'));
+      const callbackUrl = `${publicBase}/api/payments/geidea/callback?orderNumber=${encodeURIComponent(merchantReferenceId)}`;
+      const finalReturnUrl = isPublicUrl(returnUrl) ? returnUrl :
+        `${publicBase}/payment-return?orderNumber=${encodeURIComponent(merchantReferenceId)}`;
+
+      const walletLabelMap: Record<string, string> = {
+        'apple-pay': 'Apple Pay',
+        'google-pay': 'Google Pay',
+        'samsung-pay': 'Samsung Pay',
+      };
+
+      const geideaBody: any = {
+        merchantPublicKey: publicKey,
+        amount: Number(amountFormatted),
+        currency,
+        merchantReferenceId,
+        callbackUrl,
+        returnUrl: finalReturnUrl,
+        timestamp,
+        signature,
+        language: 'ar',
+        paymentOperation: 'Pay',
+        // ── The critical field: tell Geidea this session is for Express Checkout ──
+        expressCheckouts: [
+          { wallet, label: label || walletLabelMap[wallet] || wallet },
+        ],
+      };
+      if (customerEmail) geideaBody.customer = { email: customerEmail, phoneNumber: customerPhone };
+
+      console.log('[Express Checkout] Creating session for wallet:', wallet, 'orderId:', merchantReferenceId);
+
+      const sessionEndpoints = [
+        `${baseUrl}/payment-intent/api/v2/direct/session`,
+        `${baseUrl}/payment-intent/api/v1/session`,
+      ];
+
+      let sessionData: any = null;
+      let geideaSessionId: string | null = null;
+      let lastStatus = 0;
+
+      for (const sessionUrl of sessionEndpoints) {
+        try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 7000);
+          const sessionRes = await fetch(sessionUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+            body: JSON.stringify(geideaBody),
+            signal: ctrl.signal,
+          }).finally(() => clearTimeout(timer));
+          lastStatus = sessionRes.status;
+          sessionData = await sessionRes.json().catch(() => ({}));
+          console.log(`[Express Checkout] ${sessionUrl} → ${sessionRes.status}:`, JSON.stringify(sessionData).substring(0, 300));
+          geideaSessionId = sessionData?.session?.id || sessionData?.sessionId || sessionData?.id;
+          if (geideaSessionId) {
+            console.log('[Express Checkout] ✅ Session created:', geideaSessionId);
+            break;
+          }
+          if (sessionRes.status !== 404) break;
+        } catch (sessionErr: any) {
+          console.warn('[Express Checkout] endpoint error:', sessionUrl, sessionErr.message);
+        }
+      }
+
+      if (!geideaSessionId) {
+        return res.status(400).json({
+          error: sessionData?.detailedResponseMessage || sessionData?.responseMessage || `فشل إنشاء جلسة Express Checkout (${lastStatus})`,
+          gatewayResponse: sessionData,
+        });
+      }
+
+      res.json({ sessionId: geideaSessionId, orderId: merchantReferenceId });
+    } catch (err: any) {
+      console.error('[Express Checkout] init-session error:', err);
+      res.status(500).json({ error: "خطأ في تهيئة جلسة Express Checkout", details: err.message });
+    }
+  });
+
   // ── Apple Pay: Validate Merchant Session ──────────────────────────
   // Called by the frontend during ApplePaySession.onvalidatemerchant.
   // Proxies the Apple validation URL through Geidea's backend which holds
