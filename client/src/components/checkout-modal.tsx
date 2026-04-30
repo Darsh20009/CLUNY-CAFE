@@ -19,7 +19,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import GeideaCheckoutWidget from "./geidea-checkout";
-import ExpressCheckoutWallet, { isExpressWalletAvailable } from "./express-checkout-wallet";
+import ExpressCheckoutWallet from "./express-checkout-wallet";
 import SarIcon from "@/components/sar-icon";
 
 const GEIDEA_METHODS = ['geidea', 'neoleap', 'neoleap-apple-pay'];
@@ -411,27 +411,21 @@ const CheckoutModal = memo(() => {
    ) : (
      <>
        {/* Apple Pay via Geidea Express Checkout SDK.
-           Only render on Safari/Apple devices that can actually show the
-           Apple Pay button — otherwise customers see a blank area + divider. */}
-       {customerName && customerPhone && getTotalPrice() > 0 && isExpressWalletAvailable("apple-pay") && (
-         <div className="space-y-3 mb-3">
-           <ExpressCheckoutWallet
-             amount={getTotalPrice()}
-             orderId={`CLN-${Date.now()}`}
-             wallet="apple-pay"
-             customerEmail={customer?.email}
-             customerPhone={customerPhone}
-             containerId="apple-pay-express-modal-container"
-             onSuccess={onApplePayExpressSuccess}
-             onError={(msg) => toast({ variant: "destructive", title: "فشل الدفع", description: msg })}
-             onCancel={() => toast({ title: "تم إلغاء الدفع" })}
-           />
-           <div className="flex items-center gap-3">
-             <div className="flex-1 h-px bg-border" />
-             <span className="text-xs text-muted-foreground">أو اختر طريقة دفع أخرى</span>
-             <div className="flex-1 h-px bg-border" />
-           </div>
-         </div>
+           The wallet renders its own divider underneath when the button
+           mounts, and renders nothing at all on browsers that don't support
+           Apple Pay — so we don't need any extra wrapper or pre-check here. */}
+       {customerName && customerPhone && getTotalPrice() > 0 && (
+         <ExpressCheckoutWallet
+           amount={getTotalPrice()}
+           orderId={`CLN-${Date.now()}`}
+           wallet="apple-pay"
+           customerEmail={customer?.email}
+           customerPhone={customerPhone}
+           containerId="apple-pay-express-modal-container"
+           onSuccess={onApplePayExpressSuccess}
+           onError={(msg) => toast({ variant: "destructive", title: "فشل الدفع", description: msg })}
+           onCancel={() => toast({ title: "تم إلغاء الدفع" })}
+         />
        )}
 
        <div className="bg-card/50 rounded-xl p-6 border border-primary/20">

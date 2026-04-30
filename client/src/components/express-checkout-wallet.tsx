@@ -340,17 +340,19 @@ export default function ExpressCheckoutWallet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // On browsers that can't show Apple Pay we render absolutely nothing — no
-  // wrapper, no skeleton, no divider artefacts.
+  // On browsers that can't show Apple Pay (Chrome, Firefox, Android, etc.)
+  // OR when the SDK failed to mount, render nothing at all. Parents don't
+  // need a separate capability check — they can just render this component
+  // and trust it to vanish silently when not usable.
   if (state === "unsupported") return null;
 
   return (
-    <div className="w-full">
+    <div className="w-full space-y-3 mb-3">
       {state === "loading" && (
         // Skeleton sized like an Apple Pay button so the layout doesn't jump
-        // when the real button appears. No spinner, no Arabic loading text —
-        // the wait is short (~1s) and a quiet placeholder feels faster than a
-        // loading message.
+        // when the real button appears. No spinner / no Arabic loading text —
+        // the wait is short on a warm cache and a quiet placeholder feels
+        // faster than an explicit loading message.
         <div
           className="w-full h-12 rounded-lg bg-black/90 dark:bg-white/10 animate-pulse"
           data-testid="skeleton-express-checkout-loading"
@@ -368,6 +370,16 @@ export default function ExpressCheckoutWallet({
         data-testid={`container-express-checkout-${wallet}`}
         style={{ width: "100%", minHeight: state === "ready" ? "48px" : "0" }}
       />
+      {/* Divider — only shown once the button is actually mounted, so on
+          unsupported browsers there's no orphan "or pick another method"
+          line hanging in the layout. */}
+      {state === "ready" && (
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-px bg-border" />
+          <span className="text-xs text-muted-foreground">أو اختر طريقة دفع أخرى</span>
+          <div className="flex-1 h-px bg-border" />
+        </div>
+      )}
     </div>
   );
 }
