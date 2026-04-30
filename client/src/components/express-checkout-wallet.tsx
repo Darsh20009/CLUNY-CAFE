@@ -19,7 +19,91 @@ declare global {
 
 const SDK_URL = "https://www.ksamerchant.geidea.net/hpp/geideaCheckout.min.js";
 
+// ── Default appearance the Geidea SDK expects on session responses ──
+// The SDK destructures `session.appearance.styles` and `session.appearance.uiMode`.
+// When the session is created without an explicit appearance config, Geidea returns
+// `appearance: null`, and the SDK then crashes with:
+//   "Cannot read properties of undefined (reading 'headerColor')"
+// To work around this, we intercept the XHR call to the session GET endpoint and
+// inject a default appearance object before the SDK reads it.
+const DEFAULT_APPEARANCE = {
+  styles: {
+    headerColor: "#000000",
+    accentColor: "#000000",
+    accentTextColor: "#FFFFFF",
+    backgroundColor: "#FFFFFF",
+    backgroundTextColor: "#232323",
+    fontFamily: "inherit",
+    hppColor: "#FFFFFF",
+    fieldColor: "#F2F2F2",
+    textColor: "#283B54",
+    borderRadius: 8,
+  },
+  uiMode: "Light",
+  showEmail: false,
+  showPhone: false,
+  showAddress: false,
+  receiptPage: false,
+  merchant: { name: "CLUNY CAFE", logoUrl: "" },
+};
+
+function installGeideaSessionPatch() {
+  if ((window as any)._geideaSessionPatchInstalled) return;
+  (window as any)._geideaSessionPatchInstalled = true;
+
+  const OrigXHR = window.XMLHttpRequest;
+  const origDescriptor = Object.getOwnPropertyDescriptor(OrigXHR.prototype, "responseText");
+  const origResponseDescriptor = Object.getOwnPropertyDescriptor(OrigXHR.prototype, "response");
+  if (!origDescriptor?.get) return; // unsupported environment, give up silently
+
+  class PatchedXHR extends OrigXHR {
+    private _patchUrl = "";
+    private _cachedText: string | null = null;
+    constructor() {
+      super();
+      const self = this;
+      Object.defineProperty(self, "responseText", {
+        configurable: true,
+        get() {
+          return self._readPatched(origDescriptor!.get!.call(self));
+        },
+      });
+      if (origResponseDescriptor?.get) {
+        Object.defineProperty(self, "response", {
+          configurable: true,
+          get() {
+            const raw = origResponseDescriptor!.get!.call(self);
+            if (typeof raw !== "string") return raw;
+            return self._readPatched(raw);
+          },
+        });
+      }
+    }
+    private _readPatched(raw: any): any {
+      if (this._cachedText !== null) return this._cachedText;
+      if (this.readyState !== 4) return raw;
+      if (!/\/payment-intent\/api\/v\d+\/session\//.test(this._patchUrl)) return raw;
+      try {
+        const data = typeof raw === "string" ? JSON.parse(raw) : raw;
+        if (data?.session && data.session.appearance == null) {
+          data.session.appearance = DEFAULT_APPEARANCE;
+          this._cachedText = JSON.stringify(data);
+          return this._cachedText;
+        }
+      } catch {}
+      return raw;
+    }
+    open(method: string, url: string, ...rest: any[]): void {
+      this._patchUrl = url;
+      // @ts-ignore - forward all args
+      return super.open(method, url, ...rest);
+    }
+  }
+  window.XMLHttpRequest = PatchedXHR as any;
+}
+
 function loadGeideaExpressSDK(): Promise<void> {
+  installGeideaSessionPatch();
   if (typeof window.GeideaExpressCheckout !== "undefined") return Promise.resolve();
   return new Promise((resolve, reject) => {
     const existing = document.getElementById("geidea-sdk-script");
@@ -154,25 +238,8 @@ export default function ExpressCheckoutWallet({
         let expressCheckout: { mount: (selector: string) => void } | null = null;
         try {
           const api = new window.GeideaExpressCheckout();
-          // The Geidea SDK reads `appearance.styles.headerColor` from the config
-          // passed to create(). If `appearance` is missing the SDK crashes with
-          // "Cannot read properties of undefined (reading 'headerColor')".
-          const appearanceConfig = {
-            styles: {
-              hppProfile: 'default',
-              headerColor: '#000000',
-              hideGeideaLogo: false,
-            },
-            showAddress: false,
-            showEmail: false,
-            showPhone: false,
-            uiMode: 'Light',
-            receiptPage: false,
-          };
           expressCheckout = await api.create({
             sessionId: sessionData.sessionId,
-            appearance: appearanceConfig,
-            styles: appearanceConfig.styles,
             onSuccess: (data: any) => {
               if (data?.responseCode === "000" || data?.detailedResponseCode === "000") {
                 onSuccess(data);
