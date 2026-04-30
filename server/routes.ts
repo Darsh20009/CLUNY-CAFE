@@ -2445,21 +2445,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         expressCheckouts: [
           { wallet, label: label || walletLabelMap[wallet] || wallet },
         ],
-        // ── Appearance is REQUIRED by the Express Checkout SDK ──
-        // Without this, the SDK crashes with "Cannot read properties of undefined (reading 'headerColor')"
-        // because it tries to read appearance.styles.headerColor on the session response.
-        appearance: {
-          styles: {
-            hppProfile: 'default',
-            headerColor: '#000000',
-            hideGeideaLogo: false,
-          },
-          showAddress: false,
-          showEmail: false,
-          showPhone: false,
-          uiMode: 'Light',
-          receiptPage: false,
-        },
       };
       if (customerEmail) geideaBody.customer = { email: customerEmail, phoneNumber: customerPhone };
 

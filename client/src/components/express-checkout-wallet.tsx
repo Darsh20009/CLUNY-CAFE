@@ -6,6 +6,8 @@ declare global {
     GeideaExpressCheckout?: new () => {
       create: (config: {
         sessionId: string;
+        appearance?: any;
+        styles?: any;
         onSuccess: (data: any) => void;
         onError: (data: any) => void;
         onCancel: (data?: any) => void;
@@ -152,8 +154,25 @@ export default function ExpressCheckoutWallet({
         let expressCheckout: { mount: (selector: string) => void } | null = null;
         try {
           const api = new window.GeideaExpressCheckout();
+          // The Geidea SDK reads `appearance.styles.headerColor` from the config
+          // passed to create(). If `appearance` is missing the SDK crashes with
+          // "Cannot read properties of undefined (reading 'headerColor')".
+          const appearanceConfig = {
+            styles: {
+              hppProfile: 'default',
+              headerColor: '#000000',
+              hideGeideaLogo: false,
+            },
+            showAddress: false,
+            showEmail: false,
+            showPhone: false,
+            uiMode: 'Light',
+            receiptPage: false,
+          };
           expressCheckout = await api.create({
             sessionId: sessionData.sessionId,
+            appearance: appearanceConfig,
+            styles: appearanceConfig.styles,
             onSuccess: (data: any) => {
               if (data?.responseCode === "000" || data?.detailedResponseCode === "000") {
                 onSuccess(data);
