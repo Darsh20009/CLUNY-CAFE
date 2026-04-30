@@ -1,0 +1,135 @@
+Express Checkout
+Express Checkout renders a native wallet payment button — Apple Pay, Google Pay, or Samsung Pay — directly on your checkout page. The customer authenticates through their device or browser wallet without entering card details, resulting in a faster, higher-converting checkout experience.
+
+The integration has two parts:
+
+A server-side session creation that declares which wallet(s) to enable.
+A front-end SDK call that renders the button and handles the payment flow.
+How It Works
+
+Your Server  →  Create Session (with expressCheckouts)  →  Geidea API
+Geidea API   →  Returns session.id
+Your Server  →  Passes session.id to front end
+Front End    →  Loads SDK → GeideaExpressCheckout().create(config) → .mount()
+Geidea SDK   →  Renders wallet button → Customer pays → onSuccess / onError
+Supported Wallets
+Wallet	wallet value	Browser / Device
+Apple Pay	apple-pay	Safari on Apple devices
+Google Pay™	google-pay	Chrome and supported browsers
+Samsung Pay	samsung-pay	Samsung devices
+📘
+Automatic hiding
+The SDK automatically hides wallet buttons that are unsupported in the customer's current browser or device. No extra logic needed on your side.
+
+Step 1: Create a Session
+Session creation for Express Checkout uses the same Create Session API as standard HPP Checkout, with one required addition: the expressCheckouts array.
+
+❗️
+Server-side only
+Always create the session from your back-end server. Never expose your API Password to the browser. Pass only the resulting session.id to your front end.
+
+The expressCheckouts Parameter
+Add the expressCheckouts array to your Create Session request body. Each entry declares one wallet to enable.
+
+Parameter	Type	Required	Description
+expressCheckouts	Array	Yes	List of wallet objects to enable on the checkout page.
+expressCheckouts[].wallet	String	Yes	Wallet identifier. Values: apple-pay, google-pay, samsung-pay
+expressCheckouts[].label	String	No	Display label for the button. Defaults to the wallet name if omitted.
+Example — Single Wallet (Google Pay)
+JSON
+
+{
+  "amount": "99.00",
+  "currency": "SAR",
+  "timestamp": "2025/04/16 10:30:00",
+  "merchantReferenceId": "ORDER-001",
+  "signature": "<generated_signature>",
+  "callbackUrl": "https://yoursite.com/callback",
+  "returnUrl": "https://yoursite.com/return",
+  "paymentOperation": "Pay",
+  "language": "en",
+
+  "expressCheckouts": [
+    {
+      "wallet": "google-pay",
+      "label": "Google Pay"
+    }
+  ]
+}
+Example — Multiple Wallets
+You can enable more than one wallet in the same session. The SDK renders each button that the customer's device supports.
+
+JSON
+
+"expressCheckouts": [
+  { "wallet": "apple-pay",   "label": "Apple Pay"   },
+  { "wallet": "google-pay",  "label": "Google Pay"  },
+  { "wallet": "samsung-pay", "label": "Samsung Pay" }
+]
+API Endpoints by Region
+Region	Create Session Endpoint
+KSA	https://api.ksamerchant.geidea.net/payment-intent/api/v2/direct/session
+UAE	https://api.geidea.ae/payment-intent/api/v2/direct/session
+Egypt	https://api.merchant.geidea.net/payment-intent/api/v2/direct/session
+🚧
+Authentication
+The Create Session API uses HTTP Basic Authentication. Use your Merchant Public Key as the username and your API Password as the password. The request must also include a valid signature field — refer to the standard Checkout guide for the signature generation algorithm.
+
+Create Session Response
+A successful response returns a session object. Extract session.id and pass it to your front end. The session expires 15 minutes after creation.
+
+JSON
+
+{
+  "session": {
+    "id": "0b02b503-fbf8-49dd-cdec-08dcdb056790",
+    "amount": 99.00,
+    "currency": "SAR",
+    "status": "Initiated",
+    "expiryDate": "2025-04-16T10:45:00.000Z"
+  },
+  "responseCode": "000",
+  "responseMessage": "Success",
+  "detailedResponseCode": "000"
+}
+The session.id value (0b02b503-... in the example above) is what you pass to the front end.
+
+Step 2: Load the Geidea SDK
+Embed the Geidea Checkout JavaScript library in your HTML page. Use a standard synchronous <script> tag — do not add defer or async attributes.
+
+HTML
+
+<!-- Place in <head> or just before </body> — NO defer or async -->
+<script src="https://www.ksamerchant.geidea.net/hpp/geideaCheckout.min.js"></script>
+SDK Script URLs by Region
+Region	Script URL
+KSA	https://www.ksamerchant.geidea.net/hpp/geideaCheckout.min.js
+UAE	https://payments.geidea.ae/hpp/geideaCheckout.min.js
+Egypt	https://www.merchant.geidea.net/hpp/geideaCheckout.min.js
+🚧
+No defer / No async
+The Geidea SDK must finish loading before your initialization code runs. Omitting defer and async ensures the script is fully parsed before any subsequent <script> block executes.
+
+Step 3: Add a Container Element
+The SDK mounts the wallet button into a <div> you provide. Add an empty container at the location on your page where the button should appear.
+
+HTML
+
+<!-- The SDK renders the wallet button inside this div -->
+<div id="express-checkout"></div>
+📘
+CSS tip
+Set a min-height on the container to prevent layout shift when the button loads.
+
+CSS
+
+#express-checkout { width: 100%; max-width: 400px; min-height: 60px; }
+Step 4: Initialize and Mount
+After the SDK has loaded, initialize GeideaExpressCheckout, pass it your config object, and call .mount() with the selector of your container div.
+
+Config Object
+Property	Type	Required	Description
+sessionId	String	Yes	The session.id returned from your Create Session call in Step 1.
+onSuccess	Function	Yes	Called when the payment completes successfully. Receives a response data object.
+onError	Function	Yes	Called on payment failure. Receives a data object with error details.
+onCancel	Function	Yes	Called when the customer cancels or dismisses the wallet sheet.

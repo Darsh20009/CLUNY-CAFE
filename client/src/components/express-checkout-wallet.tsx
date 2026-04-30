@@ -52,53 +52,77 @@ function installGeideaSessionPatch() {
   (window as any)._geideaSessionPatchInstalled = true;
 
   const OrigXHR = window.XMLHttpRequest;
-  const origDescriptor = Object.getOwnPropertyDescriptor(OrigXHR.prototype, "responseText");
-  const origResponseDescriptor = Object.getOwnPropertyDescriptor(OrigXHR.prototype, "response");
-  if (!origDescriptor?.get) return; // unsupported environment, give up silently
+  const SESSION_URL_RE = /\/payment-intent\/api\/v\d+\/session\//;
 
-  class PatchedXHR extends OrigXHR {
-    private _patchUrl = "";
-    private _cachedText: string | null = null;
-    constructor() {
-      super();
-      const self = this;
-      Object.defineProperty(self, "responseText", {
+  function tryInjectAppearance(xhr: XMLHttpRequest): boolean {
+    try {
+      const raw = xhr.responseText;
+      if (!raw || raw[0] !== "{") return false;
+      const data = JSON.parse(raw);
+      if (!data?.session) return false;
+      if (data.session.appearance != null) return false;
+      data.session.appearance = DEFAULT_APPEARANCE;
+      const newText = JSON.stringify(data);
+      // Shadow the prototype getter on this instance so any later read sees
+      // the mutated payload. configurable:true so this never throws.
+      Object.defineProperty(xhr, "responseText", {
         configurable: true,
-        get() {
-          return self._readPatched(origDescriptor!.get!.call(self));
-        },
+        get() { return newText; },
       });
-      if (origResponseDescriptor?.get) {
-        Object.defineProperty(self, "response", {
-          configurable: true,
-          get() {
-            const raw = origResponseDescriptor!.get!.call(self);
-            if (typeof raw !== "string") return raw;
-            return self._readPatched(raw);
-          },
-        });
-      }
-    }
-    private _readPatched(raw: any): any {
-      if (this._cachedText !== null) return this._cachedText;
-      if (this.readyState !== 4) return raw;
-      if (!/\/payment-intent\/api\/v\d+\/session\//.test(this._patchUrl)) return raw;
-      try {
-        const data = typeof raw === "string" ? JSON.parse(raw) : raw;
-        if (data?.session && data.session.appearance == null) {
-          data.session.appearance = DEFAULT_APPEARANCE;
-          this._cachedText = JSON.stringify(data);
-          return this._cachedText;
-        }
-      } catch {}
-      return raw;
-    }
-    open(method: string, url: string, ...rest: any[]): void {
-      this._patchUrl = url;
-      // @ts-ignore - forward all args
-      return super.open(method, url, ...rest);
+      Object.defineProperty(xhr, "response", {
+        configurable: true,
+        get() { return newText; },
+      });
+      return true;
+    } catch {
+      return false;
     }
   }
+
+  function PatchedXHR(this: any) {
+    const xhr = new OrigXHR();
+    let url = "";
+    let patched = false;
+
+    // ── Wrap open() per-instance to capture the request URL ──
+    const origOpen = xhr.open.bind(xhr);
+    xhr.open = function (method: string, requestUrl: string, ...rest: any[]) {
+      url = requestUrl;
+      return origOpen(method, requestUrl, ...rest);
+    };
+
+    // ── Wrap onreadystatechange setter so that whenever the SDK assigns its
+    //    handler, our patch runs FIRST, mutates responseText, and then
+    //    delegates to the SDK's handler. This works regardless of the order
+    //    of assignments because we intercept the property setter itself. ──
+    let userHandler: ((this: XMLHttpRequest, ev: Event) => any) | null = null;
+    Object.defineProperty(xhr, "onreadystatechange", {
+      configurable: true,
+      get() { return userHandler; },
+      set(fn) {
+        userHandler = typeof fn === "function" ? fn : null;
+      },
+    });
+
+    xhr.addEventListener("readystatechange", function (this: XMLHttpRequest, ev: Event) {
+      if (this.readyState === 4 && !patched && SESSION_URL_RE.test(url)) {
+        patched = true;
+        tryInjectAppearance(this);
+      }
+      if (userHandler) {
+        try { userHandler.call(this, ev); } catch (e) { /* swallow */ }
+      }
+    });
+
+    return xhr;
+  }
+  // Mirror static props so feature detection still works
+  Object.setPrototypeOf(PatchedXHR, OrigXHR);
+  Object.setPrototypeOf(PatchedXHR.prototype, OrigXHR.prototype);
+  for (const key of ["UNSENT", "OPENED", "HEADERS_RECEIVED", "LOADING", "DONE"]) {
+    try { (PatchedXHR as any)[key] = (OrigXHR as any)[key]; } catch {}
+  }
+
   window.XMLHttpRequest = PatchedXHR as any;
 }
 
