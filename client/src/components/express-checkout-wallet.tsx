@@ -326,6 +326,29 @@ export default function ExpressCheckoutWallet({
 
         if (cancelled || !expressCheckout) return;
         expressCheckout.mount(`#${containerId}`);
+
+        // ── Post-mount visibility check ───────────────────────────────────
+        // The Geidea SDK calls .mount() and silently produces NO visible
+        // button when:
+        //   • The current domain isn't registered with Apple (e.g. our dev
+        //     URL `*.spock.replit.dev` — only `cluny.cafe` is registered).
+        //   • The user's Wallet has no eligible card.
+        //   • The browser exposes ApplePaySession but is actually inside a
+        //     non-payment-allowed iframe (Replit workspace preview).
+        // In all these cases the SDK leaves the container empty, which the
+        // user perceives as "white space after loading". Detect this and
+        // hide the section entirely so customers never see an empty box.
+        await new Promise((r) => setTimeout(r, 1500));
+        if (cancelled) return;
+        const containerEl = document.getElementById(containerId);
+        const hasVisibleButton =
+          !!containerEl &&
+          containerEl.children.length > 0 &&
+          (containerEl.offsetHeight > 0 || containerEl.querySelector("iframe, button, apple-pay-button"));
+        if (!hasVisibleButton) {
+          setState("unsupported");
+          return;
+        }
         setState("ready");
       } catch (err: any) {
         if (cancelled) return;
