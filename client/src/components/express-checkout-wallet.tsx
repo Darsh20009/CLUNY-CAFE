@@ -327,25 +327,51 @@ export default function ExpressCheckoutWallet({
         if (cancelled || !expressCheckout) return;
         expressCheckout.mount(`#${containerId}`);
 
-        // ── Post-mount visibility check ───────────────────────────────────
-        // The Geidea SDK calls .mount() and silently produces NO visible
-        // button when:
-        //   • The current domain isn't registered with Apple (e.g. our dev
-        //     URL `*.spock.replit.dev` — only `cluny.cafe` is registered).
-        //   • The user's Wallet has no eligible card.
-        //   • The browser exposes ApplePaySession but is actually inside a
-        //     non-payment-allowed iframe (Replit workspace preview).
-        // In all these cases the SDK leaves the container empty, which the
-        // user perceives as "white space after loading". Detect this and
-        // hide the section entirely so customers never see an empty box.
-        await new Promise((r) => setTimeout(r, 1500));
+        // ── Post-mount visibility check via MutationObserver ─────────────
+        // The Geidea SDK calls .mount() and then asynchronously injects an
+        // <iframe> (or similar) into the container — the exact timing varies
+        // from <1s on fast devices to 4–6s on slow networks.
+        //
+        // A fixed setTimeout of 1.5s was too short on production (cluny.cafe),
+        // causing us to wrongly flag the button as "unsupported" and hide the
+        // entire section before the SDK had a chance to render.
+        //
+        // Instead we use MutationObserver to react the instant the SDK adds
+        // any child, with an 8-second deadline after which we treat the
+        // browser as genuinely unsupported (wrong domain, no eligible card, etc.)
+        await new Promise<void>((resolve) => {
+          const containerEl = document.getElementById(containerId);
+          if (!containerEl) { resolve(); return; }
+
+          // Already has content (edge-case: SDK was synchronous)
+          if (containerEl.children.length > 0) { resolve(); return; }
+
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            observer.disconnect();
+            clearTimeout(deadline);
+            resolve();
+          };
+
+          const observer = new MutationObserver(() => {
+            if (containerEl.children.length > 0) finish();
+          });
+          observer.observe(containerEl, { childList: true, subtree: true });
+
+          // 8-second hard deadline — long enough for slow 3G + slow SDK init.
+          const deadline = setTimeout(finish, 8000);
+        });
+
         if (cancelled) return;
         const containerEl = document.getElementById(containerId);
         const hasVisibleButton =
           !!containerEl &&
-          containerEl.children.length > 0 &&
-          (containerEl.offsetHeight > 0 || containerEl.querySelector("iframe, button, apple-pay-button"));
+          containerEl.children.length > 0;
         if (!hasVisibleButton) {
+          // Nothing rendered — unregistered domain, no eligible card, or
+          // browser can't actually show Apple Pay despite canMakePayments().
           setState("unsupported");
           return;
         }
