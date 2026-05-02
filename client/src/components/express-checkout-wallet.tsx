@@ -366,16 +366,45 @@ export default function ExpressCheckoutWallet({
 
         if (cancelled) return;
         const containerEl = document.getElementById(containerId);
-        const hasVisibleButton =
-          !!containerEl &&
-          containerEl.children.length > 0;
+        const hasVisibleButton = !!containerEl && containerEl.children.length > 0;
         if (!hasVisibleButton) {
           // Nothing rendered — unregistered domain, no eligible card, or
           // browser can't actually show Apple Pay despite canMakePayments().
           setState("unsupported");
           return;
         }
+
+        // ── Stability guard ───────────────────────────────────────────────
+        // On unregistered domains (e.g. *.spock.replit.dev) the Geidea SDK
+        // mounts an iframe, MutationObserver fires, then the SDK removes the
+        // iframe ~100-500ms later after it detects Apple Pay cannot work.
+        // Without this guard, state flips to "ready" → skeleton hides → SDK
+        // empties container → customer sees white space.
+        //
+        // Wait 2 seconds after first child appears; if the SDK still has
+        // content in the container it's a real button. If not, hide.
+        await new Promise((r) => setTimeout(r, 2000));
+        if (cancelled) return;
+        const containerElFinal = document.getElementById(containerId);
+        if (!containerElFinal || containerElFinal.children.length === 0) {
+          setState("unsupported");
+          return;
+        }
+
         setState("ready");
+
+        // Keep watching in case the SDK removes content even after the
+        // stability window (e.g. Apple session expiry).
+        const containerForWatch = document.getElementById(containerId);
+        if (containerForWatch) {
+          const removalObserver = new MutationObserver(() => {
+            if (!cancelled && containerForWatch.children.length === 0) {
+              setState("unsupported");
+              removalObserver.disconnect();
+            }
+          });
+          removalObserver.observe(containerForWatch, { childList: true });
+        }
       } catch (err: any) {
         if (cancelled) return;
         setErrorMsg(err.message || "خطأ غير متوقع");
