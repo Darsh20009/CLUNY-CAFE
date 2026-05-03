@@ -1,14 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle } from "lucide-react";
-
-// ── Synchronous capability check ─────────────────────────────────────────────
-// Apple Pay can ONLY render in Safari on Apple devices (iPhone/iPad/Mac) with a
-// payment card set up in Wallet. Every other browser (Chrome, Firefox, Edge,
-// Samsung Internet, even Chrome/Firefox on iOS) returns false.
-//
-// Parent components should call this BEFORE rendering the wallet section so
-// customers on unsupported browsers don't see a loading spinner, blank space,
-// or the "or pick another payment method" divider — they see nothing at all.
 export function isExpressWalletAvailable(
   wallet: "apple-pay" | "google-pay" | "samsung-pay" = "apple-pay"
 ): boolean {
@@ -22,8 +13,6 @@ export function isExpressWalletAvailable(
       return false;
     }
   }
-  // We only support apple-pay right now; other wallets return false until we
-  // wire up Google Pay / Samsung Pay capability detection.
   return false;
 }
 
@@ -44,14 +33,6 @@ declare global {
 }
 
 const SDK_URL = "https://www.ksamerchant.geidea.net/hpp/geideaCheckout.min.js";
-
-// ── Default appearance the Geidea SDK expects on session responses ──
-// The SDK destructures `session.appearance.styles` and `session.appearance.uiMode`.
-// When the session is created without an explicit appearance config, Geidea returns
-// `appearance: null`, and the SDK then crashes with:
-//   "Cannot read properties of undefined (reading 'headerColor')"
-// To work around this, we intercept the XHR call to the session GET endpoint and
-// inject a default appearance object before the SDK reads it.
 const DEFAULT_APPEARANCE = {
   styles: {
     headerColor: "#000000",
@@ -116,11 +97,6 @@ function installGeideaSessionPatch() {
       url = requestUrl;
       return origOpen(method, requestUrl, ...rest);
     };
-
-    // ── Wrap onreadystatechange setter so that whenever the SDK assigns its
-    //    handler, our patch runs FIRST, mutates responseText, and then
-    //    delegates to the SDK's handler. This works regardless of the order
-    //    of assignments because we intercept the property setter itself. ──
     let userHandler: ((this: XMLHttpRequest, ev: Event) => any) | null = null;
     Object.defineProperty(xhr, "onreadystatechange", {
       configurable: true,
@@ -207,10 +183,6 @@ export default function ExpressCheckoutWallet({
   useEffect(() => {
     if (initStartedRef.current) return;
     initStartedRef.current = true;
-
-    // Bail out immediately on unsupported browsers — no network calls, no SDK
-    // load, no spinner, no blank space. The parent should also be hiding this
-    // component via isExpressWalletAvailable(), this is just defense in depth.
     if (!isExpressWalletAvailable(wallet)) return;
 
     let cancelled = false;
@@ -245,9 +217,6 @@ export default function ExpressCheckoutWallet({
         if (typeof window.GeideaExpressCheckout === "undefined") {
           throw new Error("لم يتم تحميل مكتبة Geidea بشكل صحيح");
         }
-
-        // Intercept SDK's console.error + console.log so we can capture the underlying
-        // "Failed to load wallet information" error AND any network errors logged by bt().
         let sdkInternalError: any = null;
         const originalConsoleError = console.error;
         const originalConsoleLog = console.log;
@@ -275,7 +244,6 @@ export default function ExpressCheckoutWallet({
           originalConsoleError.apply(console, args);
         };
         console.log = (...args: any[]) => {
-          // bt() rejection in SDK does `console.log(e)` with the error object
           const first = args?.[0];
           if (
             first &&
@@ -326,19 +294,6 @@ export default function ExpressCheckoutWallet({
 
         if (cancelled || !expressCheckout) return;
         expressCheckout.mount(`#${containerId}`);
-
-        // ── Post-mount visibility check via MutationObserver ─────────────
-        // The Geidea SDK calls .mount() and then asynchronously injects an
-        // <iframe> (or similar) into the container — the exact timing varies
-        // from <1s on fast devices to 4–6s on slow networks.
-        //
-        // A fixed setTimeout of 1.5s was too short on production (cluny.cafe),
-        // causing us to wrongly flag the button as "unsupported" and hide the
-        // entire section before the SDK had a chance to render.
-        //
-        // Instead we use MutationObserver to react the instant the SDK adds
-        // any child, with an 8-second deadline after which we treat the
-        // browser as genuinely unsupported (wrong domain, no eligible card, etc.)
         await new Promise<void>((resolve) => {
           const containerEl = document.getElementById(containerId);
           if (!containerEl) { resolve(); return; }
@@ -373,16 +328,6 @@ export default function ExpressCheckoutWallet({
           setState("unsupported");
           return;
         }
-
-        // ── Stability guard ───────────────────────────────────────────────
-        // On unregistered domains (e.g. *.spock.replit.dev) the Geidea SDK
-        // mounts an iframe, MutationObserver fires, then the SDK removes the
-        // iframe ~100-500ms later after it detects Apple Pay cannot work.
-        // Without this guard, state flips to "ready" → skeleton hides → SDK
-        // empties container → customer sees white space.
-        //
-        // Wait 2 seconds after first child appears; if the SDK still has
-        // content in the container it's a real button. If not, hide.
         await new Promise((r) => setTimeout(r, 2000));
         if (cancelled) return;
         const containerElFinal = document.getElementById(containerId);
@@ -392,9 +337,6 @@ export default function ExpressCheckoutWallet({
         }
 
         setState("ready");
-
-        // Keep watching in case the SDK removes content even after the
-        // stability window (e.g. Apple session expiry).
         const containerForWatch = document.getElementById(containerId);
         if (containerForWatch) {
           const removalObserver = new MutationObserver(() => {
@@ -415,22 +357,12 @@ export default function ExpressCheckoutWallet({
     init();
 
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // On browsers that can't show Apple Pay (Chrome, Firefox, Android, etc.)
-  // OR when the SDK failed to mount, render nothing at all. Parents don't
-  // need a separate capability check — they can just render this component
-  // and trust it to vanish silently when not usable.
   if (state === "unsupported") return null;
 
   return (
     <div className="w-full space-y-3 mb-3">
       {state === "loading" && (
-        // Skeleton sized like an Apple Pay button so the layout doesn't jump
-        // when the real button appears. No spinner / no Arabic loading text —
-        // the wait is short on a warm cache and a quiet placeholder feels
-        // faster than an explicit loading message.
         <div
           className="w-full h-12 rounded-lg bg-black/90 dark:bg-white/10 animate-pulse"
           data-testid="skeleton-express-checkout-loading"
