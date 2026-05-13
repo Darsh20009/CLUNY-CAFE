@@ -569,16 +569,9 @@ function enrichOrderWithItems(serializedOrder: any, coffeeItems: any[]): any {
 export async function registerRoutes(app: Express): Promise<Server> {
   registerObjectStorageRoutes(app);
 
-  app.get("/.well-known/apple-developer-merchantid-domain-association", (req, res) => {
-    res.setHeader("Content-Type", "application/octet-stream");
-    res.setHeader("Cache-Control", "public, max-age=300");
-    res.sendFile(APPLE_PAY_DOMAIN_ASSOCIATION_PATH);
-  });
-  app.get("/.well-known/apple-developer-merchantid-domain-association.txt", (req, res) => {
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Cache-Control", "public, max-age=300");
-    res.sendFile(APPLE_PAY_DOMAIN_ASSOCIATION_PATH);
-  });
+  // Note: /.well-known/apple-developer-merchantid-domain-association routes are
+  // registered early in server/index.ts before registerRoutes() to ensure they
+  // are never intercepted by the SPA catch-all.
 
   // Send manual email to customer
   app.post("/api/admin/send-email", requireAuth, requireManager, async (req: AuthRequest, res) => {

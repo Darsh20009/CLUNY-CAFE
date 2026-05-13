@@ -408,20 +408,21 @@ app.get('/geideaCheckout.min.js', (req, res) => {
 });
 
 // Serve Apple Pay domain association file (required for Apple Pay on web)
+// Must be registered early, before SPA catch-all, with text/plain MIME type
+const applePayFilePath = path.resolve(__dirname, '..', 'public', '.well-known', 'apple-developer-merchantid-domain-association');
+
 app.get('/.well-known/apple-developer-merchantid-domain-association', (req, res) => {
-  const filePath = path.resolve(__dirname, '..', 'public', '.well-known', 'apple-developer-merchantid-domain-association');
-  res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Cache-Control', 'public, max-age=300');
-  res.sendFile(filePath, (err) => {
+  res.setHeader('Content-Type', 'text/plain');
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendFile(applePayFilePath, (err) => {
     if (err) res.status(404).send('File not found');
   });
 });
 
 app.get('/.well-known/apple-developer-merchantid-domain-association.txt', (req, res) => {
-  const filePath = path.resolve(__dirname, '..', 'public', '.well-known', 'apple-developer-merchantid-domain-association');
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.setHeader('Cache-Control', 'public, max-age=300');
-  res.sendFile(filePath, (err) => {
+  res.setHeader('Content-Type', 'text/plain');
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendFile(applePayFilePath, (err) => {
     if (err) res.status(404).send('File not found');
   });
 });
