@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "1TFKeEAKKewGsoPi2wIgT"
+uri = "file://apple-domain-association-upload-to-cpanel.txt"
+type = "text"
+title = "ارفع هذا الملف على cPanel (بدون امتداد .txt)"
