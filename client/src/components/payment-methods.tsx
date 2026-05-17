@@ -167,11 +167,6 @@ export default function PaymentMethods({
       return null;
     }
 
-    const userAgent = typeof window !== 'undefined' ? window.navigator.userAgent.toLowerCase() : '';
-    const iosDevices = ['iphone', 'ipad', 'ipod'];
-    const isIOS = iosDevices.some(device => userAgent.includes(device));
-
-    if (isApplePay && !isIOS) return null;
     if (isLoyaltyCard) return null; // Always hide loyalty card from customer checkout
 
     // Coming Soon: show disabled card with badge
@@ -214,7 +209,9 @@ export default function PaymentMethods({
         <Card
          className={`cursor-pointer transition-all duration-500 relative overflow-hidden rounded-2xl ${
           isApplePay
-          ? 'bg-black border-0 text-white shadow-xl hover:scale-[1.01]'
+          ? isSelected
+            ? 'bg-black border-2 border-white/30 text-white shadow-2xl scale-[1.02]'
+            : 'bg-black border-0 text-white shadow-xl hover:scale-[1.01] hover:shadow-2xl'
           : (isQahwaCard || isNeoLeap)
           ? isSelected
            ? 'border-2 border-amber-400 shadow-2xl scale-[1.02] bg-white'
@@ -228,10 +225,37 @@ export default function PaymentMethods({
         >
          <CardContent className="p-0">
            {isApplePay ? (
-             <div className="p-5 flex items-center justify-center gap-2 bg-black h-16">
-               <span className="text-white font-bold text-lg">Pay with</span>
-               <Smartphone className="w-6 h-6 text-white" />
-               <span className="text-white font-black text-xl tracking-tighter"> Pay</span>
+             <div className="relative overflow-hidden">
+               <div className="px-5 py-4 flex items-center gap-4">
+                 <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0 border border-white/20">
+                   <svg viewBox="0 0 24 24" className="w-7 h-7 fill-white" xmlns="http://www.w3.org/2000/svg">
+                     <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+                   </svg>
+                 </div>
+                 <div className="flex-1 min-w-0">
+                   <div className="flex items-center justify-between gap-2">
+                     <div>
+                       <p className="text-white font-bold text-base leading-tight">Apple Pay</p>
+                       <p className="text-white/60 text-xs mt-0.5">دفع سريع وآمن عبر Geidea</p>
+                     </div>
+                     {isSelected ? (
+                       <div className="w-6 h-6 rounded-full bg-white flex items-center justify-center animate-in zoom-in duration-300 flex-shrink-0">
+                         <Check className="w-4 h-4 text-black" />
+                       </div>
+                     ) : (
+                       <span className="text-white font-black text-xl tracking-tight opacity-80">Pay</span>
+                     )}
+                   </div>
+                 </div>
+               </div>
+               {isSelected && (
+                 <div className="px-5 pb-4">
+                   <div className="bg-white/10 border border-white/20 rounded-xl px-4 py-2.5 flex items-center gap-2">
+                     <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse flex-shrink-0" />
+                     <p className="text-white/80 text-xs">اضغط الزر أدناه لفتح بوابة الدفع الآمن عبر Apple Pay</p>
+                   </div>
+                 </div>
+               )}
              </div>
            ) : (isQahwaCard || isNeoLeap) && isSelected ? (
              <div className="space-y-4">
