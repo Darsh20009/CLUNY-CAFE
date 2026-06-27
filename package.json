@@ -11,7 +11,6 @@
     "check": "tsc"
   },
   "dependencies": {
-    "@google-cloud/storage": "^7.19.0",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
     "@radix-ui/react-accordion": "^1.2.4",
@@ -49,10 +48,6 @@
     "@types/multer": "^2.0.0",
     "@types/qrcode": "^1.5.5",
     "@types/web-push": "^3.6.4",
-    "@uppy/aws-s3": "^5.1.0",
-    "@uppy/core": "^5.2.0",
-    "@uppy/dashboard": "^5.1.1",
-    "@uppy/react": "^5.2.0",
     "bcryptjs": "^3.0.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -77,7 +72,6 @@
     "i18next-browser-languagedetector": "^8.2.0",
     "input-otp": "^1.4.2",
     "jsbarcode": "^3.12.1",
-    "jspdf": "^3.0.2",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.453.0",
     "memorystore": "^1.6.7",

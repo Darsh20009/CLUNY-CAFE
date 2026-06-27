@@ -1220,10 +1220,7 @@ export async function downloadInvoicePDF(data: {
   branchName?: string;
   branchAddress?: string;
 }): Promise<void> {
-  const [{ jsPDF }, html2canvas] = await Promise.all([
-    import('jspdf'),
-    import('html2canvas').then(m => m.default),
-  ]);
+  const html2canvas = await import('html2canvas').then(m => m.default);
 
   const totalAmount = parseNumber(data.total);
   const subtotalBeforeTax = totalAmount / (1 + TAX_RATE);
@@ -1386,20 +1383,14 @@ export async function downloadInvoicePDF(data: {
       logging: false,
     });
 
-    const imgData = canvas.toDataURL('image/jpeg', 0.95);
-    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-
-    let yOffset = 0;
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    while (yOffset < pdfHeight) {
-      if (yOffset > 0) pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', 0, -yOffset, pdfWidth, pdfHeight);
-      yOffset += pageHeight;
+    const imgData = canvas.toDataURL('image/png');
+    const printWin = window.open('', '_blank');
+    if (printWin) {
+      printWin.document.write(`<html><head><title>فاتورة-${orderNum}</title></head><body style="margin:0"><img src="${imgData}" style="width:100%;display:block"/></body></html>`);
+      printWin.document.close();
+      printWin.focus();
+      printWin.print();
     }
-
-    pdf.save(`فاتورة-${orderNum}.pdf`);
   } finally {
     document.body.removeChild(container);
   }
