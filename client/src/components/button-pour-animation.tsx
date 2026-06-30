@@ -29,9 +29,9 @@ export default function ButtonPourAnimation() {
       >
         {/* Simple Jug Shape */}
         <div className="relative w-16 h-20">
-          <div className="absolute top-4 left-0 w-12 h-16 bg-[#F7F8F8] rounded-b-2xl rounded-tr-xl border-2 border-[#B58B5A]" />
-          <div className="absolute top-6 -left-4 w-6 h-2 bg-[#F7F8F8] border-2 border-[#B58B5A] -rotate-45 rounded-full" />
-          <div className="absolute top-8 right-2 w-4 h-8 border-2 border-[#B58B5A] rounded-r-full" />
+          <div className="absolute top-4 left-0 w-12 h-16 bg-[#F7F8F8] rounded-b-2xl rounded-tr-xl border-2 border-primary" />
+          <div className="absolute top-6 -left-4 w-6 h-2 bg-[#F7F8F8] border-2 border-primary -rotate-45 rounded-full" />
+          <div className="absolute top-8 right-2 w-4 h-8 border-2 border-primary rounded-r-full" />
         </div>
       </motion.div>
 

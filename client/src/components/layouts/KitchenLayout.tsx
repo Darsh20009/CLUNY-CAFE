@@ -1,5 +1,7 @@
 import { ReactNode, useEffect, useState } from "react";
 import { useLocation, Link } from "wouter";
+import { LanguageToggle } from "@/components/language-toggle";
+import { useTranslation } from "react-i18next";
 import { 
   ChefHat, 
   ShoppingBag, 
@@ -48,6 +50,7 @@ export function KitchenLayout({
 }: KitchenLayoutProps) {
   const [location, setLocation] = useLocation();
   const [employee, setEmployee] = useState<Employee | null>(null);
+  const { i18n } = useTranslation();
 
   useEffect(() => {
     const storedEmployee = localStorage.getItem("currentEmployee");
@@ -58,7 +61,7 @@ export function KitchenLayout({
 
   const handleLogout = () => {
     localStorage.removeItem("currentEmployee");
-    localStorage.removeItem("cluny-restore-key");
+    localStorage.removeItem("qirox-restore-key");
     setLocation("/employee/gateway");
   };
 
@@ -83,12 +86,12 @@ export function KitchenLayout({
 
   return (
     <SidebarProvider style={sidebarStyle as React.CSSProperties}>
-      <div className="flex h-screen w-full" dir="rtl">
+      <div className="flex h-screen w-full" dir={i18n.language === "ar" ? "rtl" : "ltr"}>
         <Sidebar side="right" collapsible="icon">
           <SidebarHeader className="border-b p-4">
             <div className="flex items-center gap-3">
               <Avatar>
-                <AvatarFallback className="bg-orange-600 text-white">
+                <AvatarFallback className="bg-primary text-primary-foreground">
                   {employee?.nameAr?.charAt(0) || "ب"}
                 </AvatarFallback>
               </Avatar>
@@ -163,16 +166,19 @@ export function KitchenLayout({
               )}
               {title && <h1 className="text-lg font-semibold">{title}</h1>}
             </div>
-            {employee && (
-              <div className="flex items-center gap-2">
-                <Badge className="bg-orange-600 text-white text-xs">
-                  KDS
-                </Badge>
-                <span className="text-sm text-muted-foreground hidden sm:block">
-                  {employee.nameAr}
-                </span>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <LanguageToggle />
+              {employee && (
+                <>
+                  <Badge className="bg-primary text-primary-foreground text-xs">
+                    KDS
+                  </Badge>
+                  <span className="text-sm text-muted-foreground hidden sm:block">
+                    {employee.nameAr}
+                  </span>
+                </>
+              )}
+            </div>
           </header>
 
           <main className="flex-1 overflow-auto">

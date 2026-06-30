@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslate } from "@/lib/useTranslate";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowRight, Calendar, FileText, Clock, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { MobileBottomNav } from "@/components/MobileBottomNav";
 
 interface LeaveRequest {
   id: string;
@@ -21,6 +23,7 @@ interface LeaveRequest {
 }
 
 export default function LeaveRequestPage() {
+  const tc = useTranslate();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [startDate, setStartDate] = useState("");
@@ -65,7 +68,7 @@ export default function LeaveRequestPage() {
     if (!startDate || !endDate || !reason.trim()) {
       toast({
         title: "خطأ",
-        description: "يرجى ملء جميع الحقول",
+        description: tc("يرجى ملء جميع الحقول", "Please fill all fields"),
         variant: "destructive"
       });
       return;
@@ -76,7 +79,7 @@ export default function LeaveRequestPage() {
     if (end < start) {
       toast({
         title: "خطأ",
-        description: "تاريخ الانتهاء يجب أن يكون بعد تاريخ البداية",
+        description: tc("تاريخ الانتهاء يجب أن يكون بعد تاريخ البداية", "End date must be after start date"),
         variant: "destructive"
       });
       return;
@@ -100,15 +103,15 @@ export default function LeaveRequestPage() {
       if (!response.ok) {
         toast({
           title: "خطأ",
-          description: data.error || "فشل تقديم طلب الاجازة",
+          description: data.error || tc("فشل تقديم طلب الاجازة", "Failed to submit leave request"),
           variant: "destructive"
         });
         return;
       }
 
       toast({
-        title: "نجح",
-        description: "تم تقديم طلب الاجازة بنجاح"
+        title: tc("نجح", "Success"),
+        description: tc("تم تقديم طلب الاجازة بنجاح", "Leave request submitted successfully")
       });
 
       setStartDate("");
@@ -118,7 +121,7 @@ export default function LeaveRequestPage() {
     } catch (error) {
       toast({
         title: "خطأ",
-        description: "حدث خطأ في تقديم الطلب",
+        description: tc("حدث خطأ في تقديم الطلب", "An error occurred while submitting the request"),
         variant: "destructive"
       });
     } finally {
@@ -140,16 +143,16 @@ export default function LeaveRequestPage() {
   const getStatusText = (status: string) => {
     switch (status) {
       case 'approved':
-        return 'موافق عليه';
+        return tc('موافق عليه', 'Approved');
       case 'rejected':
-        return 'مرفوض';
+        return tc('مرفوض', 'Rejected');
       default:
-        return 'قيد الانتظار';
+        return tc('قيد الانتظار', 'Pending');
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-background p-4" dir="rtl">
+    <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-background p-4 pb-20">
       <div className="max-w-2xl mx-auto">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
@@ -163,8 +166,8 @@ export default function LeaveRequestPage() {
             <ArrowRight className="w-5 h-5" />
           </Button>
           <div>
-            <h1 className="text-2xl font-bold text-accent">التقديم على اجازة</h1>
-            <p className="text-gray-400 text-sm">إدارة طلبات الاجازات</p>
+            <h1 className="text-2xl font-bold text-accent">{tc("التقديم على اجازة", "Apply for Leave")}</h1>
+            <p className="text-gray-400 text-sm">{tc("إدارة طلبات الاجازات", "Manage Leave Requests")}</p>
           </div>
         </div>
 
@@ -180,7 +183,7 @@ export default function LeaveRequestPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* Start Date */}
               <div>
-                <Label htmlFor="start-date" className="text-gray-300">تاريخ البداية</Label>
+                <Label htmlFor="start-date" className="text-gray-300">{tc("تاريخ البداية", "Start Date")}</Label>
                 <Input
                   id="start-date"
                   type="date"
@@ -193,7 +196,7 @@ export default function LeaveRequestPage() {
 
               {/* End Date */}
               <div>
-                <Label htmlFor="end-date" className="text-gray-300">تاريخ النهاية</Label>
+                <Label htmlFor="end-date" className="text-gray-300">{tc("تاريخ النهاية", "End Date")}</Label>
                 <Input
                   id="end-date"
                   type="date"
@@ -208,8 +211,8 @@ export default function LeaveRequestPage() {
               {startDate && endDate && (
                 <div className="bg-primary/30 rounded-lg p-3 border border-primary/20">
                   <div className="flex items-center justify-between">
-                    <span className="text-gray-300 text-sm">عدد الأيام</span>
-                    <Badge className="bg-background0/20 text-accent border-primary/30">
+                    <span className="text-gray-300 text-sm">{tc("عدد الأيام", "Number of Days")}</span>
+                    <Badge className="bg-primary/20 text-accent border-primary/30">
                       {calculateDays()} أيام
                     </Badge>
                   </div>
@@ -218,12 +221,12 @@ export default function LeaveRequestPage() {
 
               {/* Reason */}
               <div>
-                <Label htmlFor="reason" className="text-gray-300">السبب</Label>
+                <Label htmlFor="reason" className="text-gray-300">{tc("السبب", "Reason")}</Label>
                 <Textarea
                   id="reason"
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  placeholder="اذكر سبب الاجازة..."
+                  placeholder={tc("اذكر سبب الاجازة...", "State the reason for leave...")}
                   className="bg-primary/30 border-primary/30 text-white resize-none h-24"
                   data-testid="textarea-reason"
                 />
@@ -233,10 +236,10 @@ export default function LeaveRequestPage() {
               <Button
                 type="submit"
                 disabled={isLoading || !startDate || !endDate || !reason.trim()}
-                className="w-full h-11 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-lg"
+                className="w-full h-11 bg-primary hover:bg-primary/90 text-white text-lg"
                 data-testid="button-submit-leave"
               >
-                {isLoading ? "جاري الإرسال..." : "تقديم الطلب"}
+                {isLoading ? tc("جاري الإرسال...", "Sending...") : tc("تقديم الطلب", "Submit Request")}
               </Button>
             </form>
           </CardContent>
@@ -253,7 +256,7 @@ export default function LeaveRequestPage() {
           <CardContent>
             {isLoadingRequests ? (
               <div className="text-center py-8 text-gray-400">
-                <p>جاري تحميل البيانات...</p>
+                <p>{tc("جاري تحميل البيانات...", "Loading data...")}</p>
               </div>
             ) : requests.length === 0 ? (
               <div className="text-center py-8 text-gray-400">
@@ -323,6 +326,7 @@ export default function LeaveRequestPage() {
           </CardContent>
         </Card>
       </div>
+      <MobileBottomNav />
     </div>
   );
 }

@@ -1,13 +1,15 @@
 import { motion } from "framer-motion";
+import { useTranslate } from "@/lib/useTranslate";
 import { Coffee, Settings, Wrench, Clock } from "lucide-react";
 import clunyLogo from "@assets/cluny-logo-customer.png";
 
 export default function MaintenancePage({ reason = "maintenance" }: { reason?: string }) {
+  const tc = useTranslate();
 
-  const isUpdate = reason === "update" || reason === "تحديث";
+  const isUpdate = reason === "update" || reason === tc("تحديث", "update");
 
   return (
-    <div className="min-h-screen bg-[#F7F8F8] dark:bg-[#1a1410] flex flex-col items-center justify-center p-4 text-center" dir="rtl">
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 text-center">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -25,13 +27,13 @@ export default function MaintenancePage({ reason = "maintenance" }: { reason?: s
         </div>
 
         <div className="space-y-4">
-          <h1 className="text-3xl font-bold text-[#1F2D2E] dark:text-white font-ibm-arabic">
-            {isUpdate ? "جاري التحديث..." : "الموقع تحت الصيانة"}
+          <h1 className="text-3xl font-bold text-foreground font-ibm-arabic">
+            {isUpdate ? tc("جاري التحديث...", "Updating...") : tc("الموقع تحت الصيانة", "Site Under Maintenance")}
           </h1>
-          <p className="text-[#6B7C7D] dark:text-gray-400 text-lg leading-relaxed">
+          <p className="text-muted-foreground text-lg leading-relaxed">
             {isUpdate 
-              ? "نحن نقوم بإضافة مميزات جديدة لنقدم لكم تجربة أفضل. سنعود قريباً جداً!" 
-              : "نحن نقوم ببعض أعمال الصيانة الدورية لنضمن لكم أفضل جودة. شكراً لصبركم!"}
+              ? tc("نحن نقوم بإضافة مميزات جديدة لنقدم لكم تجربة أفضل. سنعود قريباً جداً!", "We are adding new features to provide you with a better experience. We'll be back very soon!") 
+              : tc("نحن نقوم ببعض أعمال الصيانة الدورية لنضمن لكم أفضل جودة. شكراً لصبركم!", "We are performing routine maintenance to ensure the best quality for you. Thank you for your patience!")}
           </p>
         </div>
 

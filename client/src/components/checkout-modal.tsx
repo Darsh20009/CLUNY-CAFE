@@ -1,4 +1,4 @@
-import { useState, useEffect, memo } from "react";
+import { useState, memo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useCartStore } from "@/lib/cart-store";
 import { useCustomer } from "@/contexts/CustomerContext";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getErrorMessage } from "@/lib/queryClient";
 import PaymentMethods from "./payment-methods";
 import { generatePDF } from "@/lib/pdf-generator";
 import { saveOrderLocally } from "@/lib/local-orders";
@@ -19,10 +19,11 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import GeideaCheckoutWidget from "./geidea-checkout";
-import ExpressCheckoutWallet from "./express-checkout-wallet";
+import PaymobCheckoutWidget from "./paymob-checkout";
 import SarIcon from "@/components/sar-icon";
 
-const GEIDEA_METHODS = ['geidea', 'neoleap', 'neoleap-apple-pay'];
+const GEIDEA_METHODS = ['geidea', 'apple_pay', 'neoleap', 'neoleap-apple-pay'];
+const PAYMOB_METHODS = ['paymob-card', 'paymob-wallet'];
 
 type CheckoutStep = 'review' | 'delivery' | 'payment' | 'confirmation' | 'success';
 type DeliveryType = 'pickup' | 'delivery' | 'curbside' | null;
@@ -64,6 +65,8 @@ const CheckoutModal = memo(() => {
  const [receiptFile, setReceiptFile] = useState<File | null>(null);
  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
  const [showGeideaWidget, setShowGeideaWidget] = useState(false);
+ const [showPaymobWidget, setShowPaymobWidget] = useState(false);
+ const [paymobCheckoutUrl, setPaymobCheckoutUrl] = useState("");
 
  const { data: paymentMethods = [] } = useQuery<PaymentMethodInfo[]>({
  queryKey: ["/api/payment-methods"],
@@ -80,13 +83,39 @@ const CheckoutModal = memo(() => {
  const response = await apiRequest("POST", "/api/orders", orderData);
  return response.json();
  },
- onSuccess: (order) => {
+ onSuccess: async (order) => {
  setOrderDetails(order);
  if (!customer) saveOrderLocally(order.orderNumber);
  if (selectedPaymentMethod === 'cash') {
    handlePaymentConfirmed(order);
  } else if (selectedPaymentMethod && GEIDEA_METHODS.includes(selectedPaymentMethod as string)) {
    setShowGeideaWidget(true);
+ } else if (selectedPaymentMethod && PAYMOB_METHODS.includes(selectedPaymentMethod as string)) {
+   try {
+     const returnUrl = `${window.location.origin}/payment-return?provider=paymob&orderNumber=${encodeURIComponent(order.orderNumber)}`;
+     const res = await apiRequest("POST", "/api/payments/init", {
+       orderId: order.orderNumber,
+       amount: getTotalPrice(),
+       currency: "SAR",
+       paymentMethod: selectedPaymentMethod,
+       customerName: customerName,
+       customerPhone: customerPhone,
+       customerEmail: customer?.email,
+       returnUrl,
+     });
+     const data = await res.json();
+     if (data.success && data.redirectUrl) {
+       sessionStorage.setItem('postPaymentRedirect', customer ? '/my-orders' : `/tracking?order=${order.orderNumber}`);
+       sessionStorage.setItem('pendingOrderNumber', order.orderNumber);
+       window.location.href = data.redirectUrl;
+     } else {
+       toast({ variant: "destructive", title: "خطأ في الدفع", description: data.error || "فشل تهيئة بوابة الدفع" });
+       setCurrentStep('confirmation');
+     }
+   } catch {
+     toast({ variant: "destructive", title: "خطأ في الاتصال", description: "تعذر الاتصال ببوابة الدفع" });
+     setCurrentStep('confirmation');
+   }
  } else {
    setCurrentStep('confirmation');
  }
@@ -95,7 +124,7 @@ const CheckoutModal = memo(() => {
  toast({
  variant: "destructive",
  title: "خطأ في إنشاء الطلب",
- description: error.message,
+ description: getErrorMessage(error, "فشل إنشاء الطلب، يرجى المحاولة مرة أخرى"),
  });
  },
  });
@@ -134,86 +163,61 @@ const CheckoutModal = memo(() => {
  setCurrentStep('payment');
  };
 
- const buildModalOrderData = (overrides: any = {}) => ({
-   items: cartItems.map(item => {
-     const inlineAddons = (item as any).selectedItemAddons || [];
-     const addonsExtra = inlineAddons.reduce((s: number, a: any) => s + (Number(a.price) || 0), 0);
-     return {
-       coffeeItemId: item.coffeeItemId,
-       quantity: item.quantity,
-       price: String(Number(item.coffeeItem?.price || 0) + addonsExtra),
-       name: item.coffeeItem?.nameAr || "",
-       customization: inlineAddons.length > 0 ? { selectedItemAddons: inlineAddons } : undefined,
-     };
-   }),
-   totalAmount: getTotalPrice().toString(),
-   paymentMethod: selectedPaymentMethod,
-   status: "pending",
-   customerId: customer?.id || null,
-   customerInfo: { name: customerName, phone: customerPhone },
-   deliveryType: deliveryType,
-   carPickup: deliveryType === 'curbside',
-   carInfo: deliveryType === 'curbside' ? { carType, carColor, plateNumber: carPlate } : null,
-   carType: deliveryType === 'curbside' ? carType : null,
-   carColor: deliveryType === 'curbside' ? carColor : null,
-   carPlate: deliveryType === 'curbside' ? carPlate : null,
-   plateNumber: deliveryType === 'curbside' ? carPlate : null,
-   branchId: (deliveryType === 'pickup' || deliveryType === 'curbside') ? selectedBranch : null,
-   deliveryAddress: deliveryType === 'delivery' ? deliveryAddress : null,
-   deliveryNotes: deliveryNotes || null,
-   paymentReceiptUrl: receiptPreview || null,
-   customerPhone: customerPhone,
-   ...overrides,
- });
-
  const handleProceedPayment = () => {
  if (!selectedPaymentMethod) {
-   toast({ variant: "destructive", title: t("checkout.select_payment") });
-   return;
+ toast({ variant: "destructive", title: t("checkout.select_payment") });
+ return;
  }
  const selectedMethodInfo = paymentMethods.find(m => m.id === selectedPaymentMethod);
  if (selectedMethodInfo?.requiresReceipt && !receiptFile) {
-   toast({ variant: "destructive", title: t("checkout.receipt_required") });
-   return;
+ toast({ variant: "destructive", title: t("checkout.receipt_required") });
+ return;
  }
  if (!customerName || !customerPhone) {
-   toast({ variant: "destructive", title: t("checkout.enter_customer_name") });
-   return;
+ toast({ variant: "destructive", title: t("checkout.enter_customer_name") });
+ return;
  }
 
- // Apple Pay is now handled by Geidea Express Checkout SDK button (rendered below).
- // The user taps the SDK-rendered Apple Pay button directly — no need to call
- // a function from "Confirm Order".
- createOrderMutation.mutate(buildModalOrderData());
- };
-
- // Called when Geidea Express Checkout SDK reports a successful Apple Pay payment.
- const onApplePayExpressSuccess = (data: any) => {
-   const geideaOrderId = data?.orderId || data?.reference;
-   createOrderMutation.mutate(buildModalOrderData({
-     paymentMethod: 'apple_pay', status: 'payment_confirmed',
-     paymentStatus: 'paid', paymentReference: geideaOrderId,
-     paymentSessionId: geideaOrderId,
-   }));
+    const orderData = {
+      items: cartItems.map(item => {
+        const inlineAddons = (item as any).selectedItemAddons || [];
+        const addonsExtra = inlineAddons.reduce((s: number, a: any) => s + (Number(a.price) || 0), 0);
+        return {
+          coffeeItemId: item.coffeeItemId,
+          quantity: item.quantity,
+          price: String(Number(item.coffeeItem?.price || 0) + addonsExtra),
+          name: item.coffeeItem?.nameAr || "",
+          customization: inlineAddons.length > 0 ? { selectedItemAddons: inlineAddons } : undefined,
+        };
+      }),
+      totalAmount: getTotalPrice().toString(),
+      paymentMethod: selectedPaymentMethod,
+      status: "pending",
+      customerId: customer?.id || null,
+      customerInfo: { name: customerName, phone: customerPhone },
+      deliveryType: deliveryType,
+      carPickup: deliveryType === 'curbside',
+      carInfo: deliveryType === 'curbside' ? {
+        carType: carType,
+        carColor: carColor,
+        plateNumber: carPlate
+      } : null,
+      carType: deliveryType === 'curbside' ? carType : null,
+      carColor: deliveryType === 'curbside' ? carColor : null,
+      carPlate: deliveryType === 'curbside' ? carPlate : null,
+      plateNumber: deliveryType === 'curbside' ? carPlate : null,
+      branchId: (deliveryType === 'pickup' || deliveryType === 'curbside') ? selectedBranch : null,
+      deliveryAddress: deliveryType === 'delivery' ? deliveryAddress : null,
+      deliveryNotes: deliveryNotes || null,
+      paymentReceiptUrl: receiptPreview || null,
+      customerPhone: customerPhone,
+    };
+ createOrderMutation.mutate(orderData);
  };
 
   const handlePaymentConfirmed = async (order: any) => {
-   try {
-     await fetch("/api/payments/confirm-order", {
-       method: "POST",
-       headers: { "Content-Type": "application/json" },
-       body: JSON.stringify({ orderNumber: order.orderNumber, paymentMethod: selectedPaymentMethod }),
-     });
-   } catch {}
-
    setCurrentStep('success');
    toast({ title: t("checkout.order_success") });
-   setTimeout(() => {
-     clearCart();
-     hideCheckout();
-     navigate(customer ? "/my-orders" : `/tracking?order=${order.orderNumber}`);
-   }, 2000);
-
    try {
      const configRes = await fetch("/api/business-config");
      const config = configRes.ok ? await configRes.json() : null;
@@ -229,7 +233,12 @@ const CheckoutModal = memo(() => {
        link.click();
        URL.revokeObjectURL(url);
      }
-   } catch {}
+   } catch (_) {}
+   setTimeout(() => {
+     clearCart();
+     hideCheckout();
+     navigate(customer ? "/my-orders" : `/tracking?order=${order.orderNumber}`);
+   }, 2000);
   };
 
  const handleClose = () => {
@@ -254,6 +263,7 @@ const CheckoutModal = memo(() => {
  const getCurrentStepIndex = () => steps.findIndex(step => step.id === currentStep);
 
  return (
+<>
  <Dialog open={isCheckoutOpen} onOpenChange={handleClose} data-testid="modal-checkout">
  <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-gradient-to-br from-background via-card to-background border-primary/30" dir={dir}>
  <DialogHeader className="text-center pb-6">
@@ -385,51 +395,27 @@ const CheckoutModal = memo(() => {
  {currentStep === 'payment' && (
  <div className="space-y-6 animate-in fade-in duration-500">
    {showGeideaWidget && orderDetails ? (
-     <div className="min-h-[420px] flex flex-col">
-       <div id="geidea-modal-dropin-container" className="flex-1 min-h-[360px]" />
-       <div className="hidden">
-         <GeideaCheckoutWidget
-           orderNumber={orderDetails.orderNumber}
-           amount={getTotalPrice()}
-           customerPhone={customerPhone}
-           customerEmail={customer?.email}
-           containerId="geidea-modal-dropin-container"
-           onSuccess={() => {
-             setShowGeideaWidget(false);
-             handlePaymentConfirmed(orderDetails);
-           }}
-           onError={(msg) => {
-             setShowGeideaWidget(false);
-             toast({ variant: "destructive", title: "فشل الدفع", description: msg });
-           }}
-           onCancel={() => {
-             setShowGeideaWidget(false);
-           }}
-         />
-       </div>
-     </div>
+     <GeideaCheckoutWidget
+       orderNumber={orderDetails.orderNumber}
+       amount={getTotalPrice()}
+       customerPhone={customerPhone}
+       customerEmail={customer?.email}
+       onSuccess={() => {
+         setShowGeideaWidget(false);
+         handlePaymentConfirmed(orderDetails);
+       }}
+       onError={(msg) => {
+         setShowGeideaWidget(false);
+         toast({ variant: "destructive", title: "فشل الدفع", description: msg });
+       }}
+       onCancel={() => {
+         setShowGeideaWidget(false);
+       }}
+     />
    ) : (
      <>
-       {/* Apple Pay via Geidea Express Checkout SDK.
-           The wallet renders its own divider underneath when the button
-           mounts, and renders nothing at all on browsers that don't support
-           Apple Pay — so we don't need any extra wrapper or pre-check here. */}
-       {customerName && customerPhone && getTotalPrice() > 0 && (
-         <ExpressCheckoutWallet
-           amount={getTotalPrice()}
-           orderId={`CLN-${Date.now()}`}
-           wallet="apple-pay"
-           customerEmail={customer?.email}
-           customerPhone={customerPhone}
-           containerId="apple-pay-express-modal-container"
-           onSuccess={onApplePayExpressSuccess}
-           onError={(msg) => toast({ variant: "destructive", title: "فشل الدفع", description: msg })}
-           onCancel={() => toast({ title: "تم إلغاء الدفع" })}
-         />
-       )}
-
        <div className="bg-card/50 rounded-xl p-6 border border-primary/20">
-         <PaymentMethods paymentMethods={paymentMethods.filter(m => m.id !== 'apple_pay')} selectedMethod={selectedPaymentMethod} onSelectMethod={setSelectedPaymentMethod} comingSoon={true} />
+         <PaymentMethods paymentMethods={paymentMethods} selectedMethod={selectedPaymentMethod} onSelectMethod={setSelectedPaymentMethod} comingSoon={false} />
          {selectedPaymentMethod && paymentMethods.find(m => m.id === selectedPaymentMethod)?.requiresReceipt && (
            <div className="mt-4 p-4 border-2 border-dashed rounded-lg text-center">
              <Label htmlFor="receipt-upload" className="cursor-pointer">
@@ -454,6 +440,8 @@ const CheckoutModal = memo(() => {
              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> جاري المعالجة...</>
            ) : selectedPaymentMethod && GEIDEA_METHODS.includes(selectedPaymentMethod as string) ? (
              <><CreditCard className="w-4 h-4 mr-2" /> الدفع الآن</>
+          ) : selectedPaymentMethod && PAYMOB_METHODS.includes(selectedPaymentMethod as string) ? (
+            <><CreditCard className="w-4 h-4 mr-2" /> الدفع عبر Paymob</>
            ) : t('checkout.confirm_order')}
          </Button>
        </div>
@@ -464,6 +452,29 @@ const CheckoutModal = memo(() => {
  </div>
  </DialogContent>
  </Dialog>
+
+ {showPaymobWidget && orderDetails && paymobCheckoutUrl && (
+   <PaymobCheckoutWidget
+     orderNumber={orderDetails.orderNumber}
+     amount={getTotalPrice()}
+     checkoutUrl={paymobCheckoutUrl}
+     onSuccess={() => {
+       setShowPaymobWidget(false);
+       handlePaymentConfirmed(orderDetails);
+     }}
+     onError={(msg) => {
+       setShowPaymobWidget(false);
+       toast({ variant: "destructive", title: "فشل الدفع", description: msg });
+     }}
+     onCancel={() => {
+       setShowPaymobWidget(false);
+       setPaymobCheckoutUrl("");
+       toast({ title: "تم إغلاق نافذة الدفع", description: "إذا تم سحب المال، سيظهر طلبك في 'طلباتي' خلال لحظات." });
+     }}
+   />
+ )}
+
+</>
  );
 });
 

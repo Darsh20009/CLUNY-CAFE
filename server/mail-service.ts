@@ -203,7 +203,7 @@ export async function sendOrderNotificationEmail(
         .ftr{border-top:1px solid #e0e0e0;padding-top:15px;font-size:12px;color:#888;text-align:center;margin-top:20px;}
       </style></head>
       <body><div class="wrap"><div class="box">
-        <div class="hdr"><h1>CLUNY CAFE</h1><p style="color:#666;font-size:13px;">تجربة القهوة الفاخرة</p></div>
+        <div class="hdr"><img src="https://raw.githubusercontent.com/cluny.cafe/logo.png" alt="CLUNY" style="width:120px;height:auto;margin-bottom:8px;" /><h1 style="color:#2D9B6E;font-size:22px;margin:0;">CLUNY CAFE</h1><p style="color:#666;font-size:13px;">تجربة القهوة الفاخرة</p></div>
         <p style="font-size:16px;color:#333;">مرحباً ${customerName}!</p>
         <div class="status">
           <div style="font-size:12px;margin-bottom:10px;">حالة الطلب</div>
@@ -431,7 +431,7 @@ export async function sendPasswordResetEmail(
     html: `
       <div style="font-family:Arial,sans-serif;direction:rtl;padding:20px;max-width:500px;margin:0 auto;">
         <h2 style="color:#8B5A2B;">مرحباً ${customerName} 👋</h2>
-        <p>تلقّينا طلباً لإعادة تعيين كلمة مرورك في تطبيق كلوني كافيه.</p>
+        <p>تلقّينا طلباً لإعادة تعيين كلمة مرورك في تطبيق كلوني.</p>
         <div style="text-align:center;margin:24px 0;">
           <a href="${resetUrl}" style="background:#8B5A2B;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">
             إعادة تعيين كلمة المرور
@@ -457,7 +457,7 @@ export async function sendOTPEmail(
     html: `
       <div style="font-family:Arial,sans-serif;direction:rtl;padding:20px;max-width:500px;margin:0 auto;">
         <h2 style="color:#8B5A2B;">مرحباً ${customerName} 👋</h2>
-        <p>رمز التحقق الخاص بك لتسجيل الدخول إلى كلوني كافيه:</p>
+        <p>رمز التحقق الخاص بك لتسجيل الدخول إلى كلوني:</p>
         <div style="background:#8B5A2B;color:#fff;padding:20px;border-radius:8px;text-align:center;margin:20px 0;">
           <p style="margin:0;font-size:13px;opacity:.8;">رمز OTP</p>
           <p style="font-size:40px;font-weight:bold;letter-spacing:10px;margin:10px 0;">${otp}</p>
@@ -466,6 +466,62 @@ export async function sendOTPEmail(
         <p style="color:#999;font-size:12px;">إذا لم تطلب هذا الرمز، تجاهل هذا البريد الإلكتروني.</p>
         <hr style="border:0;border-top:1px solid #eee;margin:20px 0;">
         <p style="font-size:12px;color:#999;">© 2025 CLUNY CAFE</p>
+      </div>
+    `,
+  });
+}
+
+export async function sendDbStorageAlertEmail(
+  dbLabel: string,
+  usedMb: number,
+  limitMb: number
+) {
+  const to = process.env.NOTIFICATION_EMAIL || process.env.SMTP_FROM;
+  if (!to) return false;
+
+  const pct = Math.round((usedMb / limitMb) * 100);
+  const freeMb = (limitMb - usedMb).toFixed(1);
+
+  return sendMail({
+    to,
+    subject: `⚠️ تنبيه: قاعدة البيانات ${dbLabel} وصلت ${pct}% من سعتها`,
+    html: `
+      <div style="font-family:Arial,sans-serif;direction:rtl;padding:24px;max-width:520px;margin:0 auto;background:#f9f9f9;">
+        <div style="background:#fff;border-radius:10px;padding:28px;border-top:5px solid #e53e3e;">
+          <h2 style="color:#e53e3e;margin-top:0;">⚠️ تنبيه تخزين قاعدة البيانات</h2>
+          <p style="color:#333;font-size:15px;">
+            قاعدة البيانات <strong>${dbLabel}</strong> اقتربت من الامتلاء وتحتاج إلى انتباهك.
+          </p>
+          <table style="width:100%;border-collapse:collapse;margin:20px 0;">
+            <tr style="background:#fff5f5;">
+              <td style="padding:12px 16px;color:#666;border-bottom:1px solid #eee;">قاعدة البيانات</td>
+              <td style="padding:12px 16px;font-weight:bold;color:#333;border-bottom:1px solid #eee;">${dbLabel}</td>
+            </tr>
+            <tr>
+              <td style="padding:12px 16px;color:#666;border-bottom:1px solid #eee;">المساحة المستخدمة</td>
+              <td style="padding:12px 16px;font-weight:bold;color:#e53e3e;border-bottom:1px solid #eee;">${usedMb.toFixed(1)} MB</td>
+            </tr>
+            <tr style="background:#fff5f5;">
+              <td style="padding:12px 16px;color:#666;border-bottom:1px solid #eee;">الحد الأقصى</td>
+              <td style="padding:12px 16px;font-weight:bold;color:#333;border-bottom:1px solid #eee;">${limitMb} MB</td>
+            </tr>
+            <tr>
+              <td style="padding:12px 16px;color:#666;border-bottom:1px solid #eee;">المساحة المتبقية</td>
+              <td style="padding:12px 16px;font-weight:bold;color:#333;border-bottom:1px solid #eee;">${freeMb} MB</td>
+            </tr>
+            <tr style="background:#fff5f5;">
+              <td style="padding:12px 16px;color:#666;">نسبة الاستخدام</td>
+              <td style="padding:12px 16px;font-weight:bold;color:#e53e3e;">${pct}%</td>
+            </tr>
+          </table>
+          <div style="background:#fff5f5;border-right:4px solid #e53e3e;padding:14px 16px;border-radius:4px;margin-bottom:20px;">
+            <p style="margin:0;color:#c53030;font-size:14px;">
+              سيتم التحويل التلقائي إلى قاعدة البيانات التالية عند بلوغ ${limitMb} MB.
+              إذا لم تكن قاعدة بيانات احتياطية متاحة، قد يتوقف النظام.
+            </p>
+          </div>
+          <p style="color:#999;font-size:12px;margin-bottom:0;">© QIROX Systems — تنبيه تلقائي</p>
+        </div>
       </div>
     `,
   });

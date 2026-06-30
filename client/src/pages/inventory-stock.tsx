@@ -51,11 +51,14 @@ import {
   ArrowUpDown,
   Sparkles,
   Target,
-  CheckCircle2
+  CheckCircle2,
+  ArrowLeft,
 } from "lucide-react";
+import { useLocation } from "wouter";
 import { format } from "date-fns";
 import { ar } from "date-fns/locale";
 import SarIcon from "@/components/sar-icon";
+import { useTranslate } from "@/lib/useTranslate";
 
 interface BranchStock {
   id: string;
@@ -108,7 +111,7 @@ const categoryConfig: Record<string, { label: string; icon: any; gradient: strin
   ingredient: { 
     label: "مكون", 
     icon: Coffee,
-    gradient: "from-amber-500 to-background0"
+    gradient: "from-primary to-primary/80"
   },
   packaging: { 
     label: "تغليف", 
@@ -133,7 +136,9 @@ const categoryConfig: Record<string, { label: string; icon: any; gradient: strin
 };
 
 export default function InventoryStockPage() {
+  const tc = useTranslate();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
   const [branchFilter, setBranchFilter] = useState<string>("all");
   const [stockFilter, setStockFilter] = useState<string>("all");
@@ -154,11 +159,9 @@ export default function InventoryStockPage() {
     notes: "",
   });
 
-  const { data: stockData = [], isLoading, dataUpdatedAt } = useQuery<BranchStock[]>({
+  const { data: stockData = [], isLoading } = useQuery<BranchStock[]>({
     queryKey: ["/api/inventory/stock"],
-    refetchInterval: 5000,
-    refetchIntervalInBackground: true,
-    staleTime: 2000,
+    refetchInterval: 30000,
   });
 
   const { data: branches = [] } = useQuery<Branch[]>({
@@ -174,7 +177,8 @@ export default function InventoryStockPage() {
       if (!data.branchId || !data.rawItemId) {
         return Promise.reject(new Error("بيانات غير صالحة"));
       }
-      return apiRequest("POST", "/api/inventory/stock/adjust", data);
+      const { type, ...rest } = data;
+      return apiRequest("POST", "/api/inventory/stock/adjust", { ...rest, movementType: type === 'add' ? 'adjustment' : 'adjustment' });
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/stock"] });
@@ -381,132 +385,94 @@ export default function InventoryStockPage() {
             <Warehouse className="h-16 w-16 text-accent animate-pulse mx-auto" />
             <Loader2 className="h-8 w-8 animate-spin text-accent absolute -bottom-2 -right-2" />
           </div>
-          <p className="text-muted-foreground mt-4 text-lg">جاري تحميل المخزون...</p>
+          <p className="text-muted-foreground mt-4 text-lg">{tc("جاري تحميل المخزون...","Loading inventory...")}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-background/30 dark:from-slate-950 dark:via-slate-900 dark:to-amber-950/10 p-3 md:p-6 pb-24 sm:pb-6" dir="rtl">
-      <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
-          <div className="flex items-center gap-3 sm:gap-4">
-            <div className="p-2.5 sm:p-3 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 shadow-lg shadow-amber-500/20">
-              <Warehouse className="h-6 w-6 sm:h-8 sm:w-8 text-white" />
+    <div className="min-h-screen bg-white p-4 md:p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" onClick={() => setLocation("/manager/dashboard")} className="text-gray-600 hover:text-gray-900 hover:bg-gray-100" data-testid="btn-back">
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+            <div className="p-3 rounded-2xl bg-green-600 shadow-md shadow-green-200">
+              <Warehouse className="h-8 w-8 text-white" />
             </div>
-            <div className="min-w-0">
-              <h1 className="text-lg sm:text-2xl md:text-3xl font-bold bg-gradient-to-r from-amber-600 to-orange-600 bg-clip-text text-transparent">
-                إدارة المخزون
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold text-gray-900">
+                {tc("إدارة المخزون","Inventory Management")}
               </h1>
-              <p className="text-muted-foreground text-xs sm:text-sm flex items-center gap-2 flex-wrap">
-                <span>تتبع مباشر للمواد الخام</span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                  <span className="text-green-600 dark:text-green-500 font-medium">مباشر</span>
-                </span>
-                {dataUpdatedAt && (
-                  <span className="text-[10px] text-muted-foreground">
-                    آخر تحديث: {new Date(dataUpdatedAt).toLocaleTimeString("ar-SA")}
-                  </span>
-                )}
-              </p>
+              <p className="text-gray-500 text-sm">{tc("تحكم كامل في المواد الخام والمخزون","Full control of raw materials and stock")}</p>
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Button
               onClick={() => setIsNewBatchOpen(true)}
-              size="sm"
-              className="bg-gradient-to-r from-amber-500 to-background0 hover:from-amber-600 hover:to-orange-600 text-white shadow-lg shadow-amber-500/20 sm:size-default"
+              className="bg-green-600 hover:bg-green-700 text-white shadow-sm shadow-green-200"
               data-testid="button-new-batch"
             >
               <PackagePlus className="h-4 w-4 ml-2" />
-              <span className="hidden sm:inline">إضافة دفعة جديدة</span>
-              <span className="sm:hidden">دفعة</span>
+              {tc("إضافة دفعة جديدة","Add New Batch")}
             </Button>
             <Button
               variant="outline"
-              size="sm"
               onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/inventory/stock"] })}
               data-testid="button-refresh"
             >
               <RefreshCw className="h-4 w-4 ml-2" />
-              تحديث
+              {tc("تحديث","Refresh")}
             </Button>
           </div>
         </div>
 
-        <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-4">
-          <Card className="border-0 shadow-lg bg-gradient-to-br from-green-50 to-emerald-100 dark:from-green-950/50 dark:to-emerald-900/30">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">مخزون سليم</p>
-                  <p className="text-3xl font-bold text-green-700 dark:text-green-400">{healthyItems}</p>
-                  <p className="text-xs text-green-600/70">من أصل {totalItems} مادة</p>
-                </div>
-                <div className="p-3 rounded-xl bg-green-500/20">
-                  <CheckCircle2 className="h-8 w-8 text-green-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-lg bg-gradient-to-br from-yellow-50 to-amber-100 dark:from-yellow-950/50 dark:to-amber-900/30">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">مخزون منخفض</p>
-                  <p className="text-3xl font-bold text-yellow-700 dark:text-yellow-400">{lowStockItems}</p>
-                  <p className="text-xs text-yellow-600/70">يحتاج إعادة تعبئة</p>
-                </div>
-                <div className="p-3 rounded-xl bg-yellow-500/20">
-                  <TrendingDown className="h-8 w-8 text-yellow-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-lg bg-gradient-to-br from-red-50 to-rose-100 dark:from-red-950/50 dark:to-rose-900/30">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">نفاد المخزون</p>
-                  <p className="text-3xl font-bold text-red-700 dark:text-red-400">{outOfStockItems}</p>
-                  <p className="text-xs text-red-600/70">يجب الطلب فوراً</p>
-                </div>
-                <div className="p-3 rounded-xl bg-red-500/20">
-                  <AlertTriangle className="h-8 w-8 text-red-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-lg bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-blue-950/50 dark:to-indigo-900/30">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">قيمة المخزون</p>
-                  <p className="text-3xl font-bold text-blue-700 dark:text-blue-400">{totalStockValue.toFixed(0)}</p>
-                  <p className="text-xs text-blue-600/70">ريال سعودي</p>
-                </div>
-                <div className="p-3 rounded-xl bg-blue-500/20">
-                  <DollarSign className="h-8 w-8 text-blue-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-2xl border border-green-100 bg-green-50 p-5 flex items-start gap-4">
+            <div className="bg-white rounded-xl p-2.5 shadow-sm"><CheckCircle2 className="h-6 w-6 text-green-600" /></div>
+            <div>
+              <p className="text-xs font-medium text-gray-500">{tc("مخزون سليم","Healthy Stock")}</p>
+              <p className="text-2xl font-black text-green-700">{healthyItems}</p>
+              <p className="text-xs text-gray-400">{tc("من أصل","of")} {totalItems}</p>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-amber-100 bg-amber-50 p-5 flex items-start gap-4">
+            <div className="bg-white rounded-xl p-2.5 shadow-sm"><TrendingDown className="h-6 w-6 text-amber-600" /></div>
+            <div>
+              <p className="text-xs font-medium text-gray-500">{tc("مخزون منخفض","Low Stock")}</p>
+              <p className="text-2xl font-black text-amber-700">{lowStockItems}</p>
+              <p className="text-xs text-gray-400">{tc("يحتاج إعادة تعبئة","Needs refill")}</p>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-red-100 bg-red-50 p-5 flex items-start gap-4">
+            <div className="bg-white rounded-xl p-2.5 shadow-sm"><AlertTriangle className="h-6 w-6 text-red-600" /></div>
+            <div>
+              <p className="text-xs font-medium text-gray-500">{tc("نفاد المخزون","Out of Stock")}</p>
+              <p className="text-2xl font-black text-red-700">{outOfStockItems}</p>
+              <p className="text-xs text-gray-400">{tc("يجب الطلب فوراً","Order immediately")}</p>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5 flex items-start gap-4">
+            <div className="bg-white rounded-xl p-2.5 shadow-sm"><DollarSign className="h-6 w-6 text-blue-600" /></div>
+            <div>
+              <p className="text-xs font-medium text-gray-500">{tc("قيمة المخزون","Stock Value")}</p>
+              <p className="text-2xl font-black text-blue-700">{totalStockValue.toFixed(0)}</p>
+              <p className="text-xs text-gray-400"><SarIcon size={11} /></p>
+            </div>
+          </div>
         </div>
 
         {(lowStockItems > 0 || outOfStockItems > 0) && (
-          <Card className="border-2 border-yellow-300 dark:border-yellow-700 bg-gradient-to-r from-yellow-50 to-background dark:from-yellow-950/30 dark:to-amber-950/30 shadow-lg">
+          <Card className="border-2 border-amber-200 bg-amber-50 shadow-sm">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-yellow-700 dark:text-yellow-400">
                 <Bell className="h-5 w-5 animate-pulse" />
-                تنبيهات المخزون العاجلة
+                {tc("تنبيهات المخزون العاجلة","Urgent Stock Alerts")}
               </CardTitle>
               <CardDescription className="text-yellow-600/80">
-                هذه المواد تحتاج انتباهك الفوري
+                {tc("هذه المواد تحتاج انتباهك الفوري","These items need your immediate attention")}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -546,7 +512,7 @@ export default function InventoryStockPage() {
               <div className="relative flex-1">
                 <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="ابحث عن مادة بالاسم أو الكود..."
+                  placeholder={tc("ابحث عن مادة بالاسم أو الكود...","Search by name or code...")}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pr-10 bg-background"
@@ -559,7 +525,7 @@ export default function InventoryStockPage() {
                     <SelectValue placeholder="الفرع" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">كل الفروع</SelectItem>
+                    <SelectItem value="all">{tc("كل الفروع","All Branches")}</SelectItem>
                     {branches.map((branch) => (
                       <SelectItem key={branch.id} value={branch.id as string}>
                         {branch.nameAr}
@@ -572,11 +538,11 @@ export default function InventoryStockPage() {
                     <SelectValue placeholder="الحالة" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">كل الحالات</SelectItem>
-                    <SelectItem value="available">متوفر</SelectItem>
-                    <SelectItem value="warning">تنبيه</SelectItem>
-                    <SelectItem value="low">منخفض</SelectItem>
-                    <SelectItem value="out">نفاد</SelectItem>
+                    <SelectItem value="all">{tc("كل الحالات","All Statuses")}</SelectItem>
+                    <SelectItem value="available">{tc("متوفر","Available")}</SelectItem>
+                    <SelectItem value="warning">{tc("تنبيه","Warning")}</SelectItem>
+                    <SelectItem value="low">{tc("منخفض","Low")}</SelectItem>
+                    <SelectItem value="out">{tc("نفاد","Out")}</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select value={categoryFilter} onValueChange={setCategoryFilter}>
@@ -584,7 +550,7 @@ export default function InventoryStockPage() {
                     <SelectValue placeholder="النوع" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">كل الأنواع</SelectItem>
+                    <SelectItem value="all">{tc("كل الأنواع","All Types")}</SelectItem>
                     {Object.entries(categoryConfig).map(([key, config]) => (
                       <SelectItem key={key} value={key}>{config.label}</SelectItem>
                     ))}
@@ -597,8 +563,8 @@ export default function InventoryStockPage() {
             {filteredStock.length === 0 ? (
               <div className="text-center py-12">
                 <Package className="h-16 w-16 text-muted-foreground/30 mx-auto mb-4" />
-                <p className="text-lg text-muted-foreground">لا توجد بيانات مخزون</p>
-                <p className="text-sm text-muted-foreground/70">حاول تغيير معايير البحث</p>
+                <p className="text-lg text-muted-foreground">{tc("لا توجد بيانات مخزون","No inventory data found")}</p>
+                <p className="text-sm text-muted-foreground/70">{tc("حاول تغيير معايير البحث","Try changing search criteria")}</p>
               </div>
             ) : (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -636,7 +602,7 @@ export default function InventoryStockPage() {
                         <div className="space-y-3">
                           <div>
                             <div className="flex items-center justify-between text-sm mb-1">
-                              <span className="text-muted-foreground">الكمية المتوفرة</span>
+                              <span className="text-muted-foreground">{tc("الكمية المتوفرة","Available Quantity")}</span>
                               <span className="font-bold text-lg">
                                 {stock.currentQuantity} {unitLabels[stock.rawItem?.unit || ""]}
                               </span>
@@ -646,7 +612,7 @@ export default function InventoryStockPage() {
                               className={`h-2 ${status.color === "bg-green-500" ? "[&>div]:bg-green-500" : status.color === "bg-yellow-500" ? "[&>div]:bg-yellow-500" : status.color === "bg-red-500" ? "[&>div]:bg-red-500" : "[&>div]:bg-blue-500"}`}
                             />
                             <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
-                              <span>الحد الأدنى: {stock.rawItem?.minStockLevel || 0}</span>
+                              <span>{tc("الحد الأدنى:","Min:")} {stock.rawItem?.minStockLevel || 0}</span>
                               <span>{getBranchName(stock.branchId)}</span>
                             </div>
                           </div>
@@ -654,7 +620,7 @@ export default function InventoryStockPage() {
                           <div className="flex items-center justify-between text-sm bg-muted/50 rounded-lg p-2">
                             <div className="flex items-center gap-1">
                               <Target className="h-3 w-3 text-accent" />
-                              <span className="text-muted-foreground">المخزون الحصري:</span>
+                              <span className="text-muted-foreground">{tc("المخزون الحصري:","Exclusive Stock:")}</span>
                             </div>
                             <span className="font-bold font-mono">{stock.currentQuantity} {unitLabels[stock.rawItem?.unit || ""]}</span>
                           </div>
@@ -662,7 +628,7 @@ export default function InventoryStockPage() {
                           <div className="flex items-center justify-between text-sm bg-muted/50 rounded-lg p-2">
                             <div className="flex items-center gap-1">
                               <DollarSign className="h-3 w-3 text-green-600" />
-                              <span className="text-muted-foreground">القيمة:</span>
+                              <span className="text-muted-foreground">{tc("القيمة:","Value:")}</span>
                             </div>
                             <span className="font-bold text-green-600">{stockValue.toFixed(2)} <SarIcon /></span>
                           </div>
@@ -685,7 +651,7 @@ export default function InventoryStockPage() {
                               onClick={() => handleQuickAdjust(stock, "subtract")}
                               disabled={adjustMutation.isPending}
                             >
-                              تعديل
+                              {tc("تعديل","Adjust")}
                             </Button>
                             <Button
                               size="sm"
@@ -708,7 +674,7 @@ export default function InventoryStockPage() {
         </Card>
 
         <Dialog open={isQuickAdjustOpen} onOpenChange={setIsQuickAdjustOpen}>
-          <DialogContent dir="rtl" className="sm:max-w-md">
+          <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 {adjustType === "add" ? (
@@ -720,7 +686,7 @@ export default function InventoryStockPage() {
                     <Minus className="h-5 w-5 text-red-600" />
                   </div>
                 )}
-                {adjustType === "add" ? "إضافة للمخزون" : "خصم من المخزون"}
+                {adjustType === "add" ? tc("إضافة للمخزون","Add to Stock") : tc("خصم من المخزون","Deduct from Stock")}
               </DialogTitle>
               <DialogDescription>
                 {selectedStock?.rawItem?.nameAr}
@@ -729,7 +695,7 @@ export default function InventoryStockPage() {
             {selectedStock && (
               <div className="space-y-4 py-4">
                 <div className="p-4 bg-muted/50 rounded-xl text-center">
-                  <p className="text-sm text-muted-foreground mb-1">الكمية الحالية</p>
+                  <p className="text-sm text-muted-foreground mb-1">{tc("الكمية الحالية","Current Quantity")}</p>
                   <p className="text-3xl font-bold">
                     {selectedStock.currentQuantity}
                     <span className="text-base font-normal text-muted-foreground mr-2">
@@ -742,17 +708,17 @@ export default function InventoryStockPage() {
                   <TabsList className="grid w-full grid-cols-2">
                     <TabsTrigger value="add" className="flex items-center gap-2">
                       <Plus className="h-4 w-4" />
-                      إضافة
+                      {tc("إضافة","Add")}
                     </TabsTrigger>
                     <TabsTrigger value="subtract" className="flex items-center gap-2">
                       <Minus className="h-4 w-4" />
-                      خصم
+                      {tc("خصم","Deduct")}
                     </TabsTrigger>
                   </TabsList>
                 </Tabs>
 
                 <div className="space-y-2">
-                  <Label>الكمية</Label>
+                  <Label>{tc("الكمية","Quantity")}</Label>
                   <div className="flex items-center gap-2">
                     <Button
                       variant="outline"
@@ -784,9 +750,9 @@ export default function InventoryStockPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>ملاحظات (اختياري)</Label>
+                  <Label>{tc("ملاحظات (اختياري)","Notes (optional)")}</Label>
                   <Textarea
-                    placeholder="سبب التعديل..."
+                    placeholder={tc("سبب التعديل...","Reason for adjustment...")}
                     value={adjustNotes}
                     onChange={(e) => setAdjustNotes(e.target.value)}
                     className="resize-none"
@@ -796,7 +762,7 @@ export default function InventoryStockPage() {
 
                 <div className="p-4 rounded-xl bg-muted/30 border">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">الكمية بعد التعديل:</span>
+                    <span className="text-muted-foreground">{tc("الكمية بعد التعديل:","Quantity after adjustment:")}</span>
                     <span className="text-xl font-bold">
                       {adjustType === "add" 
                         ? (selectedStock.currentQuantity + parseFloat(adjustQuantity || "0")).toFixed(1)
@@ -812,7 +778,7 @@ export default function InventoryStockPage() {
             )}
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsQuickAdjustOpen(false)}>
-                إلغاء
+                {tc("إلغاء","Cancel")}
               </Button>
               <Button 
                 onClick={handleSubmitAdjust}
@@ -830,35 +796,35 @@ export default function InventoryStockPage() {
                 ) : (
                   <Minus className="h-4 w-4 ml-2" />
                 )}
-                تأكيد
+                {tc("تأكيد","Confirm")}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
 
         <Dialog open={isNewBatchOpen} onOpenChange={setIsNewBatchOpen}>
-          <DialogContent dir="rtl" className="sm:max-w-lg">
+          <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <div className="p-2 rounded-lg bg-primary dark:bg-primary/30">
                   <PackagePlus className="h-5 w-5 text-accent" />
                 </div>
-                إضافة دفعة جديدة
+                {tc("إضافة دفعة جديدة","Add New Batch")}
               </DialogTitle>
               <DialogDescription>
-                أضف كمية جديدة من المواد الخام للمخزون
+                {tc("أضف كمية جديدة من المواد الخام للمخزون","Add a new quantity of raw materials to stock")}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>الفرع</Label>
+                  <Label>{tc("الفرع","Branch")}</Label>
                   <Select 
                     value={newBatchData.branchId} 
                     onValueChange={(v) => setNewBatchData({...newBatchData, branchId: v})}
                   >
                     <SelectTrigger data-testid="select-new-batch-branch">
-                      <SelectValue placeholder="اختر الفرع" />
+                      <SelectValue placeholder={tc("اختر الفرع","Select branch")} />
                     </SelectTrigger>
                     <SelectContent>
                       {branches.map((branch) => (
@@ -870,13 +836,13 @@ export default function InventoryStockPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>المادة</Label>
+                  <Label>{tc("المادة","Material")}</Label>
                   <Select 
                     value={newBatchData.rawItemId} 
                     onValueChange={(v) => setNewBatchData({...newBatchData, rawItemId: v})}
                   >
                     <SelectTrigger data-testid="select-new-batch-item">
-                      <SelectValue placeholder="اختر المادة" />
+                      <SelectValue placeholder={tc("اختر المادة","Select material")} />
                     </SelectTrigger>
                     <SelectContent>
                       {rawItems.map((item) => (
@@ -891,10 +857,10 @@ export default function InventoryStockPage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>الكمية</Label>
+                  <Label>{tc("الكمية","Quantity")}</Label>
                   <Input
                     type="number"
-                    placeholder="أدخل الكمية"
+                    placeholder={tc("أدخل الكمية","Enter quantity")}
                     value={newBatchData.quantity}
                     onChange={(e) => setNewBatchData({...newBatchData, quantity: e.target.value})}
                     min="0.1"
@@ -903,7 +869,7 @@ export default function InventoryStockPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>تكلفة الوحدة (اختياري)</Label>
+                  <Label>{tc("تكلفة الوحدة (اختياري)","Unit Cost (optional)")}</Label>
                   <Input
                     type="number"
                     placeholder="ر.س"
@@ -917,9 +883,9 @@ export default function InventoryStockPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>ملاحظات</Label>
+                <Label>{tc("ملاحظات","Notes")}</Label>
                 <Textarea
-                  placeholder="ملاحظات عن الدفعة..."
+                  placeholder={tc("ملاحظات عن الدفعة...","Notes about the batch...")}
                   value={newBatchData.notes}
                   onChange={(e) => setNewBatchData({...newBatchData, notes: e.target.value})}
                   className="resize-none"
@@ -929,12 +895,12 @@ export default function InventoryStockPage() {
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsNewBatchOpen(false)}>
-                إلغاء
+                {tc("إلغاء","Cancel")}
               </Button>
               <Button 
                 onClick={handleSubmitNewBatch}
                 disabled={newBatchMutation.isPending}
-                className="bg-gradient-to-r from-amber-500 to-background0 hover:from-amber-600 hover:to-orange-600"
+                className="bg-primary hover:bg-primary/90"
                 data-testid="button-confirm-new-batch"
               >
                 {newBatchMutation.isPending ? (
@@ -942,7 +908,7 @@ export default function InventoryStockPage() {
                 ) : (
                   <PackagePlus className="h-4 w-4 ml-2" />
                 )}
-                إضافة الدفعة
+                {tc("إضافة الدفعة","Add Batch")}
               </Button>
             </DialogFooter>
           </DialogContent>

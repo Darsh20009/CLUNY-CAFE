@@ -25,6 +25,6 @@ export const foodCategories = [
 export const allCategories = [...coffeeCategories, ...foodCategories];
 
 export function getCoffeeImage(coffeeId: string): string {
-  // Return CLUNY logo as placeholder for all images
-  return "/attached_assets/cluny_cafe_logo_1767095370460.png";
+  // Return CLUNY CAFE logo as placeholder for all images
+  return "/logo.png";
 }

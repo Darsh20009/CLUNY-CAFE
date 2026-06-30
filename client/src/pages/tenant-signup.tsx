@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslate, tc } from "@/lib/useTranslate";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,39 +11,41 @@ import { CheckCircle2, AlertCircle, Loader } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import SarIcon from "@/components/sar-icon";
+import clunyLogo from "@assets/cluny-logo-customer.png";
 
 const SUBSCRIPTION_PLANS = [
   {
     id: "free",
-    nameAr: "مجاني",
+    nameAr: tc("مجاني", "Free"),
     nameEn: "Free",
     price: "0",
-    features: ["فرع واحد", "100 طلب/شهر", "بدون دعم"]
+    features: [tc("فرع واحد", "One Branch"), tc("100 طلب/شهر", "100 orders/month"), tc("بدون دعم", "No support")]
   },
   {
     id: "starter",
-    nameAr: "مبتدئ",
+    nameAr: tc("مبتدئ", "Starter"),
     nameEn: "Starter",
     price: "299",
-    features: ["فرعين", "1000 طلب/شهر", "بريد إلكتروني"]
+    features: [tc("فرعين", "2 Branches"), tc("1000 طلب/شهر", "1000 orders/month"), tc("بريد إلكتروني", "Email support")]
   },
   {
     id: "professional",
-    nameAr: "احترافي",
+    nameAr: tc("احترافي", "Professional"),
     nameEn: "Professional",
     price: "999",
-    features: ["5 فروع", "طلبات غير محدودة", "دعم كامل"]
+    features: [tc("5 فروع", "5 Branches"), tc("طلبات غير محدودة", "Unlimited orders"), tc("دعم كامل", "Full support")]
   },
   {
     id: "enterprise",
     nameAr: "enterprise",
     nameEn: "Enterprise",
-    price: "يتم تحديده",
-    features: ["فروع غير محدودة", "مميزات مخصصة", "حساب مخصص"]
+    price: tc("يتم تحديده", "Custom"),
+    features: [tc("فروع غير محدودة", "Unlimited branches"), tc("مميزات مخصصة", "Custom features"), tc("حساب مخصص", "Dedicated account")]
   }
 ];
 
 export default function TenantSignup() {
+  const tc = useTranslate();
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
@@ -70,8 +73,8 @@ export default function TenantSignup() {
     // Validation
     if (!formData.nameAr.trim()) {
       toast({
-        title: "خطأ",
-        description: "الرجاء إدخال اسم المتجر بالعربية",
+        title: tc("خطأ", "Error"),
+        description: tc("الرجاء إدخال اسم المتجر بالعربية", "Please enter the store name in Arabic"),
         variant: "destructive"
       });
       return;
@@ -79,8 +82,8 @@ export default function TenantSignup() {
 
     if (!formData.email.trim() || !formData.email.includes("@")) {
       toast({
-        title: "خطأ",
-        description: "الرجاء إدخال بريد إلكتروني صحيح",
+        title: tc("خطأ", "Error"),
+        description: tc("الرجاء إدخال بريد إلكتروني صحيح", "Please enter a valid email address"),
         variant: "destructive"
       });
       return;
@@ -88,8 +91,8 @@ export default function TenantSignup() {
 
     if (!formData.phone.trim()) {
       toast({
-        title: "خطأ",
-        description: "الرجاء إدخال رقم الهاتف",
+        title: tc("خطأ", "Error"),
+        description: tc("الرجاء إدخال رقم الهاتف", "Please enter phone number"),
         variant: "destructive"
       });
       return;
@@ -130,7 +133,7 @@ export default function TenantSignup() {
 
       setSuccess(true);
       toast({
-        title: "تم الإنشاء بنجاح!",
+        title: tc("تم الإنشاء بنجاح!", "Created Successfully!"),
         description: `تم إنشاء متجرك "${formData.nameAr}" بنجاح`
       });
 
@@ -142,8 +145,8 @@ export default function TenantSignup() {
     } catch (error: any) {
       console.error("Signup error:", error);
       toast({
-        title: "خطأ",
-        description: error.message || "حدث خطأ أثناء إنشاء المتجر",
+        title: tc("خطأ", "Error"),
+        description: error.message || tc("حدث خطأ أثناء إنشاء المتجر", "An error occurred while creating the store"),
         variant: "destructive"
       });
     } finally {
@@ -153,7 +156,7 @@ export default function TenantSignup() {
 
   if (success) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-background dark:from-slate-950 dark:to-slate-900 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <Card className="w-full max-w-md">
           <CardContent className="pt-12 text-center">
             <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
@@ -171,14 +174,17 @@ export default function TenantSignup() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-background dark:from-slate-950 dark:to-slate-900 py-8 px-4">
+    <div className="min-h-screen bg-background py-8 px-4">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-foreground dark:text-foreground mb-2">
-            انضم إلى Menuza
+          <div className="flex justify-center mb-4">
+            <img src={clunyLogo} alt="CLUNY CAFE" className="w-16 h-16 object-contain rounded-xl" />
+          </div>
+          <h1 className="text-4xl font-bold text-foreground mb-2">
+            انضم إلى CLUNY CAFE
           </h1>
-          <p className="text-muted-foreground dark:text-muted-foreground text-lg">
+          <p className="text-muted-foreground text-lg">
             أكمل البيانات الخاصة بمتجرك لبدء رحلتك مع نظام إدارة المقاهي الأفضل
           </p>
         </div>
@@ -186,8 +192,8 @@ export default function TenantSignup() {
         {/* Main Form */}
         <Card className="shadow-lg mb-8">
           <CardHeader>
-            <CardTitle>بيانات المتجر</CardTitle>
-            <CardDescription>أدخل معلومات متجرك والخطة المناسبة لك</CardDescription>
+            <CardTitle>{tc("بيانات المتجر", "Store Details")}</CardTitle>
+            <CardDescription>{tc("أدخل معلومات متجرك والخطة المناسبة لك", "Enter your store information and suitable plan")}</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">

@@ -1,4 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
+import { PlanGate } from "@/components/plan-gate";
+import { useTranslate, tc } from "@/lib/useTranslate";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -6,8 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -59,32 +59,19 @@ interface AnalyticsResponse {
 }
 
 const PAYMENT_LABELS: Record<string, string> = {
-  cash: "نقدي", card: "بطاقة", pos: "نقطة البيع",
-  loyalty: "نقاط ولاء", wallet: "محفظة", online: "أونلاين", other: "أخرى"
+  cash: tc("نقدي", "Cash"), card: tc("بطاقة", "Card"), pos: tc("نقطة البيع", "POS"),
+  loyalty: tc("نقاط ولاء", "Loyalty"), wallet: tc("محفظة", "Wallet"), online: tc("أونلاين", "Online"), other: tc("أخرى", "Other")
 };
 
 export default function AdvancedAnalyticsPage() {
+  const tc = useTranslate();
   const [, setLocation] = useLocation();
   const [period, setPeriod] = useState("today");
   const [activeTab, setActiveTab] = useState("overview");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
-  const [productSearch, setProductSearch] = useState("");
-
-  const useCustomRange = !!(fromDate || toDate);
 
   const { data, isLoading, refetch } = useQuery<AnalyticsResponse>({
-    queryKey: ["/api/analytics/advanced", period, fromDate, toDate],
-    queryFn: () => {
-      const params = new URLSearchParams();
-      if (useCustomRange) {
-        if (fromDate) params.set("from", fromDate);
-        if (toDate) params.set("to", toDate);
-      } else {
-        params.set("period", period);
-      }
-      return fetch(`/api/analytics/advanced?${params.toString()}`).then(r => r.json());
-    },
+    queryKey: ["/api/analytics/advanced", period],
+    queryFn: () => fetch(`/api/analytics/advanced?period=${period}`, { credentials: 'include' }).then(r => r.json()),
   });
 
   const summary = data?.summary;
@@ -107,13 +94,13 @@ export default function AdvancedAnalyticsPage() {
   }) => {
     const isUp = change >= 0;
     return (
-      <Card className="bg-slate-800/50 border-slate-700 overflow-hidden">
+      <Card className="bg-card border-border overflow-hidden">
         <CardContent className="p-4">
           <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${gradient} flex items-center justify-center mb-3`}>
-            <Icon className="w-5 h-5 text-white" />
+            <Icon className="w-5 h-5 text-foreground" />
           </div>
-          <p className="text-slate-400 text-xs mb-1">{title}</p>
-          <p className="text-xl font-bold text-white mb-1">{value}</p>
+          <p className="text-muted-foreground text-xs mb-1">{title}</p>
+          <p className="text-xl font-bold text-foreground mb-1">{value}</p>
           <div className={`flex items-center gap-1 text-xs ${isUp ? 'text-green-400' : 'text-red-400'}`}>
             {isUp ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
             <span>{isUp ? '+' : ''}{change}% {changeLabel}</span>
@@ -124,78 +111,33 @@ export default function AdvancedAnalyticsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-card via-slate-800 to-slate-900" dir="rtl">
+    <PlanGate feature="advancedAnalytics">
+    <div className="min-h-screen bg-background">
       <div className="container mx-auto p-4 md:p-6 max-w-7xl">
         <div className="flex items-center justify-between gap-4 mb-6">
-          <Button variant="ghost" onClick={() => setLocation("/manager/dashboard")} className="text-slate-300 hover:text-white" data-testid="btn-back">
+          <Button variant="ghost" onClick={() => setLocation("/manager/dashboard")} className="text-muted-foreground hover:text-foreground" data-testid="btn-back">
             <ArrowLeft className="w-4 h-4 ml-2" />العودة
           </Button>
-          <h1 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-2">
+          <h1 className="text-2xl md:text-3xl font-bold text-foreground flex items-center gap-2">
             <Activity className="w-8 h-8 text-cyan-400" />التحليلات المتقدمة
           </h1>
-          <div className="flex gap-2 items-center">
-            <Select value={period} onValueChange={(v) => { setPeriod(v); setFromDate(""); setToDate(""); }} disabled={useCustomRange}>
-              <SelectTrigger className="w-36 bg-slate-800 border-slate-700 text-white" data-testid="select-period">
+          <div className="flex gap-2">
+            <Select value={period} onValueChange={setPeriod}>
+              <SelectTrigger className="w-36 bg-background border-border" data-testid="select-period">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="today">اليوم</SelectItem>
-                <SelectItem value="week">آخر 7 أيام</SelectItem>
-                <SelectItem value="month">هذا الشهر</SelectItem>
-                <SelectItem value="year">هذه السنة</SelectItem>
+                <SelectItem value="today">{tc("اليوم", "Today")}</SelectItem>
+                <SelectItem value="week">{tc("آخر 7 أيام", "Last 7 Days")}</SelectItem>
+                <SelectItem value="month">{tc("هذا الشهر", "This Month")}</SelectItem>
+                <SelectItem value="year">{tc("هذه السنة", "This Year")}</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" size="icon" className="border-slate-700 text-slate-300" onClick={() => refetch()} data-testid="btn-refresh">
+            <Button variant="outline" size="icon" className="border-border text-muted-foreground" onClick={() => refetch()} data-testid="btn-refresh">
               <RefreshCw className="w-4 h-4" />
             </Button>
           </div>
         </div>
-
-        {/* Custom date range */}
-        <Card className="bg-slate-800/50 border-slate-700 mb-6">
-          <CardContent className="p-4">
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="flex flex-col gap-1.5">
-                <Label className="text-xs text-slate-400">من تاريخ</Label>
-                <Input
-                  type="date"
-                  value={fromDate}
-                  onChange={(e) => setFromDate(e.target.value)}
-                  max={toDate || undefined}
-                  className="bg-slate-900 border-slate-700 text-white w-44"
-                  data-testid="input-date-from"
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label className="text-xs text-slate-400">إلى تاريخ</Label>
-                <Input
-                  type="date"
-                  value={toDate}
-                  onChange={(e) => setToDate(e.target.value)}
-                  min={fromDate || undefined}
-                  className="bg-slate-900 border-slate-700 text-white w-44"
-                  data-testid="input-date-to"
-                />
-              </div>
-              {useCustomRange && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="border-slate-700 text-slate-300"
-                  onClick={() => { setFromDate(""); setToDate(""); }}
-                  data-testid="btn-clear-range"
-                >
-                  مسح التاريخ
-                </Button>
-              )}
-              <p className="text-xs text-slate-500 mr-auto">
-                {useCustomRange
-                  ? `النطاق المحدد: ${fromDate || "البداية"} → ${toDate || "اليوم"}`
-                  : "اختر نطاق تاريخ مخصص أو استخدم القائمة أعلاه"}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
 
         {isLoading ? (
           <div className="flex items-center justify-center h-60">
@@ -204,24 +146,24 @@ export default function AdvancedAnalyticsPage() {
         ) : (
           <>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <KPICard title="إجمالي الإيرادات" value={`${(summary?.totalRevenue || 0).toLocaleString()} ر.س`} change={summary?.revenueChange || 0} changeLabel={summary?.changeLabel || ""} icon={DollarSign} gradient="from-green-500 to-emerald-600" />
-              <KPICard title="إجمالي الطلبات" value={(summary?.totalOrders || 0).toLocaleString()} change={summary?.ordersChange || 0} changeLabel={summary?.changeLabel || ""} icon={ShoppingCart} gradient="from-blue-500 to-indigo-600" />
-              <KPICard title="متوسط قيمة الطلب" value={`${(summary?.avgOrderValue || 0).toFixed(1)} ر.س`} change={summary?.avgOrderChange || 0} changeLabel={summary?.changeLabel || ""} icon={Target} gradient="from-purple-500 to-violet-600" />
-              <KPICard title="العملاء الفريدون" value={(summary?.uniqueCustomers || 0).toLocaleString()} change={summary?.customersChange || 0} changeLabel={summary?.changeLabel || ""} icon={Users} gradient="from-amber-500 to-orange-600" />
+              <KPICard title={tc("إجمالي الإيرادات", "Total Revenue")} value={`${(summary?.totalRevenue || 0).toLocaleString()} ر.س`} change={summary?.revenueChange || 0} changeLabel={summary?.changeLabel || ""} icon={DollarSign} gradient="from-green-500 to-emerald-600" />
+              <KPICard title={tc("إجمالي الطلبات", "Total Orders")} value={(summary?.totalOrders || 0).toLocaleString()} change={summary?.ordersChange || 0} changeLabel={summary?.changeLabel || ""} icon={ShoppingCart} gradient="from-blue-500 to-indigo-600" />
+              <KPICard title={tc("متوسط قيمة الطلب", "Avg Order Value")} value={`${(summary?.avgOrderValue || 0).toFixed(1)} ر.س`} change={summary?.avgOrderChange || 0} changeLabel={summary?.changeLabel || ""} icon={Target} gradient="from-purple-500 to-violet-600" />
+              <KPICard title={tc("العملاء الفريدون", "Unique Customers")} value={(summary?.uniqueCustomers || 0).toLocaleString()} change={summary?.customersChange || 0} changeLabel={summary?.changeLabel || ""} icon={Users} gradient="from-primary to-primary/80" />
             </div>
 
             <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-              <TabsList className="bg-slate-800/50 border border-slate-700">
-                <TabsTrigger value="overview" className="data-[state=active]:bg-slate-700 text-slate-300 data-[state=active]:text-white">
+              <TabsList className="bg-card border border-border">
+                <TabsTrigger value="overview" className="data-[state=active]:bg-primary/20 text-muted-foreground data-[state=active]:text-primary">
                   <BarChart3 className="w-4 h-4 ml-2" />نظرة عامة
                 </TabsTrigger>
-                <TabsTrigger value="products" className="data-[state=active]:bg-slate-700 text-slate-300 data-[state=active]:text-white">
+                <TabsTrigger value="products" className="data-[state=active]:bg-primary/20 text-muted-foreground data-[state=active]:text-primary">
                   <Coffee className="w-4 h-4 ml-2" />المنتجات
                 </TabsTrigger>
-                <TabsTrigger value="employees" className="data-[state=active]:bg-slate-700 text-slate-300 data-[state=active]:text-white">
+                <TabsTrigger value="employees" className="data-[state=active]:bg-primary/20 text-muted-foreground data-[state=active]:text-primary">
                   <UserCheck className="w-4 h-4 ml-2" />الموظفون
                 </TabsTrigger>
-                <TabsTrigger value="payments" className="data-[state=active]:bg-slate-700 text-slate-300 data-[state=active]:text-white">
+                <TabsTrigger value="payments" className="data-[state=active]:bg-primary/20 text-muted-foreground data-[state=active]:text-primary">
                   <CreditCard className="w-4 h-4 ml-2" />طرق الدفع
                 </TabsTrigger>
               </TabsList>
@@ -231,8 +173,8 @@ export default function AdvancedAnalyticsPage() {
                   <Card className="bg-gradient-to-br from-blue-900/50 to-indigo-900/50 border-blue-800">
                     <CardContent className="p-6 flex items-center justify-between">
                       <div>
-                        <p className="text-blue-300 text-sm">ساعة الذروة</p>
-                        <p className="text-3xl font-bold text-white mt-1">{peakHour.hour}:00</p>
+                        <p className="text-blue-300 text-sm">{tc("ساعة الذروة", "Peak Hour")}</p>
+                        <p className="text-3xl font-bold text-foreground mt-1">{peakHour.hour}:00</p>
                         <p className="text-blue-400 text-sm mt-1">{peakHour.orders} طلب</p>
                       </div>
                       <Zap className="w-12 h-12 text-blue-400" />
@@ -241,8 +183,8 @@ export default function AdvancedAnalyticsPage() {
                   <Card className="bg-gradient-to-br from-purple-900/50 to-violet-900/50 border-purple-800">
                     <CardContent className="p-6 flex items-center justify-between">
                       <div>
-                        <p className="text-purple-300 text-sm">الأكثر مبيعاً</p>
-                        <p className="text-xl font-bold text-white mt-1">{topProducts[0]?.nameAr || '—'}</p>
+                        <p className="text-purple-300 text-sm">{tc("الأكثر مبيعاً", "Best Seller")}</p>
+                        <p className="text-xl font-bold text-foreground mt-1">{topProducts[0]?.nameAr || '—'}</p>
                         <p className="text-purple-400 text-sm mt-1">{topProducts[0]?.qty || 0} حبة</p>
                       </div>
                       <Star className="w-12 h-12 text-purple-400" />
@@ -252,7 +194,7 @@ export default function AdvancedAnalyticsPage() {
                     <CardContent className="p-6 flex items-center justify-between">
                       <div>
                         <p className="text-green-300 text-sm">أفضل موظف</p>
-                        <p className="text-xl font-bold text-white mt-1">{employeePerformance[0]?.name || '—'}</p>
+                        <p className="text-xl font-bold text-foreground mt-1">{employeePerformance[0]?.name || '—'}</p>
                         <p className="text-green-400 text-sm mt-1">{employeePerformance[0]?.orders || 0} طلب</p>
                       </div>
                       <Award className="w-12 h-12 text-green-400" />
@@ -260,9 +202,9 @@ export default function AdvancedAnalyticsPage() {
                   </Card>
                 </div>
 
-                <Card className="bg-slate-800/50 border-slate-700">
+                <Card className="bg-card border-border">
                   <CardHeader>
-                    <CardTitle className="text-white flex items-center gap-2">
+                    <CardTitle className="text-foreground flex items-center gap-2">
                       <TrendingUp className="w-5 h-5 text-cyan-400" />مسار الإيرادات (آخر 7 أيام)
                     </CardTitle>
                   </CardHeader>
@@ -270,25 +212,25 @@ export default function AdvancedAnalyticsPage() {
                     <div className="space-y-3">
                       {revenueTrend.map((day, i) => (
                         <div key={i} className="flex items-center gap-3">
-                          <span className="text-slate-400 text-xs w-24 text-right">{day.date}</span>
-                          <div className="flex-1 h-6 bg-slate-700 rounded-lg overflow-hidden relative">
+                          <span className="text-muted-foreground text-xs w-24 text-right">{day.date}</span>
+                          <div className="flex-1 h-6 bg-muted rounded-lg overflow-hidden relative">
                             <div className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 rounded-lg" style={{ width: `${(day.current / maxTrendRevenue) * 100}%` }} />
-                            <span className="absolute inset-0 flex items-center px-2 text-xs text-white font-medium">{day.orders} طلب</span>
+                            <span className="absolute inset-0 flex items-center px-2 text-xs text-foreground font-medium">{day.orders} طلب</span>
                           </div>
-                          <span className="text-white text-sm font-medium w-24 text-left">{day.current.toLocaleString()} <SarIcon /></span>
+                          <span className="text-foreground text-sm font-medium w-24 text-left">{day.current.toLocaleString()} <SarIcon /></span>
                         </div>
                       ))}
-                      {revenueTrend.length === 0 && <p className="text-slate-400 text-center py-4">لا توجد بيانات</p>}
+                      {revenueTrend.length === 0 && <p className="text-muted-foreground text-center py-4">لا توجد بيانات</p>}
                     </div>
                   </CardContent>
                 </Card>
 
-                <Card className="bg-slate-800/50 border-slate-700">
+                <Card className="bg-card border-border">
                   <CardHeader>
-                    <CardTitle className="text-white flex items-center gap-2">
+                    <CardTitle className="text-foreground flex items-center gap-2">
                       <Clock className="w-5 h-5 text-amber-400" />توزيع الطلبات على مدار اليوم
                     </CardTitle>
-                    <CardDescription className="text-slate-400">ساعات العمل الأكثر نشاطاً</CardDescription>
+                    <CardDescription className="text-muted-foreground">ساعات العمل الأكثر نشاطاً</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="flex items-end gap-1 overflow-x-auto no-scrollbar pb-2" style={{ height: '120px' }}>
@@ -297,12 +239,12 @@ export default function AdvancedAnalyticsPage() {
                         const isPeak = h.hour === peakHour.hour;
                         return (
                           <div key={h.hour} className="flex flex-col items-center gap-1 flex-1 min-w-[28px] h-full justify-end">
-                            <span className="text-slate-400 text-[9px]">{h.orders || ''}</span>
+                            <span className="text-muted-foreground text-[9px]">{h.orders || ''}</span>
                             <div
-                              className={`w-full rounded-t transition-all ${isPeak ? 'bg-amber-400' : 'bg-slate-600'}`}
+                              className={`w-full rounded-t transition-all ${isPeak ? 'bg-primary' : 'bg-muted-foreground'}`}
                               style={{ height: `${Math.max(heightPct, h.orders > 0 ? 4 : 0)}%` }}
                             />
-                            <span className="text-slate-500 text-[9px]">{h.hour}</span>
+                            <span className="text-muted-foreground text-[9px]">{h.hour}</span>
                           </div>
                         );
                       })}
@@ -312,131 +254,78 @@ export default function AdvancedAnalyticsPage() {
               </TabsContent>
 
               <TabsContent value="products" className="space-y-6">
-                <Card className="bg-slate-800/50 border-slate-700">
+                <Card className="bg-card border-border">
                   <CardHeader>
-                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                      <div>
-                        <CardTitle className="text-white flex items-center gap-2">
-                          <Star className="w-5 h-5 text-amber-400" />جميع المنتجات والمشروبات
-                        </CardTitle>
-                        <CardDescription className="text-slate-400">
-                          عدد القطع المباعة والإيرادات لكل منتج — يشمل المنتجات التي لم تُبَع
-                        </CardDescription>
-                      </div>
-                      <Input
-                        placeholder="بحث عن منتج..."
-                        value={productSearch}
-                        onChange={(e) => setProductSearch(e.target.value)}
-                        className="w-full md:w-64 bg-slate-900 border-slate-700 text-white"
-                        data-testid="input-product-search"
-                      />
-                    </div>
+                    <CardTitle className="text-foreground flex items-center gap-2">
+                      <Star className="w-5 h-5 text-amber-400" />أفضل المنتجات مبيعاً
+                    </CardTitle>
+                    <CardDescription className="text-muted-foreground">ترتيب المنتجات حسب الكميات والإيرادات</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    {(() => {
-                      const q = productSearch.trim().toLowerCase();
-                      const filtered = q
-                        ? topProducts.filter(p =>
-                            (p.nameAr || "").toLowerCase().includes(q) ||
-                            (p.nameEn || "").toLowerCase().includes(q)
-                          )
-                        : topProducts;
-                      const totalUnits = topProducts.reduce((s, p) => s + p.qty, 0);
-                      const soldCount = topProducts.filter(p => p.qty > 0).length;
-                      const maxQty = Math.max(...topProducts.map(p => p.qty), 1);
-                      const medals = ['🥇', '🥈', '🥉'];
-
-                      return (
-                        <>
-                          <div className="grid grid-cols-3 gap-3 mb-4">
-                            <div className="bg-slate-900/60 rounded-lg p-3 text-center">
-                              <p className="text-slate-400 text-xs">إجمالي المنتجات</p>
-                              <p className="text-white font-bold text-xl">{topProducts.length}</p>
-                            </div>
-                            <div className="bg-slate-900/60 rounded-lg p-3 text-center">
-                              <p className="text-slate-400 text-xs">منتجات مُباعة</p>
-                              <p className="text-green-400 font-bold text-xl">{soldCount}</p>
-                            </div>
-                            <div className="bg-slate-900/60 rounded-lg p-3 text-center">
-                              <p className="text-slate-400 text-xs">إجمالي القطع المباعة</p>
-                              <p className="text-amber-400 font-bold text-xl">{totalUnits}</p>
-                            </div>
-                          </div>
-
-                          {filtered.length === 0 ? (
-                            <p className="text-slate-400 text-center py-8">لا توجد نتائج</p>
-                          ) : (
-                            <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
-                              {filtered.map((product, idx) => {
-                                const pct = (product.qty / maxQty) * 100;
-                                const isUnsold = product.qty === 0;
-                                return (
-                                  <div
-                                    key={product.id}
-                                    className={`flex items-center gap-4 p-3 rounded-xl ${isUnsold ? 'bg-slate-900/40 opacity-70' : 'bg-card/50'}`}
-                                    data-testid={`row-product-${product.id}`}
-                                  >
-                                    <span className="text-xl w-8 text-center">
-                                      {!isUnsold && idx < 3 && !q ? medals[idx] : (idx + 1)}
-                                    </span>
-                                    <div className="flex-1">
-                                      <div className="flex justify-between mb-1 gap-2">
-                                        <div className="min-w-0">
-                                          <p className="text-white font-medium truncate">{product.nameAr}</p>
-                                          {product.nameEn && <p className="text-slate-400 text-xs truncate">{product.nameEn}</p>}
-                                        </div>
-                                        <div className="text-right shrink-0">
-                                          <p className={`font-bold ${isUnsold ? 'text-slate-500' : 'text-amber-400'}`}>
-                                            {product.qty} {product.qty === 0 ? '— لم يُبَع' : 'حبة'}
-                                          </p>
-                                          <p className="text-slate-400 text-xs">{product.revenue.toLocaleString()} <SarIcon /></p>
-                                        </div>
-                                      </div>
-                                      <Progress value={pct} className="h-1.5" />
-                                    </div>
+                    {topProducts.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-8">لا توجد بيانات مبيعات في هذه الفترة</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {topProducts.map((product, idx) => {
+                          const maxQty = Math.max(...topProducts.map(p => p.qty), 1);
+                          const pct = (product.qty / maxQty) * 100;
+                          const medals = ['🥇', '🥈', '🥉'];
+                          return (
+                            <div key={product.id} className="flex items-center gap-4 p-3 bg-card/50 rounded-xl" data-testid={`row-product-${idx}`}>
+                              <span className="text-2xl w-8 text-center">{medals[idx] || (idx + 1)}</span>
+                              <div className="flex-1">
+                                <div className="flex justify-between mb-1">
+                                  <div>
+                                    <p className="text-foreground font-medium">{product.nameAr}</p>
+                                    {product.nameEn && <p className="text-muted-foreground text-xs">{product.nameEn}</p>}
                                   </div>
-                                );
-                              })}
+                                  <div className="text-right">
+                                    <p className="text-amber-400 font-bold">{product.qty} حبة</p>
+                                    <p className="text-muted-foreground text-xs">{product.revenue.toLocaleString()} <SarIcon /></p>
+                                  </div>
+                                </div>
+                                <Progress value={pct} className="h-1.5" />
+                              </div>
                             </div>
-                          )}
-                        </>
-                      );
-                    })()}
+                          );
+                        })}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </TabsContent>
 
               <TabsContent value="employees" className="space-y-6">
-                <Card className="bg-slate-800/50 border-slate-700">
+                <Card className="bg-card border-border">
                   <CardHeader>
-                    <CardTitle className="text-white flex items-center gap-2">
+                    <CardTitle className="text-foreground flex items-center gap-2">
                       <UserCheck className="w-5 h-5 text-green-400" />أداء الموظفين
                     </CardTitle>
-                    <CardDescription className="text-slate-400">ترتيب الموظفين حسب عدد الطلبات والإيرادات</CardDescription>
+                    <CardDescription className="text-muted-foreground">ترتيب الموظفين حسب عدد الطلبات والإيرادات</CardDescription>
                   </CardHeader>
                   <CardContent>
                     {employeePerformance.length === 0 ? (
-                      <p className="text-slate-400 text-center py-8">لا توجد بيانات موظفين لهذه الفترة</p>
+                      <p className="text-muted-foreground text-center py-8">لا توجد بيانات موظفين لهذه الفترة</p>
                     ) : (
                       <div className="space-y-4">
                         {employeePerformance.map((emp, idx) => {
                           const pct = (emp.orders / maxEmpOrders) * 100;
-                          const podiumColors = ['from-yellow-400 to-amber-500', 'from-slate-300 to-slate-400', 'from-amber-700 to-amber-800'];
+                          const podiumColors = ['from-yellow-400 to-amber-500', 'from-muted to-muted-foreground', 'from-amber-700 to-amber-800'];
                           return (
                             <div key={emp.id} className="p-4 bg-card/50 rounded-xl" data-testid={`card-employee-${idx}`}>
                               <div className="flex items-center justify-between mb-3">
                                 <div className="flex items-center gap-3">
-                                  <div className={`w-10 h-10 rounded-full bg-gradient-to-br ${podiumColors[idx] || 'from-slate-600 to-slate-700'} flex items-center justify-center text-white font-bold`}>
+                                  <div className={`w-10 h-10 rounded-full bg-gradient-to-br ${podiumColors[idx] || 'from-slate-600 to-slate-700'} flex items-center justify-center text-foreground font-bold`}>
                                     {idx + 1}
                                   </div>
                                   <div>
-                                    <p className="text-white font-semibold">{emp.name}</p>
-                                    <p className="text-slate-400 text-xs">متوسط الطلب: {emp.avgOrderValue} <SarIcon /></p>
+                                    <p className="text-foreground font-semibold">{emp.name}</p>
+                                    <p className="text-muted-foreground text-xs">متوسط الطلب: {emp.avgOrderValue} <SarIcon /></p>
                                   </div>
                                 </div>
                                 <div className="text-right">
                                   <p className="text-green-400 font-bold text-lg">{emp.orders} طلب</p>
-                                  <p className="text-slate-400 text-sm">{emp.revenue.toLocaleString()} <SarIcon /></p>
+                                  <p className="text-muted-foreground text-sm">{emp.revenue.toLocaleString()} <SarIcon /></p>
                                 </div>
                               </div>
                               <Progress value={pct} className="h-2" />
@@ -449,27 +338,27 @@ export default function AdvancedAnalyticsPage() {
                 </Card>
                 {employeePerformance.length > 0 && (
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    <Card className="bg-slate-800/50 border-slate-700">
+                    <Card className="bg-card border-border">
                       <CardContent className="p-4 text-center">
-                        <p className="text-slate-400 text-sm">الكاشيرات النشطون</p>
-                        <p className="text-3xl font-bold text-white mt-2">{employeePerformance.length}</p>
+                        <p className="text-muted-foreground text-sm">الكاشيرات النشطون</p>
+                        <p className="text-3xl font-bold text-foreground mt-2">{employeePerformance.length}</p>
                       </CardContent>
                     </Card>
-                    <Card className="bg-slate-800/50 border-slate-700">
+                    <Card className="bg-card border-border">
                       <CardContent className="p-4 text-center">
-                        <p className="text-slate-400 text-sm">متوسط طلبات / موظف</p>
+                        <p className="text-muted-foreground text-sm">متوسط طلبات / موظف</p>
                         <p className="text-3xl font-bold text-cyan-400 mt-2">
-                          {Math.round(employeePerformance.reduce((s,e) => s + e.orders, 0) / employeePerformance.length)}
+                          {employeePerformance.length > 0 ? Math.round(employeePerformance.reduce((s,e) => s + e.orders, 0) / employeePerformance.length) : 0}
                         </p>
                       </CardContent>
                     </Card>
-                    <Card className="bg-slate-800/50 border-slate-700">
+                    <Card className="bg-card border-border">
                       <CardContent className="p-4 text-center">
-                        <p className="text-slate-400 text-sm">أعلى إيرادات فردية</p>
+                        <p className="text-muted-foreground text-sm">أعلى إيرادات فردية</p>
                         <p className="text-3xl font-bold text-green-400 mt-2">
                           {Math.max(...employeePerformance.map(e => e.revenue)).toLocaleString()}
                         </p>
-                        <p className="text-slate-400 text-xs"><SarIcon /></p>
+                        <p className="text-muted-foreground text-xs"><SarIcon /></p>
                       </CardContent>
                     </Card>
                   </div>
@@ -477,16 +366,16 @@ export default function AdvancedAnalyticsPage() {
               </TabsContent>
 
               <TabsContent value="payments" className="space-y-6">
-                <Card className="bg-slate-800/50 border-slate-700">
+                <Card className="bg-card border-border">
                   <CardHeader>
-                    <CardTitle className="text-white flex items-center gap-2">
+                    <CardTitle className="text-foreground flex items-center gap-2">
                       <CreditCard className="w-5 h-5 text-blue-400" />توزيع طرق الدفع
                     </CardTitle>
-                    <CardDescription className="text-slate-400">نسبة كل طريقة دفع من الإجمالي</CardDescription>
+                    <CardDescription className="text-muted-foreground">نسبة كل طريقة دفع من الإجمالي</CardDescription>
                   </CardHeader>
                   <CardContent>
                     {paymentBreakdown.length === 0 ? (
-                      <p className="text-slate-400 text-center py-8">لا توجد بيانات دفع</p>
+                      <p className="text-muted-foreground text-center py-8">لا توجد بيانات دفع</p>
                     ) : (
                       <div className="space-y-4">
                         {paymentBreakdown.map((p, idx) => {
@@ -496,12 +385,12 @@ export default function AdvancedAnalyticsPage() {
                               <div className={`w-3 h-3 rounded-full bg-gradient-to-r ${barColors[idx % barColors.length]}`} />
                               <div className="flex-1">
                                 <div className="flex justify-between mb-1">
-                                  <span className="text-slate-300 text-sm">{PAYMENT_LABELS[p.method] || p.method}</span>
-                                  <span className="text-white font-medium">{p.percentage}%</span>
+                                  <span className="text-muted-foreground text-sm">{PAYMENT_LABELS[p.method] || p.method}</span>
+                                  <span className="text-foreground font-medium">{p.percentage}%</span>
                                 </div>
                                 <Progress value={p.percentage} className="h-2" />
                               </div>
-                              <span className="text-slate-400 text-sm w-24 text-left">{p.amount.toLocaleString()} <SarIcon /></span>
+                              <span className="text-muted-foreground text-sm w-24 text-left">{p.amount.toLocaleString()} <SarIcon /></span>
                             </div>
                           );
                         })}
@@ -512,11 +401,11 @@ export default function AdvancedAnalyticsPage() {
                 {paymentBreakdown.length > 0 && (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {paymentBreakdown.slice(0,3).map((p, idx) => (
-                      <Card key={idx} className="bg-slate-800/50 border-slate-700">
+                      <Card key={idx} className="bg-card border-border">
                         <CardContent className="p-4">
-                          <p className="text-slate-400 text-sm">{PAYMENT_LABELS[p.method] || p.method}</p>
-                          <p className="text-2xl font-bold text-white mt-1">{p.amount.toLocaleString()} <SarIcon /></p>
-                          <Badge variant="outline" className="mt-2 border-slate-600 text-slate-300">{p.percentage}%</Badge>
+                          <p className="text-muted-foreground text-sm">{PAYMENT_LABELS[p.method] || p.method}</p>
+                          <p className="text-2xl font-bold text-foreground mt-1">{p.amount.toLocaleString()} <SarIcon /></p>
+                          <Badge variant="outline" className="mt-2 border-slate-600 text-muted-foreground">{p.percentage}%</Badge>
                         </CardContent>
                       </Card>
                     ))}
@@ -528,5 +417,6 @@ export default function AdvancedAnalyticsPage() {
         )}
       </div>
     </div>
+    </PlanGate>
   );
 }

@@ -7,9 +7,9 @@
  */
 
 import mongoose from "mongoose";
-import { getSaudiToday } from "./utils/timezone";
 import { PushSubscriptionModel, sendPushBySubscriptions, PushPayload } from "./push-service";
 import { fireNotifyAdmins } from "./notification-engine";
+import { wsManager } from "./websocket";
 
 // ───────────────────────────────────────────────
 // Helpers: Saudi time & Hijri calendar
@@ -129,7 +129,7 @@ function detectOccasion(): Occasion | null {
 // ───────────────────────────────────────────────
 
 const MORNING_MESSAGES = [
-  { title: "☀️ صباح أحلى", body: "صباح الخير! يومك يبدأ بشكل أفضل مع قهوتك المفضلة ☕ — كلوني كافيه في انتظارك" },
+  { title: "☀️ صباح أحلى", body: "صباح الخير! يومك يبدأ بشكل أفضل مع قهوتك المفضلة ☕ — كلوني في انتظارك" },
   { title: "🌅 صباح النور", body: "صباحك نور وقهوتك أنور 🌟 ابدأ يومك بنشاط مع كوب مميز من كلوني" },
   { title: "☕ وقت القهوة", body: "لا تبدأ يومك بدون قهوتك! ☕ كلوني حاضر لك بأشهى المشروبات" },
   { title: "🌸 صباح السعادة", body: "كل صباح جديد فرصة جديدة 💛 وقهوة من كلوني تجعله أجمل" },
@@ -235,7 +235,8 @@ async function sendAdminDailySummary() {
     const OrderCollection = mongoose.connection.collection("orders");
     const RawItemCollection = mongoose.connection.collection("rawitems");
     const now = new Date();
-    const startOfDay = getSaudiToday(); // Saudi midnight in UTC
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
 
     // 1. Daily orders stats
     const orders = await OrderCollection.find({
@@ -272,7 +273,7 @@ async function sendAdminDailySummary() {
       summaryBody += `\n⚠️ مخزون منخفض: ${lowStockItems.length} صنف`;
     }
 
-    await fireNotifyAdmins("📊 تقرير اليوم — كلوني كافيه", summaryBody, {
+    await fireNotifyAdmins("📊 تقرير اليوم — كلوني", summaryBody, {
       type: "info",
       icon: "📊",
       link: "/employee/admin/reports",
@@ -465,8 +466,65 @@ export function startSmartScheduler() {
         await checkAndAlertLowStock();
       }
 
+      // ─── CAR ORDER PREPARATION ALERT (every minute) ───────────────────────
+      await checkCarOrderPreparationAlerts();
+
     } catch (err) {
       console.error("[SCHEDULER] Tick error:", err);
     }
   }, 60_000); // every minute
+}
+
+// ── Car Order 10-Minute Preparation Alert ────────────────────────────────────
+async function checkCarOrderPreparationAlerts() {
+  try {
+    const OrderModel = mongoose.models["Order"] || mongoose.model("Order", new mongoose.Schema({}, { strict: false }));
+    const now = new Date();
+    const nowSaudi = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Riyadh" }));
+    const currentHHMM = `${nowSaudi.getHours().toString().padStart(2, "0")}:${nowSaudi.getMinutes().toString().padStart(2, "0")}`;
+
+    // Find car_pickup orders with an arrivalTime set, not yet alerted, still active
+    const pendingCarOrders = await OrderModel.find({
+      $or: [{ orderType: "car_pickup" }, { orderType: "car-pickup" }, { carPickup: true }],
+      arrivalTime: { $exists: true, $nin: [null, ""] },
+      preparationAlertSent: { $ne: true },
+      status: { $in: ["pending", "payment_confirmed", "confirmed", "in_progress"] },
+    }).lean();
+
+    for (const order of pendingCarOrders) {
+      const arrivalTime = (order as any).arrivalTime as string;
+      if (!arrivalTime || !/^\d{2}:\d{2}$/.test(arrivalTime)) continue;
+
+      const [arrH, arrM] = arrivalTime.split(":").map(Number);
+      const arrivalToday = new Date(nowSaudi);
+      arrivalToday.setHours(arrH, arrM, 0, 0);
+
+      const diffMs = arrivalToday.getTime() - nowSaudi.getTime();
+      const diffMin = Math.floor(diffMs / 60000);
+
+      // Trigger when 10 minutes or less before arrival (but not past it)
+      if (diffMin <= 10 && diffMin >= -5) {
+        await OrderModel.updateOne({ _id: (order as any)._id }, { $set: { preparationAlertSent: true } });
+
+        // Broadcast via WebSocket manager
+        wsManager.broadcastCarPreparationAlert({
+          _id: String((order as any)._id),
+          orderNumber: (order as any).orderNumber,
+          dailyNumber: (order as any).dailyNumber,
+          customerName: (order as any).customerName,
+          customerPhone: (order as any).customerPhone,
+          arrivalTime,
+          carType: (order as any).carType,
+          carColor: (order as any).carColor,
+          plateNumber: (order as any).plateNumber || (order as any).carPlate,
+          items: (order as any).items,
+          totalAmount: (order as any).totalAmount,
+          diffMin,
+        });
+        console.log(`[SCHEDULER] 🚗 Car order prep alert sent: #${(order as any).orderNumber} arrives at ${arrivalTime} (${diffMin} min)`);
+      }
+    }
+  } catch (err) {
+    console.error("[SCHEDULER] Car prep alert error:", err);
+  }
 }

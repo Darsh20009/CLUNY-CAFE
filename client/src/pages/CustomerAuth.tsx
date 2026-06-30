@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useCustomer } from "@/contexts/CustomerContext";
+import clunyLogo from "@assets/cluny-logo-customer.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PhoneInput } from "@/components/phone-input";
 import { SmartIdentifierInput } from "@/components/smart-identifier-input";
-import { Phone, User, Lock, Mail, Eye, EyeOff, Gift, Zap } from "lucide-react";
+import { Phone, User, Lock, Mail, Eye, EyeOff, Zap } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
@@ -23,7 +24,6 @@ export default function CustomerAuth() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [referralCode, setReferralCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -78,9 +78,7 @@ export default function CustomerAuth() {
         description: i18n.language === 'ar' ? `أهلاً ${customer.name}، تم تسجيل دخولك بنجاح` : `Hello ${customer.name}, you have logged in successfully`,
       });
 
-      const returnTo = sessionStorage.getItem("auth-return-to");
-      sessionStorage.removeItem("auth-return-to");
-      navigate(returnTo || "/");
+      navigate("/");
     } catch (error: any) {
       console.error("Login error:", error);
       toast({
@@ -156,7 +154,6 @@ export default function CustomerAuth() {
         name: effectiveName,
         ...(email.trim() ? { email: email.trim() } : {}),
         password,
-        referralCode: referralCode.trim() || undefined
       });
       
       const customer = await res.json();
@@ -175,9 +172,7 @@ export default function CustomerAuth() {
           : `Hello ${customer.name}, your account was created and previous orders linked`,
       });
 
-      const returnTo = sessionStorage.getItem("auth-return-to");
-      sessionStorage.removeItem("auth-return-to");
-      navigate(returnTo || "/");
+      navigate("/");
     } catch (error: any) {
       console.error("Registration error:", error);
       toast({
@@ -193,20 +188,17 @@ export default function CustomerAuth() {
 
   return (
     <div 
-      className="min-h-screen flex items-center justify-center p-4"
-      style={{
-        background: "linear-gradient(135deg, hsl(175 20% 10%) 0%, hsl(175 18% 18%) 50%, hsl(175 20% 10%) 100%)",
-      }}
+      className="min-h-screen flex items-center justify-center p-4 bg-background"
       dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}
     >
-      <Card className="w-full max-w-md border-primary/30 bg-gradient-to-br from-foreground/5 to-foreground/10 backdrop-blur shadow-2xl">
+      <Card className="w-full max-w-md border-border bg-white dark:bg-card shadow-xl">
         <CardHeader className="space-y-3 text-center pb-6">
           <div className="flex justify-center">
-            <div className="w-20 h-20 rounded-2xl overflow-hidden shadow-lg shadow-accent/50 backdrop-blur-xl border border-white/20 bg-[#a7b0b1]/30">
-              <img src="/logo.png" alt="CLUNY CAFE" className="w-full h-full object-cover rounded-2xl" />
+            <div className="w-20 h-20 rounded-2xl overflow-hidden shadow-lg border border-border bg-muted">
+              <img src={clunyLogo} alt="CLUNY CAFE" className="w-full h-full object-cover rounded-2xl" />
             </div>
           </div>
-          <CardTitle className="tracking-tight text-3xl font-bold text-[#a7b0b1]">
+          <CardTitle className="tracking-tight text-3xl font-bold text-foreground">
             {i18n.language === 'ar' ? "مرحباً بك في CLUNY CAFE" : "Welcome to CLUNY CAFE"}
           </CardTitle>
           <CardDescription className="text-lg text-[#b2babc]">
@@ -216,7 +208,7 @@ export default function CustomerAuth() {
 
         <CardContent>
           <Tabs value={mode} onValueChange={(v) => setMode(v as "login" | "register")} className="w-full">
-            <TabsList className="h-10 items-center justify-center rounded-md p-1 grid w-full grid-cols-2 bg-primary/20 text-primary">
+            <TabsList className="h-10 items-center justify-center rounded-md p-1 grid w-full grid-cols-2 bg-muted text-muted-foreground">
               <TabsTrigger value="login" data-testid="tab-login">{i18n.language === 'ar' ? "تسجيل دخول" : "Login"}</TabsTrigger>
               <TabsTrigger value="register" data-testid="tab-register">{i18n.language === 'ar' ? "حساب جديد" : "New Account"}</TabsTrigger>
             </TabsList>
@@ -236,7 +228,7 @@ export default function CustomerAuth() {
                     data-testid="input-identifier"
                     required
                   />
-                  <p className="text-xs text-card/70 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     {i18n.language === 'ar' ? "يمكنك تسجيل الدخول بالجوال (9 أرقام يبدأ بـ 5) أو البريد الإلكتروني" : "Login with phone (9 digits starting with 5) or email"}
                   </p>
                 </div>
@@ -250,10 +242,11 @@ export default function CustomerAuth() {
                     <Input
                       id="login-password"
                       type={showPassword ? "text" : "password"}
+                      autoComplete="current-password"
                       placeholder={i18n.language === 'ar' ? "أدخل كلمة المرور" : "Enter password"}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className={`bg-primary/20 border-primary/50 text-card placeholder:text-card/60 focus:border-accent focus:ring-accent/30 ${i18n.language === 'ar' ? 'pl-10' : 'pr-10'}`}
+                      className={`bg-background border-border text-foreground placeholder:text-muted-foreground ${i18n.language === 'ar' ? 'pl-10' : 'pr-10'}`}
                       data-testid="input-password"
                       required
                     />
@@ -269,7 +262,7 @@ export default function CustomerAuth() {
                   <button
                     type="button"
                     onClick={() => navigate("/forgot-password")}
-                    className="text-xs text-accent/80 hover:text-accent transition-colors underline-offset-4 hover:underline"
+                    className="text-xs text-black hover:text-black/70 transition-colors underline-offset-4 hover:underline"
                     data-testid="link-forgot-password"
                   >
                     {i18n.language === 'ar' ? "نسيت كلمة المرور؟" : "Forgot Password?"}
@@ -279,7 +272,7 @@ export default function CustomerAuth() {
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="w-full h-12 text-lg font-bold bg-gradient-to-r from-accent to-accent/90 hover:from-accent/90 hover:to-accent/80 text-card shadow-lg shadow-accent/50 transition-all duration-300 hover:scale-[1.02]"
+                  className="w-full h-12 text-lg font-bold bg-primary hover:bg-primary/90 text-primary-foreground shadow-md transition-all duration-300 hover:scale-[1.02]"
                   data-testid="button-login"
                 >
                   {loading ? (
@@ -297,13 +290,13 @@ export default function CustomerAuth() {
             <TabsContent value="register" className="space-y-5 mt-5">
               <form onSubmit={handleRegister} className="space-y-5">
                 {guestInfo ? (
-                  <div className="bg-green-950/40 border border-green-700/50 rounded-lg p-3 flex items-start gap-3">
-                    <Zap className="w-5 h-5 text-green-400 shrink-0 mt-0.5" />
+                  <div className="bg-green-50 dark:bg-green-950/40 border border-green-200 dark:border-green-700/50 rounded-lg p-3 flex items-start gap-3">
+                    <Zap className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-green-300 font-semibold text-sm">
+                      <p className="text-green-800 dark:text-green-300 font-semibold text-sm">
                         {i18n.language === 'ar' ? `تسجيل حساب لـ ${guestInfo.name}` : `Creating account for ${guestInfo.name}`}
                       </p>
-                      <p className="text-green-400/70 text-xs mt-0.5">
+                      <p className="text-green-600/80 dark:text-green-400/70 text-xs mt-0.5">
                         {i18n.language === 'ar'
                           ? `رقم ${guestInfo.phone} • أدخل البريد وكلمة المرور فقط وسنربط طلباتك السابقة`
                           : `Phone ${guestInfo.phone} • Enter email & password to link your previous orders`}
@@ -323,7 +316,7 @@ export default function CustomerAuth() {
                         placeholder={i18n.language === 'ar' ? "أدخل اسمك" : "Enter your name"}
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        className="bg-stone-800/50 border-amber-900/50 text-amber-50 placeholder:text-amber-200/40 focus:border-amber-600 focus:ring-amber-600/30"
+                        className="bg-background border-border text-foreground placeholder:text-muted-foreground"
                         data-testid="input-name"
                         required={!guestInfo}
                       />
@@ -342,7 +335,7 @@ export default function CustomerAuth() {
                         data-testid="input-phone-register"
                         required={!guestInfo}
                       />
-                      <p className="text-xs text-amber-200/50 mt-1">
+                      <p className="text-xs text-muted-foreground mt-1">
                         {i18n.language === 'ar' ? "ابدأ بـ 5 ثم باقي الأرقام (9 أرقام)" : "Start with 5 followed by remaining digits (9 digits)"}
                       </p>
                     </div>
@@ -360,11 +353,11 @@ export default function CustomerAuth() {
                     placeholder="example@email.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="bg-stone-800/50 border-amber-900/50 text-amber-50 placeholder:text-amber-200/40 focus:border-amber-600 focus:ring-amber-600/30"
+                    className="bg-background border-border text-foreground placeholder:text-muted-foreground"
                     data-testid="input-email"
                     dir="ltr"
                   />
-                  <p className="text-xs text-amber-200/50 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     {i18n.language === 'ar' ? "يمكنك إضافته لاحقاً من ملفك الشخصي" : "You can add it later from your profile"}
                   </p>
                 </div>
@@ -381,14 +374,14 @@ export default function CustomerAuth() {
                       placeholder={i18n.language === 'ar' ? "أدخل كلمة المرور (4 أحرف على الأقل)" : "Enter password (min 4 characters)"}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className={`bg-stone-800/50 border-amber-900/50 text-amber-50 placeholder:text-amber-200/40 focus:border-amber-600 focus:ring-amber-600/30 ${i18n.language === 'ar' ? 'pl-10' : 'pr-10'}`}
+                      className={`bg-background border-border text-foreground placeholder:text-muted-foreground ${i18n.language === 'ar' ? 'pl-10' : 'pr-10'}`}
                       data-testid="input-password-register"
                       required
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className={`absolute ${i18n.language === 'ar' ? 'left-3' : 'right-3'} top-2.5 text-amber-400 hover:text-amber-300`}
+                      className={`absolute ${i18n.language === 'ar' ? 'left-3' : 'right-3'} top-2.5 text-accent hover:text-accent/80`}
                       data-testid="button-toggle-password-register"
                     >
                       {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -396,10 +389,11 @@ export default function CustomerAuth() {
                   </div>
                 </div>
 
+
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="w-full h-12 text-lg font-bold bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white shadow-lg shadow-green-900/50 transition-all duration-300 hover:scale-[1.02]"
+                  className="w-full h-12 text-lg font-bold bg-gradient-to-r from-[#2D9B6E] to-[#25845d] hover:from-[#25845d] hover:to-[#1f7350] text-white shadow-lg shadow-[#2D9B6E]/30 transition-all duration-300 hover:scale-[1.02]"
                   data-testid="button-register"
                 >
                   {loading ? (
@@ -420,7 +414,7 @@ export default function CustomerAuth() {
             <button
               type="button"
               onClick={() => navigate("/")}
-              className="text-amber-300/70 hover:text-amber-200 transition-colors text-sm underline-offset-4 hover:underline"
+              className="text-accent/70 hover:text-accent transition-colors text-sm underline-offset-4 hover:underline"
               data-testid="link-skip"
             >
               {i18n.language === 'ar' ? "تخطي وتصفح القائمة" : "Skip and explore menu"}

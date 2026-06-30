@@ -19,7 +19,8 @@ export function requirePermission(permission: Permission) {
       return res.status(401).json({ error: "Unauthorized - Please log in" });
     }
 
-    if (!PermissionsEngine.hasPermission(req.employee.role, permission)) {
+    const employeePerms = (req.employee as any).permissions || [];
+    if (!PermissionsEngine.hasPermission(req.employee.role, permission, employeePerms)) {
       return res.status(403).json({ 
         error: "Forbidden - Insufficient permissions",
         required: permission,
@@ -50,12 +51,18 @@ async function tryRestoreFromHeaders(req: AuthRequest, res?: any): Promise<boole
     
     const storedKey = (employee as any).lastRestoreKey;
     if (!storedKey || storedKey !== restoreKey) return false;
-    
-    const newRestoreKey = require('crypto').randomBytes(32).toString('hex');
-    await EmployeeCollection.updateOne(
-      { _id: employee._id },
-      { $set: { lastRestoreKey: newRestoreKey } }
-    );
+
+    // TTL check — restore keys expire after 24 hours
+    const issuedAt: Date | null = (employee as any).restoreKeyIssuedAt ?? null;
+    const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+    if (!issuedAt || Date.now() - issuedAt.getTime() > TTL_MS) {
+      // Key is expired — clear it so it can't be reused
+      await EmployeeCollection.updateOne(
+        { _id: employee._id },
+        { $set: { lastRestoreKey: null, restoreKeyIssuedAt: null } }
+      );
+      return false;
+    }
     
     const sessionEmployee = {
       id: employee.id || employee._id.toString(),
@@ -67,9 +74,7 @@ async function tryRestoreFromHeaders(req: AuthRequest, res?: any): Promise<boole
     };
     
     req.session.employee = sessionEmployee;
-    req.session.restoreKey = newRestoreKey;
-    
-    if (res) res.setHeader('X-New-Restore-Key', newRestoreKey);
+    req.session.restoreKey = restoreKey;
     
     req.employee = sessionEmployee;
     return true;
@@ -99,7 +104,8 @@ export function requireManager(req: AuthRequest, res: Response, next: NextFuncti
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  if (req.employee.role !== "manager" && req.employee.role !== "admin" && req.employee.role !== "owner") {
+  const managerRoles = ["manager", "branch_manager", "admin", "owner"];
+  if (!managerRoles.includes(req.employee.role)) {
     return res.status(403).json({ error: "Forbidden - Manager access required" });
   }
 
@@ -123,7 +129,37 @@ export function requireBranchAccess(req: AuthRequest, res: Response, next: NextF
     return;
   }
 
-  if (req.employee.role === "manager") {
+  if (req.employee.role === "manager" || req.employee.role === "branch_manager") {
+    if (req.employee.branchId !== requestedBranchId) {
+      return res.status(403).json({ error: "Forbidden - You can only access your assigned branch" });
+    }
+  }
+
+  next();
+}
+
+/**
+ * requireStrictBranchAccess — like requireBranchAccess but REJECTS the request
+ * if no branchId is found in params / query / body.
+ * Use this on write endpoints that MUST operate on a specific branch.
+ */
+export function requireStrictBranchAccess(req: AuthRequest, res: Response, next: NextFunction) {
+  if (!req.employee) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  if (req.employee.role === "admin" || req.employee.role === "owner") {
+    next();
+    return;
+  }
+
+  const requestedBranchId = req.params.branchId || req.query.branchId as string || req.body.branchId;
+
+  if (!requestedBranchId) {
+    return res.status(400).json({ error: "Branch ID is required" });
+  }
+
+  if (req.employee.role === "manager" || req.employee.role === "branch_manager") {
     if (req.employee.branchId !== requestedBranchId) {
       return res.status(403).json({ error: "Forbidden - You can only access your assigned branch" });
     }
@@ -161,7 +197,7 @@ export function requireKitchenAccess(req: AuthRequest, res: Response, next: Next
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const kitchenRoles = ["barista", "cook", "waiter", "manager", "admin", "owner"];
+  const kitchenRoles = ["barista", "cook", "waiter", "manager", "branch_manager", "supervisor", "admin", "owner"];
   if (!kitchenRoles.includes(req.employee.role)) {
     return res.status(403).json({ error: "Forbidden - Kitchen access required" });
   }
@@ -174,7 +210,7 @@ export function requireCashierAccess(req: AuthRequest, res: Response, next: Next
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const cashierRoles = ["cashier", "barista", "waiter", "manager", "admin", "owner"];
+  const cashierRoles = ["cashier", "barista", "waiter", "manager", "branch_manager", "supervisor", "admin", "owner"];
   if (!cashierRoles.includes(req.employee.role)) {
     return res.status(403).json({ error: "Forbidden - Cashier access required" });
   }
@@ -187,7 +223,7 @@ export function requireDeliveryAccess(req: AuthRequest, res: Response, next: Nex
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const deliveryRoles = ["driver", "waiter", "manager", "admin", "owner"];
+  const deliveryRoles = ["driver", "waiter", "manager", "branch_manager", "admin", "owner"];
   if (!deliveryRoles.includes(req.employee.role)) {
     return res.status(403).json({ error: "Forbidden - Delivery access required" });
   }
@@ -207,7 +243,7 @@ export function filterByBranch<T extends { branchId?: string }>(
     return data.filter(item => item.branchId === employee.branchId);
   }
 
-  if (employee.role === "manager") {
+  if (employee.role === "manager" || employee.role === "branch_manager") {
     return data;
   }
 

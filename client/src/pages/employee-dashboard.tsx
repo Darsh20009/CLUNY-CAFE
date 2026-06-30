@@ -1,3 +1,4 @@
+import { useTranslate } from "@/lib/useTranslate";
 import { useEffect, useState, useRef } from "react";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
@@ -6,16 +7,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { NotificationBell } from "@/components/notification-bell";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Coffee, LogOut, ShoppingCart, ClipboardList, User, Award, Sparkles, Download, IdCard, Settings, BarChart3, Table, Lock, Clock, MonitorSmartphone, ChefHat, Wallet, Warehouse, Eye, Bell, CheckCircle, AlertCircle, Calendar, FileText, MapPin, X, Wifi, WifiOff } from "lucide-react";
+import { Coffee, LogOut, ShoppingCart, ClipboardList, User, Award, Gift, Sparkles, Download, IdCard, Settings, BarChart3, Table, Lock, Clock, MonitorSmartphone, ChefHat, Wallet, Warehouse, Eye, Bell, CheckCircle, AlertCircle, Calendar, FileText, MapPin, X, Wifi, WifiOff, Utensils } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { LoadingState, EmptyState, ErrorState } from "@/components/ui/states";
 import { EmployeeSidebar } from "@/components/employee-sidebar";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
 import html2canvas from "html2canvas";
-import clunyLogoStaff from "@assets/cluny-logo-staff.png";
+import clunyLogoStaff from "@assets/cluny-logo-customer.png";
 import type { Employee } from "@shared/schema";
-import { useOrderWebSocket } from "@/lib/websocket";
+import { useRealtimeEvent, useRealtimeStatus } from "@/hooks/useRealtimeEngine";
 import { queryClient } from "@/lib/queryClient";
+import { playNotificationSound } from "@/lib/notification-sounds";
 
 interface LeaveRequest {
   id: string;
@@ -50,6 +52,7 @@ interface Notification {
 
 export default function EmployeeDashboard() {
   const [, setLocation] = useLocation();
+  const tc = useTranslate();
   const { t, i18n } = useTranslation();
   const dir = i18n.language === 'ar' ? 'rtl' : 'ltr';
   const [employee, setEmployee] = useState<Employee | null>(null);
@@ -79,37 +82,27 @@ export default function EmployeeDashboard() {
   const cardRef = useRef<HTMLDivElement>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // WebSocket hook for real-time order notifications
-  const { isConnected: wsConnected } = useOrderWebSocket({
-    clientType: "pos",
-    branchId: employee?.branchId?.toString(),
-    onNewOrder: (order) => {
-      fetchPendingOrders();
-      queryClient.invalidateQueries({ queryKey: ['/api/orders'] });
-      if (order?.channel !== 'pos') {
-        setNewOrderAlert({
-          orderNumber: order?.orderNumber || order?.id,
-          orderType: order?.orderType,
-          timestamp: new Date(),
-        });
-        setTimeout(() => setNewOrderAlert(null), 15000);
-      }
-      if (order?.channel !== 'pos') {
-        import("@/lib/notification-sounds").then(({ playNotificationSound }) => {
-          const isOnline = order?.channel === 'online';
-          if (isOnline) {
-            playNotificationSound('onlineOrderVoice', 1.0);
-          } else {
-            playNotificationSound('newOrder', 1.0);
-          }
-        });
-      }
-    },
-    onOrderUpdated: () => {
-      fetchPendingOrders();
-      queryClient.invalidateQueries({ queryKey: ['/api/orders'] });
-    },
-    enabled: !!employee,
+  const { connected: wsConnected } = useRealtimeStatus();
+
+  useRealtimeEvent("new_order", (order: any) => {
+    fetchPendingOrders();
+    queryClient.invalidateQueries({ queryKey: ['/api/orders'] });
+    if (order?.channel !== 'pos') {
+      setNewOrderAlert({
+        orderNumber: order?.orderNumber || order?.id,
+        orderType: order?.orderType,
+        timestamp: new Date(),
+      });
+      setTimeout(() => setNewOrderAlert(null), 15000);
+      const isOnline = order?.channel === 'online' || order?.channel === 'web'
+        || order?.orderType === 'online' || !order?.channel;
+      playNotificationSound(isOnline ? 'cashierOrder' : 'newOrder', isOnline ? 1.0 : 0.85);
+    }
+  });
+
+  useRealtimeEvent("order_updated", () => {
+    fetchPendingOrders();
+    queryClient.invalidateQueries({ queryKey: ['/api/orders'] });
   });
 
   useEffect(() => {
@@ -125,10 +118,10 @@ export default function EmployeeDashboard() {
           setIsLoading(false);
         });
         
-        // Auto-refresh interval (60 seconds)
+        // Auto-refresh interval (5 seconds)
         const interval = setInterval(() => {
           fetchAllNotifications();
-        }, 60000);
+        }, 5000);
         return () => clearInterval(interval);
       } catch (e) {
         window.location.href = "/employee/login";
@@ -354,7 +347,7 @@ export default function EmployeeDashboard() {
 
   if (isLoading && !employee) {
     return (
-      <div dir={dir} className="min-h-screen bg-background flex items-center justify-center">
+      <div dir={dir} className="min-h-screen bg-gray-50 flex items-center justify-center">
         <LoadingState message={t('employee.loading')} />
       </div>
     );
@@ -388,10 +381,10 @@ export default function EmployeeDashboard() {
   const roleVariant = getRoleVariant(employee.role || "cashier");
 
   return (
-    <div dir={dir} className="flex h-screen bg-background">
+    <div dir={dir} className="flex h-screen bg-gray-50">
       <EmployeeSidebar employee={employee} onLogout={handleLogout} />
       <main className="flex-1 overflow-auto pb-16 sm:pb-0">
-        <div className="flex sm:hidden items-center justify-between px-4 py-3 border-b bg-background sticky top-0 z-40">
+        <div className="flex sm:hidden items-center justify-between px-4 py-3 border-b bg-white sticky top-0 z-40">
           <div className="flex items-center gap-2">
             <h1 className="text-lg font-bold">{t('employee.control_panel')}</h1>
             <span
@@ -447,7 +440,7 @@ export default function EmployeeDashboard() {
           </div>
         )}
 
-        <div className="min-h-screen bg-background p-3 sm:p-6">
+        <div className="min-h-screen bg-gray-50 p-3 sm:p-6">
           <div className="max-w-6xl mx-auto space-y-4 sm:space-y-6">
             {/* Header */}
             <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -499,13 +492,13 @@ export default function EmployeeDashboard() {
                       {employee.fullName}
                     </h2>
                     
-                    <Badge className="bg-[#B58B5A] text-white hover:bg-[#B58B5A]/90 mb-2 border-none" data-testid="badge-role">
+                    <Badge className="bg-[#2D9B6E] text-white hover:bg-[#2D9B6E]/90 mb-2 border-none" data-testid="badge-role">
                       {roleLabel}
                     </Badge>
                     
                     {employee.jobTitle && (
                       <div className="flex items-center gap-2 mb-4">
-                        <Award className="w-4 h-4 text-[#B58B5A]" />
+                        <Award className="w-4 h-4 text-[#2D9B6E]" />
                         <span className="text-muted-foreground" data-testid="text-title">{employee.jobTitle}</span>
                       </div>
                     )}
@@ -793,6 +786,33 @@ export default function EmployeeDashboard() {
                 </div>
               </Button>
 
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-32 flex flex-col items-center justify-center gap-3"
+                onClick={() => setLocation("/employee/menu-management?type=food")}
+                data-testid="button-food-management"
+              >
+                <Utensils className="w-10 h-10" />
+                <div className="text-center">
+                  <div className="font-bold text-lg">إدارة المأكولات</div>
+                  <div className="text-sm opacity-90">قائمة الطعام والوجبات</div>
+                </div>
+              </Button>
+
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-32 flex flex-col items-center justify-center gap-3 border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-600 dark:text-amber-400 dark:hover:bg-amber-950/20"
+                onClick={() => setLocation("/employee/product-reservations")}
+                data-testid="button-product-reservations"
+              >
+                <Calendar className="w-10 h-10" />
+                <div className="text-center">
+                  <div className="font-bold text-lg">حجوزات المنتجات</div>
+                  <div className="text-sm opacity-90">إدارة الطلبات المحجوزة</div>
+                </div>
+              </Button>
 
               <Button
                 size="lg"

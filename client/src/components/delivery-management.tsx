@@ -576,7 +576,7 @@ export function DeliveryManagement() {
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-muted-foreground">التقييم:</span>
-                        <span>⭐ {driver.rating?.toFixed(1) || '5.0'} ({driver.ratingCount || 0})</span>
+                        <span>★ {driver.rating?.toFixed(1) || '5.0'} ({driver.ratingCount || 0})</span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-muted-foreground">الطلبات:</span>

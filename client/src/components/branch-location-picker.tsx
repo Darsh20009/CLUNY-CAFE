@@ -1,20 +1,10 @@
 import { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { MapPin, Navigation } from 'lucide-react';
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
-
-// Fix Leaflet marker icons
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-});
+import AppleMap from '@/components/apple-map';
 
 interface LocationPickerProps {
   initialLat?: number;
@@ -22,22 +12,9 @@ interface LocationPickerProps {
   onLocationSelect: (lat: number, lng: number) => void;
 }
 
-function LocationMarker({ position, setPosition }: { position: { lat: number; lng: number }, setPosition: (pos: { lat: number; lng: number }) => void }) {
-  useMapEvents({
-    click(e) {
-      setPosition({
-        lat: e.latlng.lat,
-        lng: e.latlng.lng,
-      });
-    },
-  });
-
-  return position ? <Marker position={[position.lat, position.lng]} /> : null;
-}
-
 export default function BranchLocationPicker({ initialLat, initialLng, onLocationSelect }: LocationPickerProps) {
   const DEFAULT_CENTER = { lat: 24.7136, lng: 46.6753 };
-  
+
   const [position, setPosition] = useState({
     lat: initialLat || DEFAULT_CENTER.lat,
     lng: initialLng || DEFAULT_CENTER.lng,
@@ -57,21 +34,13 @@ export default function BranchLocationPicker({ initialLat, initialLng, onLocatio
     setPosition({ lat, lng });
   };
 
-  const handlePositionChange = (newPos: { lat: number; lng: number }) => {
-    setPosition(newPos);
-  };
-
   const handleUseCurrentLocation = () => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setPosition({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          });
+        (pos) => {
+          setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         },
-        (error) => {
-          console.error('Error getting location:', error);
+        () => {
           alert('لم نستطع الحصول على موقعك الحالي. تأكد من تفعيل خدمات الموقع.');
         }
       );
@@ -89,29 +58,20 @@ export default function BranchLocationPicker({ initialLat, initialLng, onLocatio
           variant="outline"
           size="sm"
           onClick={handleUseCurrentLocation}
-          className="border-amber-500/50 text-amber-500 hover:bg-amber-500/10"
+          className="border-primary/50 text-primary hover:bg-primary/10"
         >
           <Navigation className="w-4 h-4 ml-1" />
           موقعي الحالي
         </Button>
       </div>
 
-      <div className="h-64 rounded-lg overflow-hidden border border-amber-500/30 bg-gray-900">
-        <MapContainer
-          center={[position.lat, position.lng]}
-          zoom={13}
-          style={{ height: '100%', width: '100%' }}
-          key={`${position.lat}-${position.lng}`}
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            maxZoom={19}
-            crossOrigin={true}
-          />
-          <LocationMarker position={position} setPosition={handlePositionChange} />
-        </MapContainer>
-      </div>
+      <AppleMap
+        mode="pick"
+        center={{ lat: position.lat, lng: position.lng, label: "موقع الفرع" }}
+        height="256px"
+        className="border border-primary/30"
+        onLocationPick={(lat, lng) => setPosition({ lat, lng })}
+      />
 
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -140,10 +100,10 @@ export default function BranchLocationPicker({ initialLat, initialLng, onLocatio
         </div>
       </div>
 
-      <div className="flex items-start gap-2 p-3 bg-amber-500/10 rounded-lg border border-amber-500/20">
-        <MapPin className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+      <div className="flex items-start gap-2 p-3 bg-primary/10 rounded-lg border border-primary/20">
+        <MapPin className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
         <div className="text-sm">
-          <p className="text-amber-200 font-medium">كيفية تحديد الموقع:</p>
+          <p className="text-primary font-medium">كيفية تحديد الموقع:</p>
           <ul className="text-gray-300 text-xs space-y-1 mt-1">
             <li>• اضغط على الخريطة لتحديد الموقع</li>
             <li>• أو أدخل الإحداثيات يدويًا</li>

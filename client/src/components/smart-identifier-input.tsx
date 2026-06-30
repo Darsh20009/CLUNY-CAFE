@@ -48,6 +48,7 @@ export function SmartIdentifierInput({
         id={id}
         type={isEmail ? "email" : "tel"}
         inputMode={isEmail ? "email" : "numeric"}
+        autoComplete={isEmail ? "email" : "tel"}
         placeholder={placeholder}
         value={value}
         onChange={handleChange}

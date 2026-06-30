@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { PlanGate } from "@/components/plan-gate";
+import { useTranslate } from "@/lib/useTranslate";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -11,6 +13,7 @@ import { Package, ArrowLeft, Send, History, Warehouse, BarChart3, LayoutDashboar
 import { useLocation } from "wouter";
 
 export default function WarehouseManagementPage() {
+  const tc = useTranslate();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [selectedSource, setSelectedSource] = useState("");
@@ -32,19 +35,20 @@ export default function WarehouseManagementPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/warehouses"] });
-      toast({ title: "تم بدء عملية التحويل بنجاح", className: "bg-green-600 text-white" });
+      toast({ title: tc("تم بدء عملية التحويل بنجاح", "Transfer process started successfully"), className: "bg-green-600 text-white" });
     },
   });
 
   return (
-    <div className="p-6 space-y-6 bg-background min-h-screen" dir="rtl">
+    <PlanGate feature="warehouseManagement">
+    <div className="p-6 space-y-6 bg-background min-h-screen">
       <div className="flex items-center gap-4 mb-6">
         <Button variant="ghost" size="icon" onClick={() => setLocation("/manager")} className="hover:bg-primary/10">
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div>
-          <h1 className="text-3xl font-bold text-primary">إدارة المستودعات المركزية</h1>
-          <p className="text-muted-foreground">تتبع المخزون وإدارة التحويلات بين الفروع والمخازن</p>
+          <h1 className="text-3xl font-bold text-primary">{tc("إدارة المستودعات المركزية", "Central Warehouse Management")}</h1>
+          <p className="text-muted-foreground">{tc("تتبع المخزون وإدارة التحويلات بين الفروع والمخازن", "Track inventory and manage transfers between branches and warehouses")}</p>
         </div>
         <Warehouse className="h-10 w-10 text-primary mr-auto" />
       </div>
@@ -57,7 +61,7 @@ export default function WarehouseManagementPage() {
               <Warehouse className="w-6 h-6 text-primary" />
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">إجمالي المستودعات</p>
+              <p className="text-sm text-muted-foreground">{tc("إجمالي المستودعات", "Total Warehouses")}</p>
               <p className="text-2xl font-bold">{warehouses.length || 0}</p>
             </div>
           </CardContent>
@@ -68,18 +72,18 @@ export default function WarehouseManagementPage() {
               <LayoutDashboard className="w-6 h-6 text-green-500" />
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">الفروع النشطة</p>
+              <p className="text-sm text-muted-foreground">{tc("الفروع النشطة", "Active Branches")}</p>
               <p className="text-2xl font-bold">{branches.length || 0}</p>
             </div>
           </CardContent>
         </Card>
-        <Card className="bg-background0/5 border-amber-500/20">
+        <Card className="bg-primary/5 border-primary/20">
           <CardContent className="p-6 flex items-center gap-4">
-            <div className="p-3 rounded-full bg-background0/10">
+            <div className="p-3 rounded-full bg-primary/10">
               <BarChart3 className="w-6 h-6 text-accent" />
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">تحويلات معلقة</p>
+              <p className="text-sm text-muted-foreground">{tc("تحويلات معلقة", "Pending Transfers")}</p>
               <p className="text-2xl font-bold">0</p>
             </div>
           </CardContent>
@@ -92,46 +96,46 @@ export default function WarehouseManagementPage() {
             <CardTitle className="flex items-center gap-2 text-xl">
               <Send className="w-5 h-5 text-primary" /> طلب تحويل جديد
             </CardTitle>
-            <CardDescription>نقل المواد الخام بين المستودعات والفروع</CardDescription>
+            <CardDescription>{tc("نقل المواد الخام بين المستودعات والفروع", "Transfer raw materials between warehouses and branches")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>من مستودع</Label>
+                <Label>{tc("من مستودع", "From Warehouse")}</Label>
                 <Select onValueChange={setSelectedSource}>
                   <SelectTrigger>
-                    <SelectValue placeholder="اختر المصدر" />
+                    <SelectValue placeholder={tc("اختر المصدر", "Select Source")} />
                   </SelectTrigger>
                   <SelectContent>
                     {warehouses.map((w: any) => (
                       <SelectItem key={w.id} value={w.id}>{w.nameAr}</SelectItem>
                     ))}
-                    {warehouses.length === 0 && <SelectItem value="demo">مستودع تجريبي</SelectItem>}
+                    {warehouses.length === 0 && <SelectItem value="demo">{tc("مستودع تجريبي", "Demo Warehouse")}</SelectItem>}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>إلى فرع / مستودع</Label>
+                <Label>{tc("إلى فرع / مستودع", "To Branch / Warehouse")}</Label>
                 <Select onValueChange={setSelectedTarget}>
                   <SelectTrigger>
-                    <SelectValue placeholder="اختر الوجهة" />
+                    <SelectValue placeholder={tc("اختر الوجهة", "Select Destination")} />
                   </SelectTrigger>
                   <SelectContent>
                     {branches.map((b: any) => (
                       <SelectItem key={b.id} value={b.id}>{b.nameAr}</SelectItem>
                     ))}
-                    {branches.length === 0 && <SelectItem value="demo-branch">فرع تجريبي</SelectItem>}
+                    {branches.length === 0 && <SelectItem value="demo-branch">{tc("فرع تجريبي", "Demo Branch")}</SelectItem>}
                   </SelectContent>
                 </Select>
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label>الأصناف المراد تحويلها</Label>
+              <Label>{tc("الأصناف المراد تحويلها", "Items to Transfer")}</Label>
               {transferItems.map((item, index) => (
                 <div key={index} className="flex gap-2">
-                  <Input placeholder="اسم الصنف أو المعرف" className="flex-1" />
-                  <Input type="number" placeholder="الكمية" className="w-24" />
+                  <Input placeholder={tc("اسم الصنف أو المعرف", "Item name or ID")} className="flex-1" />
+                  <Input type="number" placeholder={tc("الكمية", "Quantity")} className="w-24" />
                   <Button variant="outline" size="icon" onClick={() => {
                     const newItems = [...transferItems];
                     newItems.splice(index, 1);
@@ -159,17 +163,18 @@ export default function WarehouseManagementPage() {
             <CardTitle className="flex items-center gap-2 text-xl">
               <History className="w-5 h-5 text-primary" /> سجل التحويلات والمخزون
             </CardTitle>
-            <CardDescription>متابعة حالة الشحنات وتوافر المخزون عبر الشبكة</CardDescription>
+            <CardDescription>{tc("متابعة حالة الشحنات وتوافر المخزون عبر الشبكة", "Track shipment status and inventory across the network")}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4 border rounded-lg p-8 bg-muted/20 flex flex-col items-center justify-center text-center">
               <Package className="w-12 h-12 text-muted-foreground/30 mb-4" />
-              <p className="font-medium">لا توجد عمليات تحويل حالية</p>
-              <p className="text-sm text-muted-foreground">سيظهر تاريخ عمليات النقل هنا فور بدئها</p>
+              <p className="font-medium">{tc("لا توجد عمليات تحويل حالية", "No current transfer operations")}</p>
+              <p className="text-sm text-muted-foreground">{tc("سيظهر تاريخ عمليات النقل هنا فور بدئها", "Transfer history will appear here once started")}</p>
             </div>
           </CardContent>
         </Card>
       </div>
     </div>
+    </PlanGate>
   );
 }

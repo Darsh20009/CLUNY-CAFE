@@ -1,3 +1,5 @@
+import { useTranslate, tc } from "@/lib/useTranslate";
+import { PlanGate } from "@/components/plan-gate";
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -46,6 +48,7 @@ import {
   Loader2,
   Calendar,
   Check,
+  BookOpen,
   X,
   CreditCard,
   Banknote,
@@ -55,6 +58,10 @@ import {
   Package,
   ShoppingCart,
   Percent,
+  Sparkles,
+  Bot,
+  Send,
+  ShieldCheck,
   Eye,
   ChevronLeft,
   Download,
@@ -169,6 +176,8 @@ type DrilldownType = 'revenue' | 'cogs' | 'expenses' | 'orders' | null;
 
 interface DashboardData {
   totalRevenue: number;
+  totalRefunds: number;
+  netRevenue: number;
   totalVat: number;
   totalExpenses: number;
   totalCogs: number;
@@ -176,6 +185,7 @@ interface DashboardData {
   netProfit: number;
   orderCount: number;
   invoiceCount: number;
+  refundCount: number;
   profitMargin: number;
   expensesByCategory: Record<string, number>;
   revenueByPayment: Record<string, number>;
@@ -184,44 +194,46 @@ interface DashboardData {
   topSellingItems: TopSellingItem[];
 }
 
-const expenseCategories = [
-  { value: "inventory", label: "المخزون والمواد الخام" },
-  { value: "salaries", label: "الرواتب والأجور" },
-  { value: "rent", label: "الإيجار" },
-  { value: "utilities", label: "المرافق (كهرباء/ماء)" },
-  { value: "marketing", label: "التسويق والإعلان" },
-  { value: "maintenance", label: "الصيانة" },
-  { value: "supplies", label: "المستلزمات" },
-  { value: "other", label: "أخرى" },
-];
-
-const statusLabels: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
-  pending: { label: "قيد الانتظار", variant: "secondary" },
-  approved: { label: "معتمد", variant: "default" },
-  rejected: { label: "مرفوض", variant: "destructive" },
-  paid: { label: "مدفوع", variant: "default" },
-};
-
-const paymentMethodLabels: Record<string, string> = {
-  cash: "نقدي",
-  pos: "شبكة",
-  bank_transfer: "تحويل بنكي",
-  stc: "STC Pay",
-  alinma: "Alinma Pay",
+const statusLabels: Record<string, { labelAr: string; labelEn: string; label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
+  pending: { labelAr: "قيد الانتظار", labelEn: "Pending", label: "Pending", variant: "secondary" },
+  approved: { labelAr: "معتمد", labelEn: "Approved", label: "Approved", variant: "default" },
+  rejected: { labelAr: "مرفوض", labelEn: "Rejected", label: "Rejected", variant: "destructive" },
+  paid: { labelAr: "مدفوع", labelEn: "Paid", label: "Paid", variant: "default" },
 };
 
 const CHART_COLORS = ['#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ef4444', '#ec4899'];
 
-const periodLabels: Record<string, string> = {
-  today: 'اليوم',
-  week: 'هذا الأسبوع',
-  month: 'هذا الشهر',
-  year: 'هذه السنة'
-};
-
 export default function AccountingDashboardPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const tc = useTranslate();
+
+  const expenseCategories = [
+    { value: "inventory",   label: tc("المخزون والمواد الخام", "Inventory & Raw Materials") },
+    { value: "salaries",    label: tc("الرواتب والأجور", "Salaries & Wages") },
+    { value: "rent",        label: tc("الإيجار", "Rent") },
+    { value: "utilities",   label: tc("المرافق (كهرباء/ماء)", "Utilities (electricity/water)") },
+    { value: "marketing",   label: tc("التسويق والإعلان", "Marketing & Advertising") },
+    { value: "maintenance", label: tc("الصيانة", "Maintenance") },
+    { value: "supplies",    label: tc("المستلزمات", "Supplies") },
+    { value: "other",       label: tc("أخرى", "Other") },
+  ];
+
+  const paymentMethodLabels: Record<string, string> = {
+    cash:          tc("نقدي", "Cash"),
+    pos:           tc("شبكة", "POS"),
+    bank_transfer: tc("تحويل بنكي", "Bank Transfer"),
+    stc:           "STC Pay",
+    alinma:        "Alinma Pay",
+  };
+
+  const periodLabels: Record<string, string> = {
+    today: tc('اليوم', 'Today'),
+    week:  tc('هذا الأسبوع', 'This Week'),
+    month: tc('هذا الشهر', 'This Month'),
+    year:  tc('هذه السنة', 'This Year'),
+  };
+
   const [activeTab, setActiveTab] = useState("overview");
   const [period, setPeriod] = useState("today");
   const [selectedBranch, setSelectedBranch] = useState<string>("all");
@@ -240,6 +252,12 @@ export default function AccountingDashboardPage() {
   const [drilldownType, setDrilldownType] = useState<DrilldownType>(null);
   const [drilldownOpen, setDrilldownOpen] = useState(false);
 
+  // AI Audit state
+  const [aiReport, setAiReport] = useState<string>("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiChatHistory, setAiChatHistory] = useState<Array<{role: string; content: string}>>([]);
+
   const { data: branches = [] } = useQuery<Branch[]>({
     queryKey: ["/api/branches"],
   });
@@ -254,6 +272,8 @@ export default function AccountingDashboardPage() {
       const data = await res.json();
       return {
         totalRevenue: data.summary?.totalRevenue || 0,
+        totalRefunds: data.summary?.totalRefunds || 0,
+        netRevenue: data.summary?.netRevenue ?? data.summary?.totalRevenue ?? 0,
         totalVat: data.summary?.totalVatCollected || 0,
         totalExpenses: data.summary?.totalExpenses || 0,
         totalCogs: data.summary?.totalCogs || 0,
@@ -261,6 +281,7 @@ export default function AccountingDashboardPage() {
         netProfit: data.summary?.netProfit || 0,
         orderCount: data.summary?.orderCount || 0,
         invoiceCount: data.summary?.invoiceCount || 0,
+        refundCount: data.summary?.refundCount || 0,
         profitMargin: data.summary?.profitMargin || 0,
         expensesByCategory: data.expensesByCategory || {},
         revenueByPayment: data.revenueByPayment || {},
@@ -346,10 +367,10 @@ export default function AccountingDashboardPage() {
         paymentMethod: "cash",
         notes: "",
       });
-      toast({ title: "تم إضافة المصروف بنجاح" });
+      toast({ title: tc("تم إضافة المصروف بنجاح", "Expense added successfully") });
     },
     onError: () => {
-      toast({ title: "فشل في إضافة المصروف", variant: "destructive" });
+      toast({ title: tc("فشل في إضافة المصروف", "Failed to add expense"), variant: "destructive" });
     },
   });
 
@@ -360,34 +381,46 @@ export default function AccountingDashboardPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/accounting/expenses"] });
       queryClient.invalidateQueries({ queryKey: ["/api/accounting/dashboard"] });
-      toast({ title: "تم اعتماد المصروف بنجاح" });
+      toast({ title: tc("تم اعتماد المصروف بنجاح", "Expense approved successfully") });
     },
     onError: () => {
-      toast({ title: "فشل في اعتماد المصروف", variant: "destructive" });
+      toast({ title: tc("فشل في اعتماد المصروف", "Failed to approve expense"), variant: "destructive" });
     },
   });
 
   const handleAddExpense = () => {
+    if (!newExpense.category) {
+      toast({ title: tc("يرجى اختيار فئة المصروف", "Please select expense category"), variant: "destructive" });
+      return;
+    }
+    if (!newExpense.description.trim()) {
+      toast({ title: tc("يرجى إدخال وصف المصروف", "Please enter expense description"), variant: "destructive" });
+      return;
+    }
     const amount = parseFloat(newExpense.amount);
+    if (isNaN(amount) || amount <= 0) {
+      toast({ title: tc("يرجى إدخال مبلغ صحيح أكبر من صفر", "Please enter a valid amount greater than zero"), variant: "destructive" });
+      return;
+    }
     const vatAmount = parseFloat(newExpense.vatAmount || "0");
     
     createExpenseMutation.mutate({
       branchId: selectedBranch !== "all" ? selectedBranch : undefined,
       date: new Date().toISOString(),
       category: newExpense.category,
-      subcategory: newExpense.subcategory,
-      description: newExpense.description,
+      subcategory: newExpense.subcategory || undefined,
+      description: newExpense.description.trim(),
       amount,
       vatAmount,
       totalAmount: amount + vatAmount,
       paymentMethod: newExpense.paymentMethod,
-      notes: newExpense.notes,
+      notes: newExpense.notes || undefined,
     });
   };
 
   const getBranchName = (branchId: string) => {
     const branch = branches.find(b => b.id === branchId);
-    return branch?.nameAr || "غير محدد";
+    return branch?.nameAr || tc("غير محدد", "Unknown");
   };
 
   const sanitizeForExport = (items: any[]) => {
@@ -409,27 +442,32 @@ export default function AccountingDashboardPage() {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'تقرير');
       XLSX.writeFile(wb, `${filename}_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
-      toast({ title: 'تم تصدير التقرير بنجاح', description: 'تم حفظ الملف بصيغة Excel' });
+      toast({ title: tc('تم تصدير التقرير بنجاح', 'Report exported successfully'), description: 'تم حفظ الملف بصيغة Excel' });
     }).catch(() => {
-      toast({ title: 'فشل التصدير', variant: 'destructive' });
+      toast({ title: tc('فشل التصدير', 'Export failed'), variant: 'destructive' });
     });
   };
 
   const exportToPDF = (title: string, data: any) => {
     try {
-      const rows = data.summary ? [
-        ['إجمالي الإيرادات', `${data.summary.totalRevenue?.toFixed(2) || 0} ر.س`],
-        ['تكلفة المكونات', `${data.summary.totalCogs?.toFixed(2) || 0} ر.س`],
-        ['المصروفات', `${data.summary.totalExpenses?.toFixed(2) || 0} ر.س`],
-        ['صافي الربح', `${data.summary.netProfit?.toFixed(2) || 0} ر.س`],
-        ['هامش الربح', `${data.summary.profitMargin?.toFixed(1) || 0}%`],
-      ] : [];
-      const html = `<html dir="rtl"><head><meta charset="utf-8"/><style>body{font-family:Arial;direction:rtl;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px}th{background:#f0f0f0}</style></head><body><h2>${title}</h2><p>${format(new Date(), 'yyyy/MM/dd')}</p><table><tbody>${rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</tbody></table></body></html>`;
-      const w = window.open('', '_blank');
-      if (w) { w.document.write(html); w.document.close(); w.print(); }
-      toast({ title: 'تم تصدير التقرير بنجاح' });
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        toast({ title: tc('فشل التصدير', 'Export failed'), variant: 'destructive' });
+        return;
+      }
+      let rows = '';
+      if (data.summary) {
+        rows += `<tr><td>إجمالي الإيرادات</td><td>${data.summary.totalRevenue?.toFixed(2) || 0} ر.س</td></tr>`;
+        rows += `<tr><td>تكلفة المكونات</td><td>${data.summary.totalCogs?.toFixed(2) || 0} ر.س</td></tr>`;
+        rows += `<tr><td>المصروفات</td><td>${data.summary.totalExpenses?.toFixed(2) || 0} ر.س</td></tr>`;
+        rows += `<tr><td>صافي الربح</td><td>${data.summary.netProfit?.toFixed(2) || 0} ر.س</td></tr>`;
+        rows += `<tr><td>هامش الربح</td><td>${data.summary.profitMargin?.toFixed(1) || 0}%</td></tr>`;
+      }
+      printWindow.document.write(`<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Arial,sans-serif;padding:20px;direction:rtl}h1{text-align:center}table{width:100%;border-collapse:collapse}td,th{border:1px solid #ccc;padding:8px;text-align:right}@media print{button{display:none}}</style></head><body><h1>${title}</h1><p style="text-align:center">الفترة: ${periodLabels[period]} | التاريخ: ${format(new Date(), 'yyyy/MM/dd')}</p><table><tbody>${rows}</tbody></table><br><button onclick="window.print()">طباعة / حفظ PDF</button></body></html>`);
+      printWindow.document.close();
+      toast({ title: tc('تم تصدير التقرير بنجاح', 'Report exported successfully'), description: 'تم فتح نافذة الطباعة' });
     } catch {
-      toast({ title: 'فشل التصدير', variant: 'destructive' });
+      toast({ title: tc('فشل التصدير', 'Export failed'), variant: 'destructive' });
     }
   };
 
@@ -505,12 +543,13 @@ export default function AccountingDashboardPage() {
     : [];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 via-primary/5 to-yellow-50 dark:from-background dark:via-primary/5 dark:to-background" dir="rtl">
+    <PlanGate feature="accountingModule">
+    <div className="min-h-screen bg-background">
       <div className="container mx-auto p-4 md:p-6 max-w-7xl">
         <div className="flex items-center justify-between gap-4 mb-6">
           <Button 
             variant="ghost" 
-            onClick={() => setLocation("/employee/dashboard")}
+            onClick={() => setLocation("/manager/dashboard")}
             className="text-accent dark:text-accent"
             data-testid="button-back"
           >
@@ -541,7 +580,7 @@ export default function AccountingDashboardPage() {
               <SelectValue placeholder="الفرع" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">جميع الفروع</SelectItem>
+              <SelectItem value="all">{tc("جميع الفروع", "All Branches")}</SelectItem>
               {branches.map((branch) => (
                 <SelectItem key={branch.id} value={branch.id}>
                   {branch.nameAr}
@@ -558,14 +597,51 @@ export default function AccountingDashboardPage() {
             <Plus className="w-4 h-4 ml-2" />
             إضافة مصروف
           </Button>
+
+          <Button
+            variant="outline"
+            onClick={() => setLocation("/erp/accounting")}
+            className="border-primary/40 text-primary hover:bg-primary/5 gap-2"
+            data-testid="button-open-erp"
+          >
+            <BookOpen className="w-4 h-4" />
+            نظام ERP — القيود المحاسبية
+          </Button>
+
+          <Button
+            onClick={async () => {
+              setActiveTab("ai-audit");
+              if (!aiReport) {
+                setAiLoading(true);
+                try {
+                  const res = await apiRequest("POST", "/api/ai/accounting-audit", { period });
+                  const data = await res.json();
+                  setAiReport(data.report || "لم أتمكن من إنشاء التقرير.");
+                } catch {
+                  setAiReport("حدث خطأ في الاتصال بالمساعد الذكي.");
+                } finally {
+                  setAiLoading(false);
+                }
+              }
+            }}
+            className="bg-gradient-to-l from-violet-600 to-primary text-white gap-2 shadow"
+            data-testid="button-ai-audit"
+          >
+            {aiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+            راجع حساباتي
+          </Button>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4 bg-primary dark:bg-primary/30">
+          <TabsList className="grid w-full grid-cols-5 bg-primary dark:bg-primary/30">
             <TabsTrigger value="overview" data-testid="tab-overview">نظرة عامة</TabsTrigger>
             <TabsTrigger value="expenses" data-testid="tab-expenses">المصروفات</TabsTrigger>
             <TabsTrigger value="revenues" data-testid="tab-revenues">الإيرادات</TabsTrigger>
             <TabsTrigger value="reports" data-testid="tab-reports">التقارير</TabsTrigger>
+            <TabsTrigger value="ai-audit" data-testid="tab-ai-audit" className="gap-1">
+              <Sparkles className="w-3.5 h-3.5" />
+              مراجعة ذكية
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
@@ -590,7 +666,7 @@ export default function AccountingDashboardPage() {
                             <Eye className="w-3 h-3" />
                           </p>
                           <p className="text-3xl font-bold mt-1" data-testid="text-total-revenue">{dashboardData.totalRevenue.toFixed(2)}</p>
-                          <p className="text-green-200 text-xs mt-1">ريال سعودي - انقر للتفاصيل</p>
+                          <p className="text-green-200 text-xs mt-1"><SarIcon size={11} /> - انقر للتفاصيل</p>
                         </div>
                         <TrendingUp className="w-12 h-12 text-green-200" />
                       </div>
@@ -598,7 +674,7 @@ export default function AccountingDashboardPage() {
                   </Card>
 
                   <Card 
-                    className="bg-gradient-to-br from-orange-500 to-orange-600 text-white cursor-pointer transition-transform hover:scale-[1.02]"
+                    className="bg-gradient-to-br from-primary to-primary/80 text-primary-foreground cursor-pointer transition-transform hover:scale-[1.02]"
                     onClick={() => openDrilldown('cogs')}
                     data-testid="card-cogs-drilldown"
                   >
@@ -610,7 +686,7 @@ export default function AccountingDashboardPage() {
                             <Eye className="w-3 h-3" />
                           </p>
                           <p className="text-3xl font-bold mt-1" data-testid="text-total-cogs">{dashboardData.totalCogs.toFixed(2)}</p>
-                          <p className="text-accent text-xs mt-1">ريال سعودي - انقر للتفاصيل</p>
+                          <p className="text-accent text-xs mt-1"><SarIcon size={11} /> - انقر للتفاصيل</p>
                         </div>
                         <Package className="w-12 h-12 text-accent" />
                       </div>
@@ -630,7 +706,7 @@ export default function AccountingDashboardPage() {
                             <Eye className="w-3 h-3" />
                           </p>
                           <p className="text-3xl font-bold mt-1" data-testid="text-total-expenses">{dashboardData.totalExpenses.toFixed(2)}</p>
-                          <p className="text-red-200 text-xs mt-1">ريال سعودي - انقر للتفاصيل</p>
+                          <p className="text-red-200 text-xs mt-1"><SarIcon size={11} /> - انقر للتفاصيل</p>
                         </div>
                         <TrendingDown className="w-12 h-12 text-red-200" />
                       </div>
@@ -638,93 +714,117 @@ export default function AccountingDashboardPage() {
                   </Card>
 
                   <Card 
-                    className={`bg-gradient-to-br ${dashboardData.netProfit >= 0 ? 'from-blue-500 to-blue-600' : 'from-red-600 to-red-700'} text-white cursor-pointer transition-transform hover:scale-[1.02]`}
-                    onClick={() => openDrilldown('orders')}
-                    data-testid="card-profit-drilldown"
+                    className="bg-gradient-to-br from-orange-500 to-orange-600 text-white cursor-pointer transition-transform hover:scale-[1.02]"
+                    onClick={() => openDrilldown('cogs')}
+                    data-testid="card-cogs-total-drilldown"
                   >
                     <CardContent className="p-6">
                       <div className="flex items-center justify-between gap-2">
                         <div>
-                          <p className={`${dashboardData.netProfit >= 0 ? 'text-blue-100' : 'text-red-100'} text-sm flex items-center gap-1`}>
-                            صافي الربح
+                          <p className="text-orange-100 text-sm flex items-center gap-1">
+                            إجمالي المصروفات (شامل المخزون)
                             <Eye className="w-3 h-3" />
                           </p>
-                          <p className="text-3xl font-bold mt-1" data-testid="text-net-profit">{dashboardData.netProfit.toFixed(2)}</p>
-                          <p className={`${dashboardData.netProfit >= 0 ? 'text-blue-200' : 'text-red-200'} text-xs mt-1`}>ريال سعودي - انقر للتفاصيل</p>
+                          <p className="text-3xl font-bold mt-1" data-testid="text-total-all-expenses">{(dashboardData.totalCogs + dashboardData.totalExpenses).toFixed(2)}</p>
+                          <p className="text-orange-200 text-xs mt-1"><SarIcon size={11} /> - انقر للتفاصيل</p>
                         </div>
-                        <PiggyBank className={`w-12 h-12 ${dashboardData.netProfit >= 0 ? 'text-blue-200' : 'text-red-200'}`} />
+                        <TrendingDown className="w-12 h-12 text-orange-200" />
                       </div>
                     </CardContent>
                   </Card>
                 </div>
 
-                {/* Profit Breakdown Card */}
+                {/* ERP Integration Banner */}
+                <Card
+                  className="border-primary/30 bg-gradient-to-l from-primary/5 via-background to-background cursor-pointer hover:border-primary/60 transition-all"
+                  onClick={() => setLocation("/erp/accounting")}
+                  data-testid="card-erp-banner"
+                >
+                  <CardContent className="p-5">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                          <BookOpen className="w-6 h-6 text-primary" />
+                        </div>
+                        <div>
+                          <p className="font-bold text-base text-foreground">نظام ERP — القيود المحاسبية</p>
+                          <p className="text-sm text-muted-foreground mt-0.5">القيود المزدوجة • الميزانية العمومية • ربط المصروفات والإيرادات بدفتر الأستاذ</p>
+                        </div>
+                      </div>
+                      <ArrowLeft className="w-5 h-5 text-primary shrink-0 rotate-180" />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Expenses Breakdown Card */}
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
-                      <DollarSign className="w-5 h-5 text-green-600" />
-                      تحليل الأرباح التفصيلي
+                      <DollarSign className="w-5 h-5 text-red-600" />
+                      تحليل المصروفات التفصيلي
                     </CardTitle>
-                    <CardDescription>تفاصيل حسابات الأرباح وهوامش الربح</CardDescription>
+                    <CardDescription>تفاصيل الإيرادات والمصروفات (تكلفة المخزون + التشغيل)</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
                       <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg text-center">
-                        <p className="text-muted-foreground text-sm">إجمالي الربح</p>
-                        <p className="text-2xl font-bold text-green-600" data-testid="text-gross-profit">{dashboardData.grossProfit.toFixed(2)}</p>
+                        <p className="text-muted-foreground text-sm">إجمالي الإيرادات</p>
+                        <p className="text-2xl font-bold text-green-600" data-testid="text-gross-profit">{dashboardData.totalRevenue.toFixed(2)}</p>
                         <p className="text-xs text-muted-foreground"><SarIcon /></p>
                       </div>
-                      <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-center">
-                        <p className="text-muted-foreground text-sm">هامش الربح الإجمالي</p>
-                        <p className="text-2xl font-bold text-blue-600">
-                          {dashboardData.totalRevenue > 0 
-                            ? ((dashboardData.grossProfit / dashboardData.totalRevenue) * 100).toFixed(1) 
-                            : "0"}%
-                        </p>
-                        <p className="text-xs text-muted-foreground">من الإيرادات</p>
-                      </div>
-                      <div className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg text-center">
-                        <p className="text-muted-foreground text-sm">صافي الربح</p>
-                        <p className={`text-2xl font-bold ${dashboardData.netProfit >= 0 ? 'text-purple-600' : 'text-red-600'}`}>
-                          {dashboardData.netProfit.toFixed(2)}
+                      <div className="p-4 bg-orange-50 dark:bg-orange-900/20 rounded-lg text-center">
+                        <p className="text-muted-foreground text-sm">تكلفة المخزون المستخدم</p>
+                        <p className="text-2xl font-bold text-orange-600">
+                          {dashboardData.totalCogs.toFixed(2)}
                         </p>
                         <p className="text-xs text-muted-foreground"><SarIcon /></p>
                       </div>
-                      <div className="p-4 bg-background dark:bg-primary/20 rounded-lg text-center">
-                        <p className="text-muted-foreground text-sm">هامش صافي الربح</p>
-                        <p className={`text-2xl font-bold ${dashboardData.profitMargin >= 0 ? 'text-accent' : 'text-red-600'}`}>
-                          {dashboardData.profitMargin.toFixed(1)}%
+                      <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-lg text-center">
+                        <p className="text-muted-foreground text-sm">المصروفات التشغيلية</p>
+                        <p className="text-2xl font-bold text-red-600">
+                          {dashboardData.totalExpenses.toFixed(2)}
                         </p>
-                        <p className="text-xs text-muted-foreground">من الإيرادات</p>
+                        <p className="text-xs text-muted-foreground"><SarIcon /></p>
                       </div>
                     </div>
                     
                     <div className="p-4 bg-muted/50 rounded-lg">
                       <div className="flex flex-col gap-2 text-sm">
                         <div className="flex justify-between">
-                          <span>إجمالي الإيرادات</span>
+                          <span>{tc("إجمالي الإيرادات", "Total Revenue")}</span>
                           <span className="font-medium text-green-600">+{dashboardData.totalRevenue.toFixed(2)} <SarIcon /></span>
                         </div>
+                        {dashboardData.totalRefunds > 0 && (
+                          <div className="flex justify-between">
+                            <span className="flex items-center gap-1">
+                              الاسترجاعات
+                              <span className="text-xs text-muted-foreground">({dashboardData.refundCount} عملية)</span>
+                            </span>
+                            <span className="font-medium text-red-600">-{dashboardData.totalRefunds.toFixed(2)} <SarIcon /></span>
+                          </div>
+                        )}
+                        {dashboardData.totalRefunds > 0 && (
+                          <div className="flex justify-between border-t pt-1">
+                            <span className="font-semibold">{tc("صافي الإيرادات", "Net Revenue")}</span>
+                            <span className="font-semibold text-green-600">{dashboardData.netRevenue.toFixed(2)} <SarIcon /></span>
+                          </div>
+                        )}
                         <div className="flex justify-between">
-                          <span>ضريبة القيمة المضافة</span>
+                          <span>{tc("ضريبة القيمة المضافة", "VAT")}</span>
                           <span className="font-medium text-accent">-{dashboardData.totalVat.toFixed(2)} <SarIcon /></span>
                         </div>
                         <div className="flex justify-between">
-                          <span>تكلفة المكونات (COGS)</span>
-                          <span className="font-medium text-red-600">-{dashboardData.totalCogs.toFixed(2)} <SarIcon /></span>
-                        </div>
-                        <div className="flex justify-between border-t pt-2">
-                          <span className="font-medium">= إجمالي الربح</span>
-                          <span className="font-bold text-green-600">{dashboardData.grossProfit.toFixed(2)} <SarIcon /></span>
+                          <span>تكلفة مخزون المشروبات (مصروف)</span>
+                          <span className="font-medium text-orange-600">-{dashboardData.totalCogs.toFixed(2)} <SarIcon /></span>
                         </div>
                         <div className="flex justify-between">
-                          <span>المصروفات التشغيلية</span>
+                          <span>{tc("المصروفات التشغيلية", "Operating Expenses")}</span>
                           <span className="font-medium text-red-600">-{dashboardData.totalExpenses.toFixed(2)} <SarIcon /></span>
                         </div>
                         <div className="flex justify-between border-t pt-2 border-primary">
-                          <span className="font-bold">= صافي الربح</span>
-                          <span className={`font-bold text-lg ${dashboardData.netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {dashboardData.netProfit.toFixed(2)} <SarIcon />
+                          <span className="font-bold">= إجمالي المصروفات (المخزون + التشغيل)</span>
+                          <span className="font-bold text-lg text-red-600">
+                            {(dashboardData.totalCogs + dashboardData.totalExpenses).toFixed(2)} <SarIcon />
                           </span>
                         </div>
                       </div>
@@ -737,7 +837,7 @@ export default function AccountingDashboardPage() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <BarChart3 className="w-5 h-5 text-accent" />
-                      صافي الربح اليومي (آخر 7 أيام)
+                      الإيرادات اليومية (آخر 7 أيام)
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -773,12 +873,12 @@ export default function AccountingDashboardPage() {
                             />
                             <Area 
                               type="monotone" 
-                              dataKey="netProfit" 
+                              dataKey="cogs" 
                               stackId="2"
-                              stroke="#3b82f6" 
-                              fill="#3b82f6" 
+                              stroke="#f97316" 
+                              fill="#f97316" 
                               fillOpacity={0.6}
-                              name="صافي الربح"
+                              name="تكلفة المخزون"
                             />
                           </AreaChart>
                         </ResponsiveContainer>
@@ -794,7 +894,7 @@ export default function AccountingDashboardPage() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <Calendar className="w-5 h-5 text-purple-600" />
-                      صافي الربح الأسبوعي (آخر 4 أسابيع)
+                      الإيرادات والمصروفات الأسبوعية (آخر 4 أسابيع)
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -808,9 +908,8 @@ export default function AccountingDashboardPage() {
                             <Tooltip formatter={(value: number) => [`${value.toFixed(2)} ر.س`]} />
                             <Legend />
                             <Bar dataKey="revenue" fill="#10b981" name="الإيرادات" />
-                            <Bar dataKey="cogs" fill="#f97316" name="تكلفة المكونات" />
-                            <Bar dataKey="expenses" fill="#ef4444" name="المصروفات" />
-                            <Bar dataKey="netProfit" fill="#3b82f6" name="صافي الربح" />
+                            <Bar dataKey="cogs" fill="#f97316" name="تكلفة مخزون المشروبات" />
+                            <Bar dataKey="expenses" fill="#ef4444" name="المصروفات التشغيلية" />
                           </BarChart>
                         </ResponsiveContainer>
                       </div>
@@ -897,7 +996,7 @@ export default function AccountingDashboardPage() {
                           <ShoppingCart className="w-6 h-6 text-accent" />
                         </div>
                         <div>
-                          <p className="text-muted-foreground text-sm">عدد الطلبات</p>
+                          <p className="text-muted-foreground text-sm">{tc("عدد الطلبات", "Order Count")}</p>
                           <p className="text-2xl font-bold" data-testid="text-order-count">{dashboardData.orderCount}</p>
                         </div>
                       </div>
@@ -943,7 +1042,7 @@ export default function AccountingDashboardPage() {
                           <DollarSign className="w-6 h-6 text-purple-600" />
                         </div>
                         <div>
-                          <p className="text-muted-foreground text-sm">ضريبة القيمة المضافة</p>
+                          <p className="text-muted-foreground text-sm">{tc("ضريبة القيمة المضافة", "VAT")}</p>
                           <p className="text-2xl font-bold">{dashboardData.totalVat.toFixed(2)}</p>
                         </div>
                       </div>
@@ -1125,7 +1224,7 @@ export default function AccountingDashboardPage() {
             ) : dashboardData ? (
               <>
                 {/* Report Header with Export Buttons */}
-                <Card className="bg-gradient-to-l from-amber-50 to-background dark:from-amber-900/20 dark:to-orange-900/20 border-primary dark:border-primary">
+                <Card className="bg-card border-primary dark:border-primary">
                   <CardHeader>
                     <div className="flex flex-wrap items-center justify-between gap-4">
                       <div>
@@ -1159,7 +1258,14 @@ export default function AccountingDashboardPage() {
                         <Button 
                           variant="outline" 
                           size="sm"
-                          onClick={() => window.print()}
+                          onClick={() => {
+                            const printWin = window.open('', '_blank', 'width=800,height=600');
+                            if (printWin) {
+                              printWin.document.write(`<html><head><title>تقرير المحاسبة</title><style>body{font-family:Arial,sans-serif;padding:20px}@media print{button{display:none}}</style></head><body>${document.querySelector('.accounting-report-content')?.innerHTML || document.body.innerHTML}</body></html>`);
+                              printWin.document.close();
+                              setTimeout(() => { printWin.print(); printWin.close(); }, 500);
+                            }
+                          }}
                           className="border-blue-500 text-blue-700 hover:bg-blue-50"
                         >
                           <Printer className="w-4 h-4 ml-2" />
@@ -1189,7 +1295,7 @@ export default function AccountingDashboardPage() {
                         <p className="text-2xl font-bold text-green-800 dark:text-green-300">{dashboardData.totalRevenue.toFixed(2)}</p>
                         <p className="text-xs text-green-600"><SarIcon /></p>
                       </div>
-                      <div className="p-4 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/30 dark:to-orange-900/20 rounded-xl border border-accent dark:border-accent">
+                      <div className="p-4 bg-gradient-to-br from-primary/5 to-primary/10 dark:from-primary/20 dark:to-primary/10 rounded-xl border border-accent dark:border-accent">
                         <div className="flex items-center gap-2 mb-2">
                           <Package className="w-5 h-5 text-accent" />
                           <span className="text-sm text-accent dark:text-accent font-medium">تكلفة المكونات</span>
@@ -1205,13 +1311,13 @@ export default function AccountingDashboardPage() {
                         <p className="text-2xl font-bold text-red-800 dark:text-red-300">{dashboardData.totalExpenses.toFixed(2)}</p>
                         <p className="text-xs text-red-600"><SarIcon /></p>
                       </div>
-                      <div className={`p-4 rounded-xl border ${dashboardData.netProfit >= 0 ? 'bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/30 dark:to-blue-900/20 border-blue-200 dark:border-blue-800' : 'bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/30 dark:to-red-900/20 border-red-200 dark:border-red-800'}`}>
+                      <div className="p-4 rounded-xl border bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/30 dark:to-orange-900/20 border-orange-200 dark:border-orange-800">
                         <div className="flex items-center gap-2 mb-2">
-                          <PiggyBank className={`w-5 h-5 ${dashboardData.netProfit >= 0 ? 'text-blue-600' : 'text-red-600'}`} />
-                          <span className={`text-sm font-medium ${dashboardData.netProfit >= 0 ? 'text-blue-700 dark:text-blue-400' : 'text-red-700 dark:text-red-400'}`}>صافي الربح</span>
+                          <Package className="w-5 h-5 text-orange-600" />
+                          <span className="text-sm font-medium text-orange-700 dark:text-orange-400">إجمالي المصروفات (مخزون+تشغيل)</span>
                         </div>
-                        <p className={`text-2xl font-bold ${dashboardData.netProfit >= 0 ? 'text-blue-800 dark:text-blue-300' : 'text-red-800 dark:text-red-300'}`}>{dashboardData.netProfit.toFixed(2)}</p>
-                        <p className={`text-xs ${dashboardData.netProfit >= 0 ? 'text-blue-600' : 'text-red-600'}`}><SarIcon /></p>
+                        <p className="text-2xl font-bold text-orange-800 dark:text-orange-300">{(dashboardData.totalCogs + dashboardData.totalExpenses).toFixed(2)}</p>
+                        <p className="text-xs text-orange-600"><SarIcon /></p>
                       </div>
                     </div>
 
@@ -1231,34 +1337,46 @@ export default function AccountingDashboardPage() {
                         </TableHeader>
                         <TableBody>
                           <TableRow>
-                            <TableCell className="font-medium">إجمالي الإيرادات</TableCell>
+                            <TableCell className="font-medium">{tc("إجمالي الإيرادات", "Total Revenue")}</TableCell>
                             <TableCell className="text-green-600 font-bold">{dashboardData.totalRevenue.toFixed(2)} <SarIcon /></TableCell>
                             <TableCell>100%</TableCell>
                           </TableRow>
+                          {dashboardData.totalRefunds > 0 && (
+                            <TableRow className="bg-red-50/30">
+                              <TableCell className="font-medium text-red-700">
+                                الاسترجاعات والمرتجعات
+                                <span className="text-xs text-muted-foreground mr-1">({dashboardData.refundCount} عملية)</span>
+                              </TableCell>
+                              <TableCell className="text-red-600 font-bold">-{dashboardData.totalRefunds.toFixed(2)} <SarIcon /></TableCell>
+                              <TableCell className="text-red-600">-{dashboardData.totalRevenue > 0 ? ((dashboardData.totalRefunds / dashboardData.totalRevenue) * 100).toFixed(1) : 0}%</TableCell>
+                            </TableRow>
+                          )}
+                          {dashboardData.totalRefunds > 0 && (
+                            <TableRow className="bg-green-50/30">
+                              <TableCell className="font-semibold text-green-700">= صافي الإيرادات</TableCell>
+                              <TableCell className="text-green-700 font-bold">{dashboardData.netRevenue.toFixed(2)} <SarIcon /></TableCell>
+                              <TableCell className="text-green-600">{dashboardData.totalRevenue > 0 ? ((dashboardData.netRevenue / dashboardData.totalRevenue) * 100).toFixed(1) : 0}%</TableCell>
+                            </TableRow>
+                          )}
                           <TableRow>
                             <TableCell className="font-medium">ضريبة القيمة المضافة (المحصلة)</TableCell>
                             <TableCell className="text-accent">{dashboardData.totalVat.toFixed(2)} <SarIcon /></TableCell>
                             <TableCell>{dashboardData.totalRevenue > 0 ? ((dashboardData.totalVat / dashboardData.totalRevenue) * 100).toFixed(1) : 0}%</TableCell>
                           </TableRow>
                           <TableRow>
-                            <TableCell className="font-medium">تكلفة المكونات (COGS)</TableCell>
-                            <TableCell className="text-accent">{dashboardData.totalCogs.toFixed(2)} <SarIcon /></TableCell>
+                            <TableCell className="font-medium">تكلفة مخزون المشروبات (مصروف)</TableCell>
+                            <TableCell className="text-orange-600">{dashboardData.totalCogs.toFixed(2)} <SarIcon /></TableCell>
                             <TableCell>{dashboardData.totalRevenue > 0 ? ((dashboardData.totalCogs / dashboardData.totalRevenue) * 100).toFixed(1) : 0}%</TableCell>
                           </TableRow>
-                          <TableRow className="bg-green-50/50 dark:bg-green-900/20">
-                            <TableCell className="font-bold">= إجمالي الربح</TableCell>
-                            <TableCell className="text-green-700 font-bold">{dashboardData.grossProfit.toFixed(2)} <SarIcon /></TableCell>
-                            <TableCell className="font-medium">{dashboardData.totalRevenue > 0 ? ((dashboardData.grossProfit / dashboardData.totalRevenue) * 100).toFixed(1) : 0}%</TableCell>
-                          </TableRow>
                           <TableRow>
-                            <TableCell className="font-medium">المصروفات التشغيلية</TableCell>
+                            <TableCell className="font-medium">{tc("المصروفات التشغيلية", "Operating Expenses")}</TableCell>
                             <TableCell className="text-red-600">{dashboardData.totalExpenses.toFixed(2)} <SarIcon /></TableCell>
                             <TableCell>{dashboardData.totalRevenue > 0 ? ((dashboardData.totalExpenses / dashboardData.totalRevenue) * 100).toFixed(1) : 0}%</TableCell>
                           </TableRow>
-                          <TableRow className={`${dashboardData.netProfit >= 0 ? 'bg-blue-50/50 dark:bg-blue-900/20' : 'bg-red-50/50 dark:bg-red-900/20'}`}>
-                            <TableCell className="font-bold text-lg">= صافي الربح</TableCell>
-                            <TableCell className={`font-bold text-lg ${dashboardData.netProfit >= 0 ? 'text-blue-700' : 'text-red-700'}`}>{dashboardData.netProfit.toFixed(2)} <SarIcon /></TableCell>
-                            <TableCell className="font-bold">{dashboardData.profitMargin.toFixed(1)}%</TableCell>
+                          <TableRow className="bg-red-50/50 dark:bg-red-900/20">
+                            <TableCell className="font-bold text-lg">= إجمالي المصروفات</TableCell>
+                            <TableCell className="font-bold text-lg text-red-700">{(dashboardData.totalCogs + dashboardData.totalExpenses).toFixed(2)} <SarIcon /></TableCell>
+                            <TableCell className="font-bold">{dashboardData.totalRevenue > 0 ? (((dashboardData.totalCogs + dashboardData.totalExpenses) / dashboardData.totalRevenue) * 100).toFixed(1) : 0}%</TableCell>
                           </TableRow>
                         </TableBody>
                       </Table>
@@ -1332,8 +1450,9 @@ export default function AccountingDashboardPage() {
                               <YAxis />
                               <Tooltip formatter={(value: number) => [`${value.toFixed(2)} ر.س`]} />
                               <Legend />
-                              <Bar dataKey="netProfit" fill="#10b981" name="صافي الربح" />
-                              <Bar dataKey="expenses" fill="#ef4444" name="المصروفات" />
+                              <Bar dataKey="revenue" fill="#10b981" name="الإيرادات" />
+                              <Bar dataKey="cogs" fill="#f97316" name="تكلفة المخزون" />
+                              <Bar dataKey="expenses" fill="#ef4444" name="المصروفات التشغيلية" />
                             </BarChart>
                           </ResponsiveContainer>
                         </div>
@@ -1477,7 +1596,7 @@ export default function AccountingDashboardPage() {
                       <div className="text-center p-4 bg-muted/50 rounded-lg">
                         <ShoppingCart className="w-8 h-8 mx-auto mb-2 text-accent" />
                         <p className="text-2xl font-bold">{dashboardData.orderCount}</p>
-                        <p className="text-sm text-muted-foreground">عدد الطلبات</p>
+                        <p className="text-sm text-muted-foreground">{tc("عدد الطلبات", "Order Count")}</p>
                       </div>
                       <div className="text-center p-4 bg-muted/50 rounded-lg">
                         <Receipt className="w-8 h-8 mx-auto mb-2 text-blue-600" />
@@ -1494,11 +1613,11 @@ export default function AccountingDashboardPage() {
                         <p className="text-sm text-muted-foreground">متوسط قيمة الطلب</p>
                       </div>
                       <div className="text-center p-4 bg-muted/50 rounded-lg">
-                        <Percent className="w-8 h-8 mx-auto mb-2 text-purple-600" />
-                        <p className={`text-2xl font-bold ${dashboardData.profitMargin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {dashboardData.profitMargin.toFixed(1)}%
+                        <Percent className="w-8 h-8 mx-auto mb-2 text-orange-600" />
+                        <p className="text-2xl font-bold text-orange-600">
+                          {dashboardData.totalRevenue > 0 ? ((dashboardData.totalCogs / dashboardData.totalRevenue) * 100).toFixed(1) : "0"}%
                         </p>
-                        <p className="text-sm text-muted-foreground">هامش الربح الصافي</p>
+                        <p className="text-sm text-muted-foreground">نسبة تكلفة المخزون</p>
                       </div>
                     </div>
                   </CardContent>
@@ -1509,6 +1628,152 @@ export default function AccountingDashboardPage() {
                 <p className="text-muted-foreground">لا توجد بيانات متاحة</p>
               </div>
             )}
+          </TabsContent>
+
+          {/* AI Audit Tab */}
+          <TabsContent value="ai-audit" className="space-y-4">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-full bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center">
+                <Sparkles className="w-5 h-5 text-violet-600" />
+              </div>
+              <div>
+                <h2 className="font-bold text-lg">المراجعة المحاسبية الذكية</h2>
+                <p className="text-sm text-muted-foreground">مدقق حسابات ذكي يحلل بياناتك ويكشف الأخطاء والمخاطر</p>
+              </div>
+            </div>
+
+            {/* Auto-audit report */}
+            {aiLoading && (
+              <div className="flex flex-col items-center justify-center py-16 gap-4">
+                <Loader2 className="w-10 h-10 animate-spin text-violet-500" />
+                <p className="text-muted-foreground font-medium">جاري مراجعة الحسابات...</p>
+                <p className="text-xs text-muted-foreground">يقوم المدقق بتحليل المصروفات والإيرادات وكشف الأنماط الشاذة</p>
+              </div>
+            )}
+
+            {!aiLoading && aiReport && (
+              <div className="bg-card border border-violet-200 dark:border-violet-800 rounded-xl p-5">
+                <div className="flex items-center gap-2 mb-3 pb-3 border-b border-border">
+                  <ShieldCheck className="w-5 h-5 text-violet-600" />
+                  <span className="font-bold text-violet-700 dark:text-violet-400">تقرير التدقيق</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mr-auto gap-1.5 text-xs border-violet-300"
+                    onClick={() => { setAiReport(""); setAiLoading(false); }}
+                    data-testid="button-refresh-audit"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    إعادة المراجعة
+                  </Button>
+                </div>
+                <div className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                  {aiReport}
+                </div>
+              </div>
+            )}
+
+            {!aiLoading && !aiReport && (
+              <div className="text-center py-12">
+                <ShieldCheck className="w-16 h-16 mx-auto text-muted-foreground/30 mb-4" />
+                <p className="text-muted-foreground mb-4">اضغط "راجع حساباتي" لبدء التدقيق الذكي</p>
+                <Button
+                  onClick={async () => {
+                    setAiLoading(true);
+                    try {
+                      const res = await apiRequest("POST", "/api/ai/accounting-audit", { period });
+                      const data = await res.json();
+                      setAiReport(data.report || "لم أتمكن من إنشاء التقرير.");
+                    } catch {
+                      setAiReport("حدث خطأ في الاتصال بالمساعد الذكي.");
+                    } finally {
+                      setAiLoading(false);
+                    }
+                  }}
+                  className="bg-gradient-to-l from-violet-600 to-primary text-white gap-2"
+                  data-testid="button-start-audit"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  ابدأ المراجعة الذكية
+                </Button>
+              </div>
+            )}
+
+            {/* AI accounting chat */}
+            <div className="border border-border rounded-xl p-4 bg-card space-y-3">
+              <div className="flex items-center gap-2 pb-2 border-b border-border">
+                <Bot className="w-4 h-4 text-primary" />
+                <span className="font-semibold text-sm">المستشار المالي الذكي</span>
+                <span className="text-xs text-muted-foreground mr-auto">اسأل عن أي سؤال محاسبي</span>
+              </div>
+
+              <ScrollArea className="h-48">
+                <div className="space-y-3 pr-1">
+                  {aiChatHistory.length === 0 && (
+                    <p className="text-xs text-muted-foreground text-center py-4">لا توجد محادثات بعد. ابدأ بسؤال محاسبي...</p>
+                  )}
+                  {aiChatHistory.map((m, i) => (
+                    <div key={i} className={`flex gap-2 ${m.role === "user" ? "flex-row-reverse" : ""}`}>
+                      <div className={`max-w-[85%] text-xs rounded-xl px-3 py-2 leading-relaxed ${
+                        m.role === "user"
+                          ? "bg-primary text-primary-foreground rounded-tl-none"
+                          : "bg-muted text-foreground rounded-tr-none"
+                      }`}>
+                        {m.content}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+
+              <div className="flex gap-2">
+                <Input
+                  value={aiQuestion}
+                  onChange={(e) => setAiQuestion(e.target.value)}
+                  onKeyDown={async (e) => {
+                    if (e.key !== "Enter" || !aiQuestion.trim() || aiLoading) return;
+                    const q = aiQuestion.trim();
+                    setAiQuestion("");
+                    const newHistory = [...aiChatHistory, { role: "user", content: q }];
+                    setAiChatHistory(newHistory);
+                    setAiLoading(true);
+                    try {
+                      const res = await apiRequest("POST", "/api/ai/accounting-audit", { question: q, period });
+                      const data = await res.json();
+                      setAiChatHistory([...newHistory, { role: "assistant", content: data.report || "—" }]);
+                    } catch {
+                      setAiChatHistory([...newHistory, { role: "assistant", content: "حدث خطأ." }]);
+                    } finally {
+                      setAiLoading(false);
+                    }
+                  }}
+                  placeholder="مثال: ما هي أكثر فئة مصروفات؟"
+                  className="flex-1 text-sm"
+                  data-testid="input-ai-accounting-question"
+                />
+                <Button size="icon" disabled={!aiQuestion.trim() || aiLoading} data-testid="button-send-ai-question"
+                  onClick={async () => {
+                    const q = aiQuestion.trim();
+                    if (!q || aiLoading) return;
+                    setAiQuestion("");
+                    const newHistory = [...aiChatHistory, { role: "user", content: q }];
+                    setAiChatHistory(newHistory);
+                    setAiLoading(true);
+                    try {
+                      const res = await apiRequest("POST", "/api/ai/accounting-audit", { question: q, period });
+                      const data = await res.json();
+                      setAiChatHistory([...newHistory, { role: "assistant", content: data.report || "—" }]);
+                    } catch {
+                      setAiChatHistory([...newHistory, { role: "assistant", content: "حدث خطأ." }]);
+                    } finally {
+                      setAiLoading(false);
+                    }
+                  }}
+                >
+                  {aiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
           </TabsContent>
         </Tabs>
 
@@ -1600,7 +1865,7 @@ export default function AccountingDashboardPage() {
                             <TableHead className="text-right">رقم الطلب</TableHead>
                             <TableHead className="text-right">الإجمالي</TableHead>
                             <TableHead className="text-right">تكلفة المكونات</TableHead>
-                            <TableHead className="text-right">هامش الربح</TableHead>
+                            <TableHead className="text-right">{tc("هامش الربح", "Profit Margin")}</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1809,5 +2074,6 @@ export default function AccountingDashboardPage() {
         </Dialog>
       </div>
     </div>
+    </PlanGate>
   );
 }

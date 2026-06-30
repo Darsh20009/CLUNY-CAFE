@@ -143,11 +143,17 @@ export default function ProductDetails() {
   };
 
   const toggleAddon = (addonId: string) => {
-    setSelectedAddons(prev => 
-      prev.includes(addonId) 
-        ? prev.filter(id => id !== addonId)
-        : [...prev, addonId]
-    );
+    const addon = addonsData.find((a: any) => a.id === addonId);
+    const isSingle = addon?.selectionType === 'single';
+    setSelectedAddons(prev => {
+      if (isSingle) {
+        // Deselect all others in same category, then select this one
+        const sameCategory = addonsData.filter((a: any) => a.category === addon?.category).map((a: any) => a.id);
+        const withoutCategory = prev.filter((id: string) => !sameCategory.includes(id));
+        return prev.includes(addonId) ? withoutCategory : [...withoutCategory, addonId];
+      }
+      return prev.includes(addonId) ? prev.filter((id: string) => id !== addonId) : [...prev, addonId];
+    });
   };
 
   if (isLoading) {
@@ -236,7 +242,7 @@ export default function ProductDetails() {
                   className={
                     item.availabilityStatus === 'out_of_stock' ? "bg-red-500" :
                     item.availabilityStatus === 'coming_soon' ? "bg-blue-500" :
-                    "bg-background0"
+                    "bg-primary"
                   }
                   data-testid="badge-availability"
                 >
@@ -332,44 +338,66 @@ export default function ProductDetails() {
             <div className="space-y-4" data-testid="section-addons">
               <h3 className="text-lg font-semibold text-foreground">{t("product.addons")}</h3>
               {Object.keys(addonsByCategory).length > 0 ? (
-                Object.entries(addonsByCategory).map(([category, addons]: [string, any]) => (
-                  <div key={category} className="space-y-2">
-                    <p className="text-sm font-medium text-muted-foreground">{category}</p>
-                    <div className="space-y-2">
-                      {addons.map((addon: any) => (
-                        <button
-                          key={addon.id}
-                          onClick={() => toggleAddon(addon.id)}
-                          className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors ${
-                            selectedAddons.includes(addon.id)
-                              ? 'bg-primary text-primary-foreground border-primary'
-                              : 'bg-background border-border hover:border-primary hover:bg-muted'
-                          }`}
-                          data-testid={`button-addon-${addon.id}`}
-                        >
-                          <div className={`w-5 h-5 rounded border flex items-center justify-center ${
-                            selectedAddons.includes(addon.id) 
-                              ? 'bg-primary-foreground' 
-                              : 'border-border'
-                          }`}>
-                            {selectedAddons.includes(addon.id) && (
-                              <Check className="w-3 h-3 text-primary" />
+                Object.entries(addonsByCategory).map(([category, addons]: [string, any]) => {
+                  const isSingleGroup = addons.some((a: any) => a.selectionType === 'single');
+                  return (
+                    <div key={category} className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-muted-foreground">{category}</p>
+                        {isSingleGroup && (
+                          <span className="text-xs text-primary border border-primary/30 rounded px-1.5 py-0.5">
+                            {i18n.language === 'ar' ? 'اختر واحداً' : 'Choose one'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        {addons.map((addon: any) => (
+                          <button
+                            key={addon.id}
+                            onClick={() => toggleAddon(addon.id)}
+                            className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                              selectedAddons.includes(addon.id)
+                                ? 'bg-primary text-primary-foreground border-primary'
+                                : 'bg-background border-border hover:border-primary hover:bg-muted'
+                            }`}
+                            data-testid={`button-addon-${addon.id}`}
+                          >
+                            {isSingleGroup ? (
+                              <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                                selectedAddons.includes(addon.id)
+                                  ? 'border-primary-foreground'
+                                  : 'border-border'
+                              }`}>
+                                {selectedAddons.includes(addon.id) && (
+                                  <div className="w-2.5 h-2.5 rounded-full bg-primary-foreground" />
+                                )}
+                              </div>
+                            ) : (
+                              <div className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${
+                                selectedAddons.includes(addon.id)
+                                  ? 'bg-primary-foreground'
+                                  : 'border-border'
+                              }`}>
+                                {selectedAddons.includes(addon.id) && (
+                                  <Check className="w-3 h-3 text-primary" />
+                                )}
+                              </div>
                             )}
-                          </div>
-                          <div className={`flex-1 ${i18n.language === 'ar' ? 'text-right' : 'text-left'}`}>
-                            <p className="font-medium">{i18n.language === 'ar' ? addon.nameAr : addon.nameEn || addon.nameAr}</p>
-                          </div>
-                          {addon.price > 0 && (
-                            <span className="text-sm font-medium">+{addon.price.toFixed(2)} <SarIcon /></span>
-                          )}
-                          {addon.isFree && addon.price === 0 && (
-                            <Badge variant="secondary" className="text-xs">{t("product.free")}</Badge>
-                          )}
-                        </button>
-                      ))}
+                            <div className={`flex-1 ${i18n.language === 'ar' ? 'text-right' : 'text-left'}`}>
+                              <p className="font-medium">{i18n.language === 'ar' ? addon.nameAr : addon.nameEn || addon.nameAr}</p>
+                            </div>
+                            {addon.price > 0 && (
+                              <span className="text-sm font-medium">+{addon.price.toFixed(2)} <SarIcon /></span>
+                            )}
+                            {addon.isFree && addon.price === 0 && (
+                              <Badge variant="secondary" className="text-xs">{t("product.free")}</Badge>
+                            )}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               ) : (
                 <p className="text-sm text-muted-foreground">{t("product.no_addons")}</p>
               )}
@@ -433,7 +461,7 @@ export default function ProductDetails() {
             </div>
 
             {/* Add to Cart Button - Mobile Sticky */}
-            <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/80 backdrop-blur-lg border-t z-50 lg:relative lg:p-0 lg:bg-transparent lg:border-0">
+            <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/80 backdrop-blur-lg border-t z-50 lg:relative lg:p-0 lg:bg-transparent lg:border-0" style={{paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 16px)'}}>
               <Button
                 onClick={handleAddToCart}
                 size="lg"

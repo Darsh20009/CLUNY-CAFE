@@ -435,6 +435,132 @@ export class DeliveryService {
       estimatedMinutes: { min: zone.estimatedMinMinutes, max: zone.estimatedMaxMinutes }
     };
   }
+
+  async autoAssignDriver(orderId: string, tenantId: string, branchId?: string): Promise<IDeliveryOrder | null> {
+    const order = await this.getDeliveryOrder(orderId);
+    if (!order || order.status !== 'pending') return null;
+
+    const availableDrivers = await this.getAvailableDrivers(tenantId, branchId);
+    if (availableDrivers.length === 0) return null;
+
+    let bestDriver = availableDrivers[0];
+    let minDistance = Infinity;
+
+    for (const driver of availableDrivers) {
+      if (driver.currentLat && driver.currentLng && order.branchLat && order.branchLng) {
+        const dist = this.calculateDistance(driver.currentLat, driver.currentLng, order.branchLat, order.branchLng);
+        if (dist < minDistance) {
+          minDistance = dist;
+          bestDriver = driver;
+        }
+      }
+    }
+
+    return this.assignDriverToOrder(orderId, bestDriver.id);
+  }
+
+  async processWebhookOrder(provider: string, payload: any, tenantId: string): Promise<IDeliveryOrder> {
+    const externalOrderId = payload.orderId || payload.order_id || payload.id || `${provider}-${Date.now()}`;
+    const customerName = payload.customerName || payload.customer_name || payload.customer?.name || 'عميل خارجي';
+    const customerPhone = payload.customerPhone || payload.customer_phone || payload.customer?.phone || '';
+    const customerAddress = payload.address || payload.delivery_address || payload.customer?.address || '';
+    const customerLat = payload.lat || payload.latitude || payload.customer?.lat || 0;
+    const customerLng = payload.lng || payload.longitude || payload.customer?.lng || 0;
+    const totalAmount = payload.totalAmount || payload.total || payload.order_total || 0;
+    const items = payload.items || payload.order_items || [];
+    const notes = payload.notes || payload.special_instructions || '';
+
+    const order = await this.createDeliveryOrder({
+      tenantId,
+      orderId: externalOrderId,
+      deliveryType: 'external',
+      externalProvider: provider,
+      externalOrderId,
+      customerName,
+      customerPhone,
+      customerAddress,
+      customerLat,
+      customerLng,
+      totalAmount,
+      deliveryFee: payload.deliveryFee || payload.delivery_fee || 0,
+      notes,
+      status: 'pending',
+    });
+
+    return order;
+  }
+
+  async getDeliveryStats(tenantId: string, branchId?: string, fromDate?: Date, toDate?: Date): Promise<{
+    totalOrders: number;
+    activeOrders: number;
+    completedOrders: number;
+    cancelledOrders: number;
+    avgDeliveryTime: number;
+    totalRevenue: number;
+    totalDeliveryFees: number;
+    driverStats: { total: number; online: number; busy: number; offline: number };
+    providerBreakdown: Record<string, { orders: number; revenue: number }>;
+    ordersByStatus: Record<string, number>;
+  }> {
+    const query: any = { tenantId };
+    if (branchId) query.branchId = branchId;
+    if (fromDate || toDate) {
+      query.createdAt = {};
+      if (fromDate) query.createdAt.$gte = fromDate;
+      if (toDate) query.createdAt.$lte = toDate;
+    }
+
+    const orders = await DeliveryOrderModel.find(query).lean();
+    const driverQuery: any = { tenantId };
+    if (branchId) driverQuery.branchId = branchId;
+    const drivers = await DeliveryDriverModel.find(driverQuery).lean();
+
+    const completedOrders = orders.filter(o => o.status === 'delivered');
+    const activeOrders = orders.filter(o => ['pending', 'accepted', 'assigned', 'picking_up', 'on_the_way', 'arrived'].includes(o.status));
+    const cancelledOrders = orders.filter(o => o.status === 'cancelled');
+
+    let totalDeliveryMinutes = 0;
+    let deliveryCount = 0;
+    for (const order of completedOrders) {
+      if (order.actualDeliveryTime && order.createdAt) {
+        const mins = (new Date(order.actualDeliveryTime).getTime() - new Date(order.createdAt).getTime()) / 60000;
+        if (mins > 0 && mins < 300) {
+          totalDeliveryMinutes += mins;
+          deliveryCount++;
+        }
+      }
+    }
+
+    const providerBreakdown: Record<string, { orders: number; revenue: number }> = {};
+    const ordersByStatus: Record<string, number> = {};
+
+    for (const order of orders) {
+      ordersByStatus[order.status] = (ordersByStatus[order.status] || 0) + 1;
+
+      const prov = order.externalProvider || (order.deliveryType === 'internal' ? 'internal' : 'unknown');
+      if (!providerBreakdown[prov]) providerBreakdown[prov] = { orders: 0, revenue: 0 };
+      providerBreakdown[prov].orders++;
+      providerBreakdown[prov].revenue += order.totalAmount || 0;
+    }
+
+    return {
+      totalOrders: orders.length,
+      activeOrders: activeOrders.length,
+      completedOrders: completedOrders.length,
+      cancelledOrders: cancelledOrders.length,
+      avgDeliveryTime: deliveryCount > 0 ? Math.round(totalDeliveryMinutes / deliveryCount) : 0,
+      totalRevenue: orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0),
+      totalDeliveryFees: orders.reduce((sum, o) => sum + (o.deliveryFee || 0), 0),
+      driverStats: {
+        total: drivers.length,
+        online: drivers.filter(d => d.status === 'available').length,
+        busy: drivers.filter(d => d.status === 'busy').length,
+        offline: drivers.filter(d => d.status === 'offline').length,
+      },
+      providerBreakdown,
+      ordersByStatus,
+    };
+  }
 }
 
 export const deliveryService = new DeliveryService();

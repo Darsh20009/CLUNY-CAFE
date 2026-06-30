@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { useTranslate, tc } from "@/lib/useTranslate";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowRight, Coffee, Star, CheckCircle, FileDown, Loader2 } from "lucide-react";
+import { ArrowRight, Coffee, Star, CheckCircle, Bell, BellRing, Smartphone } from "lucide-react";
 import { motion } from "framer-motion";
 import OrderTracker from "@/components/order-tracker";
+import { ReceiptInvoice } from "@/components/receipt-invoice";
 import { CarPickupForm } from "@/components/car-pickup-form";
 import type { Order as OrderType } from "@shared/schema";
 import { CustomerLayout } from "@/components/layouts/CustomerLayout";
@@ -16,13 +18,13 @@ import { customerStorage } from "@/lib/customer-storage";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import SarIcon from "@/components/sar-icon";
-import { downloadInvoicePDF } from "@/lib/print-utils";
 
 interface OrderDisplay extends OrderType {
  items: any[];
 }
 
 function StarRatingInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const tc = useTranslate();
   const [hover, setHover] = useState(0);
   return (
     <div className="flex gap-1 justify-center my-2">
@@ -31,6 +33,76 @@ function StarRatingInput({ value, onChange }: { value: number; onChange: (v: num
           <Star className={`w-7 h-7 ${s <= (hover || value) ? 'text-amber-400 fill-amber-400' : 'text-slate-300'}`} />
         </button>
       ))}
+    </div>
+  );
+}
+
+function MiniPushBanner({ customerId, t }: { customerId: string; t: any }) {
+  const [permission, setPermission] = useState<NotificationPermission>(
+    'Notification' in window ? Notification.permission : 'default'
+  );
+  const [isSubscribed, setIsSubscribed] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const standalone = (window.navigator as any).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+  const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+  useEffect(() => {
+    if (!supported) return;
+    navigator.serviceWorker.ready.then(reg => reg.pushManager.getSubscription()).then(sub => {
+      if (sub) setIsSubscribed(true);
+    }).catch(() => {});
+  }, [supported]);
+
+  const subscribe = useCallback(async () => {
+    if (!supported || !customerId) return;
+    setLoading(true);
+    try {
+      const { subscribeToPush } = await import('@/lib/push-utils');
+      const ok = await subscribeToPush({ userType: 'customer', userId: customerId });
+      if (ok) {
+        setIsSubscribed(true);
+        setPermission('granted');
+      }
+    } catch (err) {
+      console.error('[Push]', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [supported, customerId]);
+
+  if (isSubscribed && permission === 'granted') {
+    return (
+      <div className="flex items-center gap-2 text-green-600 dark:text-green-400 text-xs mb-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg px-3 py-2">
+        <BellRing className="w-3.5 h-3.5 flex-shrink-0" />
+        <span>{tc('إشعارات الطلبات مفعّلة', 'Order notifications enabled')}</span>
+      </div>
+    );
+  }
+
+  if (permission === 'denied') return null;
+
+  if (ios && !standalone) {
+    return (
+      <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 text-xs mb-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+        <Smartphone className="w-3.5 h-3.5 flex-shrink-0" />
+        <span>{tc('أضف التطبيق لشاشتك الرئيسية لتلقي إشعارات الطلبات على الآيفون', 'Add app to Home Screen to receive order notifications on iPhone')}</span>
+      </div>
+    );
+  }
+
+  if (!supported) return null;
+
+  return (
+    <div className="flex items-center justify-between gap-3 mb-4 bg-primary/5 border border-primary/20 rounded-lg px-3 py-2">
+      <div className="flex items-center gap-2">
+        <Bell className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+        <span className="text-xs">{tc('فعّل الإشعارات ليصلك تنبيه عند تغيير حالة طلبك', 'Enable notifications to get alerts when your order status changes')}</span>
+      </div>
+      <Button size="sm" variant="outline" className="h-6 text-xs px-2 flex-shrink-0" onClick={subscribe} disabled={loading} data-testid="button-enable-push-orders">
+        {loading ? '...' : tc('تفعيل', 'Enable')}
+      </Button>
     </div>
   );
 }
@@ -44,48 +116,13 @@ export default function MyOrders() {
  const [activeReview, setActiveReview] = useState<string | null>(null);
  const [reviewRating, setReviewRating] = useState(5);
  const [reviewComment, setReviewComment] = useState('');
- const [pdfLoadingOrders, setPdfLoadingOrders] = useState<Set<string>>(new Set());
-
- const handleDownloadInvoice = async (order: OrderDisplay) => {
-   if (pdfLoadingOrders.has(order.id)) return;
-   setPdfLoadingOrders(prev => new Set([...prev, order.id]));
-   try {
-     const PAYMENT_LABELS: Record<string, string> = {
-       cash: 'نقداً', geidea: 'بطاقة إلكترونية', loyalty_points: 'نقاط الولاء',
-       coupon: 'كوبون خصم', pos: 'جهاز نقاط البيع',
-     };
-     await downloadInvoicePDF({
-       orderNumber: order.orderNumber,
-       customerName: order.customerName || '',
-       customerPhone: order.customerPhone || '',
-       items: (Array.isArray(order.items) ? order.items : []).map((item: any) => ({
-         coffeeItem: {
-           nameAr: item.nameAr || item.coffeeItem?.nameAr || item.name || '',
-           nameEn: item.nameEn || item.coffeeItem?.nameEn || '',
-           price: String(item.price || item.coffeeItem?.price || 0),
-         },
-         quantity: Number(item.quantity) || 1,
-       })),
-       subtotal: String((Number(order.totalAmount) / 1.15).toFixed(2)),
-       total: String(order.totalAmount || 0),
-       paymentMethod: PAYMENT_LABELS[(order as any).paymentMethod] || (order as any).paymentMethod || 'نقداً',
-       date: order.createdAt ? String(order.createdAt) : new Date().toISOString(),
-       branchName: 'كلوني كافيه',
-       branchAddress: 'الرياض، المملكة العربية السعودية',
-     });
-   } catch {
-     toast({ variant: 'destructive', title: 'تعذّر تحميل الفاتورة', description: 'يرجى المحاولة مرة أخرى' });
-   } finally {
-     setPdfLoadingOrders(prev => { const s = new Set(prev); s.delete(order.id); return s; });
-   }
- };
 
  const reviewMutation = useMutation({
    mutationFn: ({ orderId, rating, comment }: { orderId: string; rating: number; comment: string }) =>
      apiRequest('POST', '/api/reviews/order/' + orderId, {
        rating,
        comment,
-       customerName: (customer as any)?.name || 'عميل',
+       customerName: (customer as any)?.name || tc('عميل', 'Customer'),
        customerId: (customer as any)?.id,
        customerPhone: (customer as any)?.phone,
      }),
@@ -94,14 +131,14 @@ export default function MyOrders() {
      setActiveReview(null);
      setReviewRating(5);
      setReviewComment('');
-     toast({ title: 'شكراً على تقييمك! 🌟' });
+     toast({ title: tc('شكراً على تقييمك!', 'Thank you for your rating!') });
    },
    onError: (err: any) => {
-     if (String(err?.message || '').includes('مسبقاً')) {
-       toast({ title: 'لقد قيّمت هذا الطلب مسبقاً' });
+     if (String(err?.message || '').includes(tc('مسبقاً', 'already'))) {
+       toast({ title: tc('لقد قيّمت هذا الطلب مسبقاً', 'You have already rated this order') });
        setActiveReview(null);
      } else {
-       toast({ title: 'فشل إرسال التقييم', variant: 'destructive' });
+       toast({ title: tc('فشل إرسال التقييم', 'Failed to submit rating'), variant: 'destructive' });
      }
    }
  });
@@ -125,8 +162,7 @@ export default function MyOrders() {
   const { data: orders = [], isLoading, refetch } = useQuery<OrderDisplay[]>({
     queryKey: ["/api/orders/customer", customerPhone || customerId],
     enabled: !!(customerPhone || customerId),
-    refetchInterval: 30000,
-    staleTime: 20000,
+    refetchInterval: 15000,
     queryFn: async () => {
       const identifier = customerPhone || customerId;
       if (!identifier) return [];
@@ -162,7 +198,7 @@ export default function MyOrders() {
 
   return (
     <CustomerLayout showNav={true} showHeader={false}>
-      <div className="min-h-screen bg-gradient-to-br from-amber-50 via-primary/5 to-amber-100 overflow-hidden relative" data-testid="page-my-orders">
+      <div className="min-h-screen bg-background overflow-hidden relative" data-testid="page-my-orders">
         <div className="absolute inset-0 pointer-events-none">
           <div className="absolute top-20 left-20 w-40 h-40 bg-primary/20 rounded-full blur-3xl animate-pulse"></div>
           <div className="absolute bottom-32 right-16 w-32 h-32 bg-accent/15 rounded-full blur-2xl animate-pulse" style={{animationDelay: '1.5s'}}></div>
@@ -192,7 +228,7 @@ export default function MyOrders() {
             transition={{ duration: 0.5 }}
             className="text-center mb-8"
           >
-            <h1 className="text-4xl font-amiri font-bold bg-gradient-to-r from-amber-800 to-orange-700 bg-clip-text text-transparent mb-2">
+            <h1 className="text-4xl font-amiri font-bold text-foreground mb-2">
               {t("orders.title")}
             </h1>
             <p className="text-accent font-cairo">
@@ -200,8 +236,10 @@ export default function MyOrders() {
             </p>
           </motion.div>
 
+          {customerId && <MiniPushBanner customerId={customerId} t={t} />}
+
           {!isAuthenticated ? (
-            <Card className="p-8 bg-white/90 backdrop-blur-lg shadow-2xl border-2 border-primary/50 text-center">
+            <Card className="p-8 bg-card backdrop-blur-lg shadow-2xl border-2 border-primary/50 text-center">
               <Coffee className="h-16 w-16 text-accent mx-auto mb-4" />
               <h2 className="text-2xl font-amiri font-bold text-accent mb-3">
                 {t("orders.no_orders")}
@@ -211,7 +249,7 @@ export default function MyOrders() {
               </p>
               <Button
                 onClick={() => setLocation("/menu")}
-                className="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-cairo"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground font-cairo"
               >
                 {t("orders.browse_menu")}
               </Button>
@@ -225,7 +263,7 @@ export default function MyOrders() {
               </div>
             </div>
           ) : allOrders.length === 0 ? (
-            <Card className="p-8 bg-white/90 backdrop-blur-lg shadow-2xl border-2 border-primary/50 text-center">
+            <Card className="p-8 bg-card backdrop-blur-lg shadow-2xl border-2 border-primary/50 text-center">
               <Coffee className="h-16 w-16 text-accent mx-auto mb-4" />
               <h2 className="text-2xl font-amiri font-bold text-accent mb-3">
                 {t("orders.no_orders")}
@@ -235,7 +273,7 @@ export default function MyOrders() {
               </p>
               <Button
                 onClick={() => setLocation("/menu")}
-                className="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-cairo"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground font-cairo"
               >
                 {t("orders.browse_menu")}
               </Button>
@@ -250,7 +288,7 @@ export default function MyOrders() {
                   transition={{ delay: index * 0.1 }}
                 >
                   <div className="space-y-4">
-                    <Card className="p-6 bg-white/90 backdrop-blur-lg shadow-lg border-2 border-primary/50">
+                    <Card className="p-6 bg-card backdrop-blur-lg shadow-lg border-2 border-primary/50">
                       <div className="flex items-start justify-between mb-4">
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-2">
@@ -269,24 +307,10 @@ export default function MyOrders() {
                             })}
                           </p>
                         </div>
-                        <div className="text-left flex flex-col items-end gap-2">
+                        <div className="text-left">
                           <span className="text-2xl font-bold text-accent font-cairo">
                             {Number(order.totalAmount).toFixed(2)} <SarIcon />
                           </span>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={pdfLoadingOrders.has(order.id)}
-                            onClick={() => handleDownloadInvoice(order)}
-                            className="h-8 px-3 rounded-xl border-amber-400 text-amber-700 hover:bg-amber-50 font-cairo text-xs"
-                            data-testid={`button-download-invoice-${order.id}`}
-                          >
-                            {pdfLoadingOrders.has(order.id)
-                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              : <FileDown className="w-3.5 h-3.5 ml-1" />
-                            }
-                            فاتورة
-                          </Button>
                         </div>
                       </div>
 
@@ -306,10 +330,13 @@ export default function MyOrders() {
 
                     <OrderTracker order={order} />
 
-                    {order.status === 'ready' && (
+                    {order.status === 'ready' && (order.deliveryType === 'curbside' || order.deliveryType === 'car_pickup' || order.deliveryType === 'car-pickup' || order.carPickup) && (
                       <CarPickupForm order={order} customer={customer} />
                     )}
 
+                    {(order.status === 'ready' || order.status === 'completed') && (
+                      <ReceiptInvoice order={order} />
+                    )}
 
                     {order.status === 'completed' && !reviewedOrders.has(order.id) && activeReview !== order.id && (
                       <div className="flex justify-center">
@@ -317,7 +344,7 @@ export default function MyOrders() {
                           variant="outline"
                           size="sm"
                           onClick={() => { setActiveReview(order.id); setReviewRating(5); setReviewComment(''); }}
-                          className="border-amber-500/50 text-amber-600 hover:bg-amber-50 font-cairo"
+                          className="border-primary/50 text-primary hover:bg-primary/10 font-cairo"
                           data-testid={'btn-rate-order-' + order.id}
                         >
                           <Star className="w-4 h-4 ml-2 text-amber-400" />
@@ -329,19 +356,19 @@ export default function MyOrders() {
                     {order.status === 'completed' && reviewedOrders.has(order.id) && (
                       <div className="flex items-center justify-center gap-2 text-green-600 bg-green-50 rounded-lg p-2">
                         <CheckCircle className="w-4 h-4" />
-                        <span className="text-sm font-cairo">شكراً على تقييمك!</span>
+                        <span className="text-sm font-cairo">{tc("شكراً على تقييمك!", "Thank you for your rating!")}</span>
                       </div>
                     )}
 
                     {activeReview === order.id && (
-                      <Card className="p-4 bg-amber-50 border-amber-200">
-                        <p className="text-center text-accent font-cairo font-semibold mb-2">كيف كانت تجربتك؟</p>
+                      <Card className="p-4 bg-card border-border">
+                        <p className="text-center text-accent font-cairo font-semibold mb-2">{tc("كيف كانت تجربتك؟", "How was your experience?")}</p>
                         <StarRatingInput value={reviewRating} onChange={setReviewRating} />
                         <textarea
                           value={reviewComment}
                           onChange={e => setReviewComment(e.target.value)}
-                          placeholder="أضف تعليقك (اختياري)..."
-                          className="w-full mt-2 p-2 rounded-lg border border-amber-200 bg-white text-sm font-cairo resize-none focus:outline-none focus:border-amber-400"
+                          placeholder={tc("أضف تعليقك (اختياري)...", "Add your comment (optional)...")}
+                          className="w-full mt-2 p-2 rounded-lg border border-border bg-background text-sm font-cairo resize-none focus:outline-none focus:border-primary"
                           rows={3}
                           data-testid={'textarea-review-' + order.id}
                         />
@@ -349,12 +376,12 @@ export default function MyOrders() {
                           <Button
                             onClick={() => reviewMutation.mutate({ orderId: order.id, rating: reviewRating, comment: reviewComment })}
                             disabled={reviewMutation.isPending}
-                            className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-cairo"
+                            className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground font-cairo"
                             data-testid={'btn-submit-review-' + order.id}
                           >
-                            {reviewMutation.isPending ? '...' : 'إرسال التقييم'}
+                            {reviewMutation.isPending ? '...' : tc('إرسال التقييم', 'Submit Rating')}
                           </Button>
-                          <Button variant="outline" onClick={() => setActiveReview(null)} className="border-amber-300 text-amber-700 font-cairo">
+                          <Button variant="outline" onClick={() => setActiveReview(null)} className="border-border text-muted-foreground font-cairo">
                             إلغاء
                           </Button>
                         </div>

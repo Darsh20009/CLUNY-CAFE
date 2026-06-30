@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { PlanGate } from "@/components/plan-gate";
+import { useTranslate, tc } from "@/lib/useTranslate";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -148,18 +150,18 @@ const mockInvoices: SupplierInvoice[] = [
 ];
 
 const statusConfig: Record<string, { label: string; color: string }> = {
-  draft: { label: "مسودة", color: "bg-gray-500" },
-  sent: { label: "مرسل", color: "bg-blue-500" },
-  confirmed: { label: "مؤكد", color: "bg-green-500" },
-  received: { label: "تم الاستلام", color: "bg-emerald-600" },
-  cancelled: { label: "ملغي", color: "bg-red-500" },
-  pending: { label: "قيد الانتظار", color: "bg-background0" },
-  paid: { label: "مدفوع", color: "bg-green-500" },
-  overdue: { label: "متأخر", color: "bg-red-500" },
-  disputed: { label: "متنازع", color: "bg-background0" },
-  active: { label: "نشط", color: "bg-green-500" },
-  inactive: { label: "غير نشط", color: "bg-gray-500" },
-  blocked: { label: "محظور", color: "bg-red-500" },
+  draft: { label: tc("مسودة", "Draft"), color: "bg-gray-500" },
+  sent: { label: tc("مرسل", "Sent"), color: "bg-blue-500" },
+  confirmed: { label: tc("مؤكد", "Confirmed"), color: "bg-green-500" },
+  received: { label: tc("تم الاستلام", "Received"), color: "bg-emerald-600" },
+  cancelled: { label: tc("ملغي", "Cancelled"), color: "bg-red-500" },
+  pending: { label: tc("قيد الانتظار", "Pending"), color: "bg-primary" },
+  paid: { label: tc("مدفوع", "Paid"), color: "bg-green-500" },
+  overdue: { label: tc("متأخر", "Overdue"), color: "bg-red-500" },
+  disputed: { label: tc("متنازع", "Disputed"), color: "bg-primary" },
+  active: { label: tc("نشط", "Active"), color: "bg-green-500" },
+  inactive: { label: tc("غير نشط", "Inactive"), color: "bg-gray-500" },
+  blocked: { label: tc("محظور", "Blocked"), color: "bg-red-500" },
 };
 
 interface COGSItem {
@@ -183,6 +185,7 @@ interface COGSSummary {
 }
 
 function COGSReport() {
+  const tc = useTranslate();
   const { data, isLoading } = useQuery<{ items: COGSItem[]; summary: COGSSummary }>({
     queryKey: ["/api/analytics/cogs"],
   });
@@ -210,25 +213,25 @@ function COGSReport() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">متوسط هامش الربح</p>
+            <p className="text-sm text-muted-foreground">{tc("متوسط هامش الربح", "Avg. Profit Margin")}</p>
             <p className={`text-3xl font-bold ${getMarginColor(summary?.avgMargin || 0)}`}>{summary?.avgMargin || 0}%</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">منتجات هامش مرتفع (≥60%)</p>
+            <p className="text-sm text-muted-foreground">{tc("منتجات هامش مرتفع (≥60%)", "High Margin Products (≥60%)")}</p>
             <p className="text-3xl font-bold text-green-600">{summary?.highMargin || 0}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">منتجات هامش منخفض (&lt;30%)</p>
+            <p className="text-sm text-muted-foreground">{tc("منتجات هامش منخفض (<30%)", "Low Margin Products (<30%)")}</p>
             <p className="text-3xl font-bold text-red-600">{summary?.lowMargin || 0}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">منتجات محددة التكلفة</p>
+            <p className="text-sm text-muted-foreground">{tc("منتجات محددة التكلفة", "Products with Defined Cost")}</p>
             <p className="text-3xl font-bold text-blue-600">{summary?.itemsWithCOGS || 0} / {summary?.totalItems || 0}</p>
           </CardContent>
         </Card>
@@ -250,17 +253,17 @@ function COGSReport() {
             <Percent className="w-5 h-5 text-primary" />
             هوامش الربح لجميع المنتجات
           </CardTitle>
-          <CardDescription>مرتبة من الأعلى هامشاً إلى الأقل</CardDescription>
+          <CardDescription>{tc("مرتبة من الأعلى هامشاً إلى الأقل", "Sorted from highest to lowest margin")}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="text-right">المنتج</TableHead>
-                <TableHead className="text-center">سعر البيع</TableHead>
-                <TableHead className="text-center">تكلفة التصنيع (COGS)</TableHead>
-                <TableHead className="text-center">صافي الربح</TableHead>
-                <TableHead className="text-center">هامش الربح</TableHead>
+                <TableHead className="text-right">{tc("المنتج", "Product")}</TableHead>
+                <TableHead className="text-center">{tc("سعر البيع", "Selling Price")}</TableHead>
+                <TableHead className="text-center">{tc("تكلفة التصنيع (COGS)", "Manufacturing Cost (COGS)")}</TableHead>
+                <TableHead className="text-center">{tc("صافي الربح", "Net Profit")}</TableHead>
+                <TableHead className="text-center">{tc("هامش الربح", "Profit Margin")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -275,7 +278,7 @@ function COGSReport() {
                     {item.cogs > 0 ? (
                       <span>{item.cogs.toFixed(2)} <SarIcon /></span>
                     ) : (
-                      <span className="text-muted-foreground text-xs">غير محدد</span>
+                      <span className="text-muted-foreground text-xs">{tc("غير محدد", "Not Set")}</span>
                     )}
                   </TableCell>
                   <TableCell className="text-center font-mono">
@@ -334,7 +337,8 @@ export default function SupplierManagementPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 via-primary/5 to-yellow-50 dark:from-background dark:via-primary/5 dark:to-background" dir="rtl">
+    <PlanGate feature="supplierManagement">
+    <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-background">
       <div className="container mx-auto p-4 md:p-6 max-w-7xl">
         <div className="flex items-center justify-between gap-4 mb-6">
           <Button 
@@ -360,7 +364,7 @@ export default function SupplierManagementPage() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-blue-100 text-sm">الموردين النشطين</p>
+                  <p className="text-blue-100 text-sm">{tc("الموردين النشطين", "Active Suppliers")}</p>
                   <p className="text-3xl font-bold mt-1">{activeSuppliers}</p>
                 </div>
                 <Building2 className="w-12 h-12 text-blue-200" />
@@ -372,22 +376,22 @@ export default function SupplierManagementPage() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-green-100 text-sm">إجمالي المشتريات</p>
+                  <p className="text-green-100 text-sm">{tc("إجمالي المشتريات", "Total Purchases")}</p>
                   <p className="text-3xl font-bold mt-1">{(totalSpent / 1000).toFixed(0)}K</p>
-                  <p className="text-green-200 text-xs mt-1">ريال سعودي</p>
+                  <p className="text-green-200 text-xs mt-1"><SarIcon size={11} /></p>
                 </div>
                 <DollarSign className="w-12 h-12 text-green-200" />
               </div>
             </CardContent>
           </Card>
 
-          <Card className="bg-gradient-to-br from-amber-500 to-amber-600 text-white">
+          <Card className="bg-primary text-primary-foreground">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-accent text-sm">فواتير معلقة</p>
+                  <p className="text-accent text-sm">{tc("فواتير معلقة", "Pending Invoices")}</p>
                   <p className="text-3xl font-bold mt-1">{pendingInvoices.toLocaleString()}</p>
-                  <p className="text-accent text-xs mt-1">ريال سعودي</p>
+                  <p className="text-accent text-xs mt-1"><SarIcon size={11} /></p>
                 </div>
                 <Receipt className="w-12 h-12 text-accent" />
               </div>
@@ -646,7 +650,7 @@ export default function SupplierManagementPage() {
                     {suppliers.slice(0, 3).map((supplier, idx) => (
                       <div key={supplier.id} className="flex items-center gap-3">
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
-                          idx === 0 ? 'bg-background0 text-white' :
+                          idx === 0 ? 'bg-primary text-white' :
                           idx === 1 ? 'bg-gray-400 text-white' :
                           'bg-primary text-white'
                         }`}>
@@ -849,7 +853,7 @@ export default function SupplierManagementPage() {
                     <p className="font-medium">{selectedSupplier.totalOrders} طلب</p>
                   </div>
                   <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-sm text-muted-foreground">إجمالي المشتريات</p>
+                    <p className="text-sm text-muted-foreground">{tc("إجمالي المشتريات", "Total Purchases")}</p>
                     <p className="font-medium">{selectedSupplier.totalSpent.toLocaleString()} <SarIcon /></p>
                   </div>
                 </div>
@@ -871,5 +875,6 @@ export default function SupplierManagementPage() {
         </Dialog>
       </div>
     </div>
+    </PlanGate>
   );
 }

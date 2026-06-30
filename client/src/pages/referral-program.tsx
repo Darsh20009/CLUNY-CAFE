@@ -21,6 +21,7 @@ export default function ReferralProgram() {
     queryKey: ["/api/referrals"],
     queryFn: async () => {
       const res = await fetch("/api/referrals");
+      if (!res.ok) return null;
       return res.json();
     },
   });

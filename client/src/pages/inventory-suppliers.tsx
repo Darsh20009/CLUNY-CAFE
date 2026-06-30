@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { tc } from "@/lib/useTranslate";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -81,10 +82,10 @@ export default function InventorySuppliersPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/suppliers"] });
       setIsAddDialogOpen(false);
       resetForm();
-      toast({ title: "تم إضافة المورد بنجاح" });
+      toast({ title: tc("تم إضافة المورد بنجاح", "Supplier added successfully") });
     },
     onError: (error: any) => {
-      toast({ title: error.message || "فشل في إضافة المورد", variant: "destructive" });
+      toast({ title: error.message || tc("فشل في إضافة المورد", "Failed to add supplier"), variant: "destructive" });
     },
   });
 
@@ -96,10 +97,10 @@ export default function InventorySuppliersPage() {
       setIsEditDialogOpen(false);
       setSelectedSupplier(null);
       resetForm();
-      toast({ title: "تم تحديث المورد بنجاح" });
+      toast({ title: tc("تم تحديث المورد بنجاح", "Supplier updated successfully") });
     },
     onError: (error: any) => {
-      toast({ title: error.message || "فشل في تحديث المورد", variant: "destructive" });
+      toast({ title: error.message || tc("فشل في تحديث المورد", "Failed to update supplier"), variant: "destructive" });
     },
   });
 
@@ -107,10 +108,10 @@ export default function InventorySuppliersPage() {
     mutationFn: (id: string) => apiRequest("DELETE", `/api/inventory/suppliers/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/suppliers"] });
-      toast({ title: "تم حذف المورد بنجاح" });
+      toast({ title: tc("تم حذف المورد بنجاح", "Supplier deleted successfully") });
     },
     onError: (error: any) => {
-      toast({ title: error.message || "فشل في حذف المورد", variant: "destructive" });
+      toast({ title: error.message || tc("فشل في حذف المورد", "Failed to delete supplier"), variant: "destructive" });
     },
   });
 
@@ -149,7 +150,7 @@ export default function InventorySuppliersPage() {
   };
 
   const handleDelete = (id: string) => {
-    if (confirm("هل أنت متأكد من حذف هذا المورد؟")) {
+    if (confirm(tc("هل أنت متأكد من حذف هذا المورد؟", "Are you sure you want to delete this supplier?"))) {
       deleteMutation.mutate(id);
     }
   };
@@ -172,13 +173,13 @@ export default function InventorySuppliersPage() {
   }
 
   return (
-    <div className="p-6 space-y-6" dir="rtl">
+    <div className="min-h-screen bg-white text-gray-900 p-6 space-y-6">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Users className="h-8 w-8 text-primary" />
+          <Users className="h-8 w-8 text-green-600" />
           <div>
-            <h1 className="text-2xl font-bold">الموردين</h1>
-            <p className="text-muted-foreground text-sm">إدارة الموردين والشركات المتعاملة</p>
+            <h1 className="text-2xl font-bold">{tc("الموردين", "Suppliers")}</h1>
+            <p className="text-muted-foreground text-sm">{tc("إدارة الموردين والشركات المتعاملة", "Manage suppliers and partner companies")}</p>
           </div>
         </div>
         <Button onClick={() => setIsAddDialogOpen(true)} data-testid="button-add-supplier">
@@ -192,7 +193,7 @@ export default function InventorySuppliersPage() {
           <div className="relative max-w-md">
             <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="بحث بالاسم أو الكود أو رقم الهاتف..."
+              placeholder={tc("بحث بالاسم أو الكود أو رقم الهاتف...", "Search by name, code or phone...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pr-10"
@@ -205,12 +206,12 @@ export default function InventorySuppliersPage() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead className="text-right">الكود</TableHead>
-                  <TableHead className="text-right">الاسم</TableHead>
-                  <TableHead className="text-right">جهة الاتصال</TableHead>
-                  <TableHead className="text-right">الهاتف</TableHead>
-                  <TableHead className="text-right">المدينة</TableHead>
-                  <TableHead className="text-right">الإجراءات</TableHead>
+                  <TableHead className="text-right">{tc("الكود", "Code")}</TableHead>
+                  <TableHead className="text-right">{tc("الاسم", "Name")}</TableHead>
+                  <TableHead className="text-right">{tc("جهة الاتصال", "Contact")}</TableHead>
+                  <TableHead className="text-right">{tc("الهاتف", "Phone")}</TableHead>
+                  <TableHead className="text-right">{tc("المدينة", "City")}</TableHead>
+                  <TableHead className="text-right">{tc("الإجراءات", "Actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -270,14 +271,14 @@ export default function InventorySuppliersPage() {
       </Card>
 
       <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" dir="rtl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>إضافة مورد جديد</DialogTitle>
+            <DialogTitle>{tc("إضافة مورد جديد", "Add New Supplier")}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="code">الكود *</Label>
+                <Label htmlFor="code">{tc("الكود *", "Code *")}</Label>
                 <Input
                   id="code"
                   value={formData.code}
@@ -287,19 +288,19 @@ export default function InventorySuppliersPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="nameAr">الاسم بالعربي *</Label>
+                <Label htmlFor="nameAr">{tc("الاسم بالعربي *", "Arabic Name *")}</Label>
                 <Input
                   id="nameAr"
                   value={formData.nameAr}
                   onChange={(e) => setFormData({ ...formData, nameAr: e.target.value })}
-                  placeholder="شركة التوريد"
+                  placeholder={tc("شركة التوريد", "Supply Company")}
                   data-testid="input-name-ar"
                 />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="nameEn">الاسم بالإنجليزي</Label>
+                <Label htmlFor="nameEn">{tc("الاسم بالإنجليزي", "English Name")}</Label>
                 <Input
                   id="nameEn"
                   value={formData.nameEn}
@@ -309,19 +310,19 @@ export default function InventorySuppliersPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="contactPerson">جهة الاتصال</Label>
+                <Label htmlFor="contactPerson">{tc("جهة الاتصال", "Contact Person")}</Label>
                 <Input
                   id="contactPerson"
                   value={formData.contactPerson}
                   onChange={(e) => setFormData({ ...formData, contactPerson: e.target.value })}
-                  placeholder="اسم المسؤول"
+                  placeholder={tc("اسم المسؤول", "Manager name")}
                   data-testid="input-contact-person"
                 />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="phone">رقم الهاتف *</Label>
+                <Label htmlFor="phone">{tc("رقم الهاتف *", "Phone *")}</Label>
                 <Input
                   id="phone"
                   value={formData.phone}
@@ -331,7 +332,7 @@ export default function InventorySuppliersPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="email">البريد الإلكتروني</Label>
+                <Label htmlFor="email">{tc("البريد الإلكتروني", "Email")}</Label>
                 <Input
                   id="email"
                   type="email"
@@ -344,7 +345,7 @@ export default function InventorySuppliersPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="city">المدينة</Label>
+                <Label htmlFor="city">{tc("المدينة", "City")}</Label>
                 <Input
                   id="city"
                   value={formData.city}
@@ -354,7 +355,7 @@ export default function InventorySuppliersPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="taxNumber">الرقم الضريبي</Label>
+                <Label htmlFor="taxNumber">{tc("الرقم الضريبي", "Tax Number")}</Label>
                 <Input
                   id="taxNumber"
                   value={formData.taxNumber}
@@ -365,38 +366,38 @@ export default function InventorySuppliersPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="address">العنوان</Label>
+              <Label htmlFor="address">{tc("العنوان", "Address")}</Label>
               <Input
                 id="address"
                 value={formData.address}
                 onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                placeholder="العنوان الكامل"
+                placeholder={tc("العنوان الكامل", "Full address")}
                 data-testid="input-address"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="paymentTerms">شروط الدفع</Label>
+              <Label htmlFor="paymentTerms">{tc("شروط الدفع", "Payment Terms")}</Label>
               <Input
                 id="paymentTerms"
                 value={formData.paymentTerms}
                 onChange={(e) => setFormData({ ...formData, paymentTerms: e.target.value })}
-                placeholder="صافي 30 يوم"
+                placeholder={tc("صافي 30 يوم", "Net 30 days")}
                 data-testid="input-payment-terms"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="notes">ملاحظات</Label>
+              <Label htmlFor="notes">{tc("ملاحظات", "Notes")}</Label>
               <Textarea
                 id="notes"
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                placeholder="ملاحظات إضافية..."
+                placeholder={tc("ملاحظات إضافية...", "Additional notes...")}
                 data-testid="input-notes"
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>إلغاء</Button>
+            <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>{tc("إلغاء", "Cancel")}</Button>
             <Button
               onClick={() => createMutation.mutate(formData)}
               disabled={createMutation.isPending || !formData.code || !formData.nameAr || !formData.phone}
@@ -410,14 +411,14 @@ export default function InventorySuppliersPage() {
       </Dialog>
 
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" dir="rtl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>تعديل المورد</DialogTitle>
+            <DialogTitle>{tc("تعديل المورد", "Edit Supplier")}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-code">الكود *</Label>
+                <Label htmlFor="edit-code">{tc("الكود *", "Code *")}</Label>
                 <Input
                   id="edit-code"
                   value={formData.code}
@@ -426,7 +427,7 @@ export default function InventorySuppliersPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-nameAr">الاسم بالعربي *</Label>
+                <Label htmlFor="edit-nameAr">{tc("الاسم بالعربي *", "Arabic Name *")}</Label>
                 <Input
                   id="edit-nameAr"
                   value={formData.nameAr}
@@ -437,7 +438,7 @@ export default function InventorySuppliersPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-nameEn">الاسم بالإنجليزي</Label>
+                <Label htmlFor="edit-nameEn">{tc("الاسم بالإنجليزي", "English Name")}</Label>
                 <Input
                   id="edit-nameEn"
                   value={formData.nameEn}
@@ -446,7 +447,7 @@ export default function InventorySuppliersPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-contactPerson">جهة الاتصال</Label>
+                <Label htmlFor="edit-contactPerson">{tc("جهة الاتصال", "Contact Person")}</Label>
                 <Input
                   id="edit-contactPerson"
                   value={formData.contactPerson}
@@ -457,7 +458,7 @@ export default function InventorySuppliersPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-phone">رقم الهاتف *</Label>
+                <Label htmlFor="edit-phone">{tc("رقم الهاتف *", "Phone *")}</Label>
                 <Input
                   id="edit-phone"
                   value={formData.phone}
@@ -466,7 +467,7 @@ export default function InventorySuppliersPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-email">البريد الإلكتروني</Label>
+                <Label htmlFor="edit-email">{tc("البريد الإلكتروني", "Email")}</Label>
                 <Input
                   id="edit-email"
                   type="email"
@@ -478,7 +479,7 @@ export default function InventorySuppliersPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-city">المدينة</Label>
+                <Label htmlFor="edit-city">{tc("المدينة", "City")}</Label>
                 <Input
                   id="edit-city"
                   value={formData.city}
@@ -487,7 +488,7 @@ export default function InventorySuppliersPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-taxNumber">الرقم الضريبي</Label>
+                <Label htmlFor="edit-taxNumber">{tc("الرقم الضريبي", "Tax Number")}</Label>
                 <Input
                   id="edit-taxNumber"
                   value={formData.taxNumber}
@@ -497,7 +498,7 @@ export default function InventorySuppliersPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-address">العنوان</Label>
+              <Label htmlFor="edit-address">{tc("العنوان", "Address")}</Label>
               <Input
                 id="edit-address"
                 value={formData.address}
@@ -506,7 +507,7 @@ export default function InventorySuppliersPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-paymentTerms">شروط الدفع</Label>
+              <Label htmlFor="edit-paymentTerms">{tc("شروط الدفع", "Payment Terms")}</Label>
               <Input
                 id="edit-paymentTerms"
                 value={formData.paymentTerms}
@@ -515,7 +516,7 @@ export default function InventorySuppliersPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-notes">ملاحظات</Label>
+              <Label htmlFor="edit-notes">{tc("ملاحظات", "Notes")}</Label>
               <Textarea
                 id="edit-notes"
                 value={formData.notes}
@@ -525,7 +526,7 @@ export default function InventorySuppliersPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>إلغاء</Button>
+            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>{tc("إلغاء", "Cancel")}</Button>
             <Button
               onClick={() => selectedSupplier && updateMutation.mutate({ id: selectedSupplier.id, data: formData })}
               disabled={updateMutation.isPending || !formData.code || !formData.nameAr || !formData.phone}

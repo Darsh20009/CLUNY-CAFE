@@ -44,6 +44,7 @@ export function useOrderWebSocket({
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isConnectingRef = useRef(false);
   const isMountedRef = useRef(true);
+  const hasSubscribedRef = useRef(false); // ✅ prevent double-subscribe per connection
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WSMessage | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -86,18 +87,20 @@ export function useOrderWebSocket({
   }, []);
 
   const sendSubscribe = useCallback((ws: WebSocket) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify({
-          type: "subscribe",
-          clientType: clientTypeRef.current,
-          orderId: orderIdRef.current,
-          branchId: branchIdRef.current,
-          customerId: customIdRef.current,
-          userId: userIdRef.current || customIdRef.current,
-        })
-      );
-    }
+    // ✅ Only subscribe once per connection to prevent duplicate server-side subscriptions
+    if (hasSubscribedRef.current) return;
+    if (ws.readyState !== WebSocket.OPEN) return;
+    hasSubscribedRef.current = true;
+    ws.send(
+      JSON.stringify({
+        type: "subscribe",
+        clientType: clientTypeRef.current,
+        orderId: orderIdRef.current,
+        branchId: branchIdRef.current,
+        customerId: customIdRef.current,
+        userId: userIdRef.current || customIdRef.current,
+      })
+    );
   }, []);
 
   const sendMessage = useCallback((data: object) => {
@@ -113,6 +116,7 @@ export function useOrderWebSocket({
 
     clearTimers();
     isConnectingRef.current = true;
+    hasSubscribedRef.current = false; // ✅ reset subscribe flag on new connection
 
     if (wsRef.current) {
       try {
@@ -137,7 +141,6 @@ export function useOrderWebSocket({
           ws.close();
           return;
         }
-        console.log("[WS] Connected to orders WebSocket");
         isConnectingRef.current = false;
         setIsConnected(true);
         setError(null);
@@ -190,8 +193,7 @@ export function useOrderWebSocket({
               }
               break;
             case "order_updated":
-            case "orders_updated":
-              onOrderUpdatedRef.current?.(message.order || null);
+              onOrderUpdatedRef.current?.(message.order);
               break;
             case "order_ready":
               onOrderReadyRef.current?.(message.order);
@@ -209,7 +211,8 @@ export function useOrderWebSocket({
               onNotificationRef.current?.(message.notification);
               break;
             case "welcome":
-              sendSubscribe(ws);
+              // ✅ Don't re-subscribe on welcome — already handled in onopen
+              // Server sends welcome after we already subscribed, no need to subscribe again
               break;
           }
         } catch (error) {
@@ -218,15 +221,10 @@ export function useOrderWebSocket({
       };
 
       ws.onclose = (event) => {
-        console.log("[WS] Connection closed:", event.code, event.reason);
         isConnectingRef.current = false;
+        hasSubscribedRef.current = false; // ✅ allow subscribe on next connection
         setIsConnected(false);
         clearTimers();
-
-        // Intentional close (component unmount / explicit disconnect): do not reconnect
-        if (event.code === 1000 && (event.reason === "Disconnecting" || event.reason === "Reconnecting")) {
-          return;
-        }
 
         if (isMountedRef.current) {
           reconnectTimeoutRef.current = setTimeout(() => {
@@ -235,8 +233,7 @@ export function useOrderWebSocket({
         }
       };
 
-      ws.onerror = (error) => {
-        console.error("[WS] WebSocket error:", error);
+      ws.onerror = () => {
         setError("خطأ في الاتصال - جاري إعادة المحاولة");
         setIsConnected(false);
         isConnectingRef.current = false;
@@ -256,6 +253,7 @@ export function useOrderWebSocket({
   const disconnect = useCallback(() => {
     clearTimers();
     isConnectingRef.current = false;
+    hasSubscribedRef.current = false;
     if (wsRef.current) {
       try {
         if (wsRef.current.readyState !== WebSocket.CLOSED &&

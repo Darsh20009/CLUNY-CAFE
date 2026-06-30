@@ -1,23 +1,35 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { useTranslation } from "react-i18next";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
-import { Coffee, LogOut, ArrowLeft, ShoppingCart, ClipboardList, User, Award, ChefHat, Wallet, Warehouse, Eye, Calendar, FileText, BarChart3, Settings, Lock, Clock, Utensils } from "lucide-react";
+import {
+  Coffee, LogOut, ShoppingCart, ClipboardList, User, ChefHat,
+  Warehouse, Eye, Calendar, FileText, BarChart3, Lock, Utensils,
+  ChevronLeft, Car, Copy, Sparkles
+} from "lucide-react";
 import type { Employee } from "@shared/schema";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
+import { useTranslate } from "@/lib/useTranslate";
+import clunyLogo from "@assets/cluny-logo-customer.png";
 
 export default function EmployeeHome() {
   const [, setLocation] = useLocation();
   const [employee, setEmployee] = useState<Employee | null>(null);
-  const { t, i18n } = useTranslation();
-  const dir = i18n.language === 'ar' ? 'rtl' : 'ltr';
+  const tc = useTranslate();
+  const { toast } = useToast();
 
   useEffect(() => {
     const storedEmployee = localStorage.getItem("currentEmployee");
     if (storedEmployee) {
       const emp = JSON.parse(storedEmployee);
+      if (emp.role === "owner" || emp.role === "admin") {
+        window.location.href = "/admin/dashboard";
+        return;
+      }
+      if (emp.role === "manager") {
+        window.location.href = "/manager/dashboard";
+        return;
+      }
       setEmployee(emp);
     } else {
       window.location.href = "/employee/gateway";
@@ -29,226 +41,178 @@ export default function EmployeeHome() {
     setLocation("/employee/gateway");
   };
 
-  if (!employee) {
-    return null;
+  function copyDriveThroughLink() {
+    const link = `${window.location.origin}/drive-through`;
+    navigator.clipboard.writeText(link).then(() => {
+      toast({ title: tc("✅ تم نسخ رابط Drive-Through", "✅ Drive-Through link copied") });
+    });
   }
+
+  if (!employee) return null;
 
   const isManager = employee.role === "manager" || employee.role === "admin";
 
   const employeeQuickAccess = [
-    {
-      title: t('home.pos'),
-      description: t('home.pos_desc'),
-      icon: ShoppingCart,
-      path: "/employee/pos",
-      color: "from-green-500 to-green-600",
-      testId: "button-pos"
-    },
-    {
-      title: t('home.orders'),
-      description: t('home.orders_desc'),
-      icon: ClipboardList,
-      path: "/employee/orders",
-      color: "from-blue-500 to-blue-600",
-      testId: "button-orders"
-    },
-    {
-      title: t('home.attendance'),
-      description: t('home.attendance_desc'),
-      icon: Calendar,
-      path: "/employee/attendance",
-      color: "from-purple-500 to-purple-600",
-      testId: "button-attendance"
-    },
-    {
-      title: t('home.leave'),
-      description: t('home.leave_desc'),
-      icon: FileText,
-      path: "/employee/leave-request",
-      color: "from-orange-500 to-orange-600",
-      testId: "button-leave"
-    },
-    {
-      title: t('home.kitchen'),
-      description: t('home.kitchen_desc'),
-      icon: ChefHat,
-      path: "/employee/kitchen",
-      color: "from-red-500 to-red-600",
-      testId: "button-kitchen"
-    },
-    {
-      title: t('home.hr'),
-      description: t('home.hr_desc'),
-      icon: User,
-      path: "/employee/dashboard",
-      color: "from-indigo-500 to-indigo-600",
-      testId: "button-hr"
-    }
+    { title: tc("المساعد الذكي", "AI Assistant"), icon: Sparkles, path: "/employee/ai", testId: "button-brand-ai", highlight: true },
+    { title: tc("نقطة البيع", "Point of Sale"), icon: ShoppingCart, path: "/employee/pos", testId: "button-pos" },
+    { title: tc("الطلبات", "Orders"), icon: ClipboardList, path: "/employee/orders", testId: "button-orders" },
+    { title: tc("الحضور", "Attendance"), icon: Calendar, path: "/employee/attendance", testId: "button-attendance" },
+    { title: tc("طلب إجازة", "Leave Request"), icon: FileText, path: "/employee/leave-request", testId: "button-leave" },
+    { title: tc("المطبخ", "Kitchen"), icon: ChefHat, path: "/employee/kitchen", testId: "button-kitchen" },
+    { title: tc("ملفي الشخصي", "My Profile"), icon: User, path: "/employee/dashboard", testId: "button-hr" },
+    { title: tc("📖 دليل النظام", "📖 System Guide"), icon: FileText, path: "/guide", testId: "button-guide" },
   ];
 
   const managerAccess = [
-    {
-      title: t('home.drinks_mgmt'),
-      description: t('home.drinks_mgmt_desc'),
-      icon: Coffee,
-      path: "/employee/menu-management",
-      color: "from-amber-500 to-amber-600",
-      testId: "button-menu-mgmt"
-    },
-    {
-      title: t('home.food_mgmt'),
-      description: t('home.food_mgmt_desc'),
-      icon: Utensils,
-      path: "/employee/menu-management?type=food",
-      color: "from-orange-500 to-orange-600",
-      testId: "button-food-mgmt"
-    },
-    {
-      title: t('home.ingredients'),
-      description: t('home.ingredients_desc'),
-      icon: Warehouse,
-      path: "/employee/ingredients",
-      color: "from-cyan-500 to-cyan-600",
-      testId: "button-ingredients-mgmt"
-    },
-    {
-      title: t('home.dashboard'),
-      description: t('home.dashboard_desc'),
-      icon: BarChart3,
-      path: "/employee/dashboard",
-      color: "from-teal-500 to-teal-600",
-      testId: "button-dashboard"
-    },
-    {
-      title: t('home.employees'),
-      description: t('home.employees_desc'),
-      icon: Lock,
-      path: "/manager/employees",
-      color: "from-pink-500 to-pink-600",
-      testId: "button-employees"
-    },
-    {
-      title: t('home.tables_res'),
-      description: t('home.tables_res_desc'),
-      icon: Eye,
-      path: "/employee/tables",
-      color: "from-lime-500 to-lime-600",
-      testId: "button-tables"
-    }
+    { title: tc("إدارة المشروبات", "Drinks Menu"), icon: Coffee, path: "/employee/menu-management", testId: "button-menu-mgmt" },
+    { title: tc("إدارة الطعام", "Food Menu"), icon: Utensils, path: "/employee/menu-management?type=food", testId: "button-food-mgmt" },
+    { title: tc("المواد الخام", "Ingredients"), icon: Warehouse, path: "/employee/ingredients", testId: "button-ingredients-mgmt" },
+    { title: tc("لوحة التحكم", "Dashboard"), icon: BarChart3, path: "/employee/dashboard", testId: "button-dashboard" },
+    { title: tc("إدارة الموظفين", "Employees"), icon: Lock, path: "/manager/employees", testId: "button-employees" },
+    { title: tc("الطاولات", "Tables"), icon: Eye, path: "/employee/tables", testId: "button-tables" },
   ];
 
-  return (
-    <div className="min-h-screen pb-16 sm:pb-0 bg-gradient-to-br from-background via-primary/5 to-background" dir={dir}>
-      <div className="bg-gradient-to-r from-primary/10 to-primary/5 border-b border-primary/20">
-        <div className="max-w-7xl mx-auto px-4 py-8">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 sm:w-16 sm:h-16 bg-gradient-to-br from-amber-500 to-amber-700 rounded-full flex items-center justify-center flex-shrink-0">
-                <Coffee className="w-5 h-5 sm:w-8 sm:h-8 text-white" />
-              </div>
-              <div>
-                <h1 className="text-xl sm:text-3xl font-bold text-accent">{t('home.control_panel')}</h1>
-                <p className="text-gray-400 text-sm">{t('home.welcome', { name: employee.fullName })}</p>
-              </div>
-            </div>
-            <Button 
-              variant="outline" 
-              className="border-red-500/30 text-red-400 hover:bg-red-500/10"
-              onClick={handleLogout}
-              data-testid="button-logout"
-            >
-              <LogOut className="w-4 h-4 sm:ml-2" />
-              <span className="hidden sm:inline">{t('home.logout')}</span>
-            </Button>
-          </div>
+  const initials = (employee.fullName || "?").split(" ").map((w: string) => w[0]).slice(0, 2).join("");
 
-          <div className="grid md:grid-cols-3 gap-4">
-            <Card className="bg-[#2d1f1a] border-primary/20">
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-gray-400 text-sm">{t('home.job_title')}</p>
-                    <p className="text-white font-bold text-lg">{employee.jobTitle || employee.role}</p>
-                  </div>
-                  <Badge className="bg-primary/20 text-primary">
-                    {employee.role === "manager" ? t('home.manager_label') : t('home.employee_label')}
-                  </Badge>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="bg-[#2d1f1a] border-primary/20">
-              <CardContent className="pt-6">
-                <div>
-                  <p className="text-gray-400 text-sm">{t('home.branch')}</p>
-                  <p className="text-white font-bold text-lg">{employee.branchId || t('home.all_branches')}</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="bg-[#2d1f1a] border-primary/20">
-              <CardContent className="pt-6">
-                <div>
-                  <p className="text-gray-400 text-sm">{t('home.employee_number')}</p>
-                  <p className="text-white font-bold text-lg">{employee.id?.slice(0, 8)}</p>
-                </div>
-              </CardContent>
-            </Card>
+  return (
+    <div className="min-h-screen bg-background pb-nav">
+
+      {/* Header */}
+      <div className="bg-card border-b border-border px-4 py-4">
+        <div className="max-w-2xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <img src={clunyLogo} alt="CLUNY" className="w-9 h-9 object-contain rounded-lg" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+            <div>
+              <p className="text-xs text-muted-foreground leading-none mb-0.5">CLUNY CAFE</p>
+              <h1 className="text-sm font-bold text-foreground leading-none">{tc("بوابة الموظفين", "Employee Portal")}</h1>
+            </div>
           </div>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive transition-colors py-1.5 px-3 rounded-lg hover:bg-destructive/10"
+            data-testid="button-logout"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            {tc("خروج", "Sign Out")}
+          </button>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-12">
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold text-accent mb-6">{t('home.quick_access')}</h2>
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="max-w-2xl mx-auto px-4 py-5 space-y-6">
+
+        {/* Employee Card */}
+        <div className="bg-card border border-border rounded-2xl p-4 flex items-center gap-4">
+          <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+            <span className="text-primary font-black text-base">{initials}</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="font-bold text-foreground text-base truncate">{employee.fullName}</h2>
+            <p className="text-muted-foreground text-xs mt-0.5">{employee.jobTitle || employee.role}</p>
+          </div>
+          <Badge variant="outline" className="text-xs border-primary/30 text-primary shrink-0">
+            {tc("موظف", "Employee")}
+          </Badge>
+        </div>
+
+        {/* Quick Access */}
+        <div className="space-y-3">
+          <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">
+            {tc("الخدمات", "Services")}
+          </h2>
+          <div className="bg-card border border-border rounded-2xl overflow-hidden divide-y divide-border">
             {employeeQuickAccess.map((item) => {
               const Icon = item.icon;
               return (
-                <Button
+                <button
                   key={item.path}
                   onClick={() => setLocation(item.path)}
-                  className={`bg-gradient-to-br ${item.color} hover:opacity-90 h-auto p-6 text-left justify-start rounded-xl`}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-muted/50 transition-colors text-right group"
                   data-testid={item.testId}
                 >
-                  <div className="text-left w-full">
-                    <div className="flex items-center gap-3 mb-2">
-                      <Icon className="w-5 h-5" />
-                      <span className="font-bold text-base">{item.title}</span>
-                    </div>
-                    <p className="text-white/80 text-xs ml-8">{item.description}</p>
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Icon className="w-4 h-4 text-primary" />
                   </div>
-                </Button>
+                  <span className="flex-1 text-sm font-medium text-foreground">{item.title}</span>
+                  <ChevronLeft className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
+                </button>
               );
             })}
           </div>
         </div>
 
+        {/* Manager Access */}
         {isManager && (
-          <div>
-            <h2 className="text-2xl font-bold text-accent mb-6">{t('home.manager_permissions')}</h2>
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="space-y-3">
+            <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">
+              {tc("إدارة", "Management")}
+            </h2>
+            <div className="bg-card border border-border rounded-2xl overflow-hidden divide-y divide-border">
               {managerAccess.map((item) => {
                 const Icon = item.icon;
                 return (
-                  <Button
+                  <button
                     key={item.path}
                     onClick={() => setLocation(item.path)}
-                    className={`bg-gradient-to-br ${item.color} hover:opacity-90 h-auto p-6 text-left justify-start rounded-xl`}
+                    className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-muted/50 transition-colors text-right group"
                     data-testid={item.testId}
                   >
-                    <div className="text-left w-full">
-                      <div className="flex items-center gap-3 mb-2">
-                        <Icon className="w-5 h-5" />
-                        <span className="font-bold text-base">{item.title}</span>
-                      </div>
-                      <p className="text-white/80 text-xs ml-8">{item.description}</p>
+                    <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
+                      <Icon className="w-4 h-4 text-muted-foreground" />
                     </div>
-                  </Button>
+                    <span className="flex-1 text-sm font-medium text-foreground">{item.title}</span>
+                    <ChevronLeft className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
+                  </button>
                 );
               })}
             </div>
           </div>
         )}
+
+        {/* Drive-Through Link */}
+        <div className="space-y-3">
+          <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">
+            {tc("🚗 Drive-Through", "🚗 Drive-Through")}
+          </h2>
+          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-2xl p-4">
+            <div className="flex items-start gap-3 mb-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500 flex items-center justify-center flex-shrink-0">
+                <Car className="w-5 h-5 text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-amber-900 dark:text-amber-300">
+                  {tc("منيو السيارات", "Car Order Menu")}
+                </p>
+                <p className="text-xs text-amber-700 dark:text-amber-500 mt-0.5">
+                  {tc("شارك هذا الرابط مع عملاء السيارات", "Share this link with drive-through customers")}
+                </p>
+              </div>
+            </div>
+            <div className="bg-white dark:bg-black/30 rounded-xl px-3 py-2 text-xs font-mono text-amber-700 dark:text-amber-400 mb-3 break-all">
+              {window.location.origin}/drive-through
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={copyDriveThroughLink}
+                className="flex-1 flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium py-2.5 rounded-xl transition-colors"
+                data-testid="button-copy-drive-through"
+              >
+                <Copy className="w-4 h-4" />
+                {tc("نسخ الرابط", "Copy Link")}
+              </button>
+              <button
+                onClick={() => window.open("/drive-through", "_blank")}
+                className="flex-1 flex items-center justify-center gap-2 bg-white dark:bg-white/10 hover:bg-amber-50 dark:hover:bg-white/20 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-700/40 text-sm font-medium py-2.5 rounded-xl transition-colors"
+                data-testid="button-open-drive-through"
+              >
+                <Car className="w-4 h-4" />
+                {tc("فتح المنيو", "Open Menu")}
+              </button>
+            </div>
+          </div>
+        </div>
+
       </div>
+
       <MobileBottomNav employeeRole={employee?.role} onLogout={handleLogout} />
     </div>
   );

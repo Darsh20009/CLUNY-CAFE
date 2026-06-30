@@ -4,7 +4,6 @@
  * Daily snapshots, profit analysis, waste tracking
  */
 
-import { getSaudiDayBounds } from "./utils/timezone";
 import {
   OrderModel,
   StockMovementModel,
@@ -38,9 +37,12 @@ export class AccountingEngine {
     wastePercentage: number;
   }> {
     const snapshotDate = date || new Date();
-    const { start: startOfDay, end: endOfDay } = getSaudiDayBounds(snapshotDate);
+    const startOfDay = new Date(snapshotDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(snapshotDate);
+    endOfDay.setHours(23, 59, 59, 999);
 
-    // Get all orders for today (Saudi timezone)
+    // Get all orders for today
     const orders = await OrderModel.find({
       branchId,
       createdAt: { $gte: startOfDay, $lte: endOfDay },
@@ -388,8 +390,11 @@ export class AccountingEngine {
     try {
       const snapshotDate = date || new Date();
       const snapshot = await this.getDailySnapshot(branchId, snapshotDate);
-      const { start: dayStart, end: dayEnd } = getSaudiDayBounds(snapshotDate);
-      const reports = await this.getProfitPerDrink(branchId, dayStart, dayEnd);
+      const reports = await this.getProfitPerDrink(
+        branchId,
+        new Date(snapshotDate.setHours(0, 0, 0, 0)),
+        new Date(snapshotDate.setHours(23, 59, 59, 999))
+      );
 
       // Get top products
       const topProducts = reports

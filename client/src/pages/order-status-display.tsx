@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useTranslate, tc } from "@/lib/useTranslate";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LoadingState } from "@/components/ui/states";
-import { useOrderWebSocket } from "@/lib/websocket";
+import { useRealtimeEvent, useRealtimeStatus } from "@/hooks/useRealtimeEngine";
 import { 
   Coffee, 
   CheckCircle2, 
@@ -41,18 +42,19 @@ const getOrderTypeDisplay = (order: Order) => {
   const type = order.deliveryType || order.orderType;
   
   if (type === 'dine-in' || type === 'dine_in') {
-    return { label: "محلي", icon: Store, color: "bg-green-500/20 text-green-400 border-green-500/50" };
+    return { label: tc("محلي", "Dine-In"), icon: Store, color: "bg-green-500/20 text-green-400 border-green-500/50" };
   }
   if (type === 'pickup' || type === 'takeaway') {
-    return { label: "سفري", icon: MapPin, color: "bg-background0/20 text-accent border-amber-500/50" };
+    return { label: tc("سفري", "Takeaway"), icon: MapPin, color: "bg-primary/20 text-accent border-primary/50" };
   }
   if (type === 'delivery') {
-    return { label: "توصيل", icon: Truck, color: "bg-blue-500/20 text-blue-400 border-blue-500/50" };
+    return { label: tc("توصيل", "Delivery"), icon: Truck, color: "bg-blue-500/20 text-blue-400 border-blue-500/50" };
   }
-  return { label: "طلب", icon: Coffee, color: "bg-muted text-muted-foreground border-border" };
+  return { label: tc("طلب", "Order"), icon: Coffee, color: "bg-muted text-muted-foreground border-border" };
 };
 
 function OrderCard({ order, isReady, isFullscreen }: { order: Order; isReady: boolean; isFullscreen: boolean }) {
+  const tc = useTranslate();
   const orderType = getOrderTypeDisplay(order);
   const OrderIcon = orderType.icon;
   const lastThree = getLastThreeDigits(order.orderNumber);
@@ -62,7 +64,7 @@ function OrderCard({ order, isReady, isFullscreen }: { order: Order; isReady: bo
       className={`relative overflow-visible transition-all duration-500 ${
         isReady 
           ? "border-green-500 bg-green-500/10 shadow-lg shadow-green-500/20" 
-          : "border-amber-500/30 bg-background0/5"
+          : "border-primary/30 bg-primary/5"
       } ${isReady ? "animate-pulse" : ""}`}
       data-testid={`order-card-${order.id}`}
     >
@@ -120,8 +122,7 @@ export default function OrderStatusDisplayPage() {
       const data = await res.json();
       return Array.isArray(data) ? data : [];
     },
-    refetchInterval: 30000,
-    staleTime: 15000,
+    refetchInterval: 15000,
   });
 
   const handleOrderUpdated = useCallback(() => {
@@ -133,12 +134,9 @@ export default function OrderStatusDisplayPage() {
     // Sound alert removed as requested by user
   };
 
-  const { isConnected } = useOrderWebSocket({
-    clientType: "display",
-    onOrderUpdated: handleOrderUpdated,
-    onOrderReady: handleOrderReady,
-    enabled: true,
-  });
+  const { connected: isConnected } = useRealtimeStatus();
+  useRealtimeEvent("order_updated", handleOrderUpdated);
+  useRealtimeEvent("order_ready",   handleOrderReady);
 
   const orders = ordersData || [];
   const inProgressOrders = orders.filter(o => o.status === "in_progress" || o.status === "preparing");
@@ -181,14 +179,14 @@ export default function OrderStatusDisplayPage() {
 
   if (isLoading) {
     return (
-      <div dir="rtl" className="min-h-screen bg-background flex items-center justify-center">
-        <LoadingState message="جاري تحميل الطلبات..." />
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <LoadingState message={tc("جاري تحميل الطلبات...", "Loading orders...")} />
       </div>
     );
   }
 
   return (
-    <div dir="rtl" className={`min-h-screen bg-background ${isFullscreen ? 'p-8' : 'p-6'}`}>
+    <div className={`min-h-screen bg-background ${isFullscreen ? 'p-8' : 'p-6'}`}>
       <div className={`mx-auto ${isFullscreen ? 'max-w-none' : 'max-w-7xl'}`}>
         <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
           <div className="flex items-center gap-4">
@@ -212,7 +210,7 @@ export default function OrderStatusDisplayPage() {
               data-testid="badge-ws-status"
             >
               {isConnected ? <Wifi className="h-3 w-3 ml-1" /> : <WifiOff className="h-3 w-3 ml-1" />}
-              {isConnected ? "متصل" : "غير متصل"}
+              {isConnected ? tc("متصل", "Connected") : tc("غير متصل", "Disconnected")}
             </Badge>
 
             <div className={`font-mono text-foreground ${isFullscreen ? 'text-4xl' : 'text-2xl'}`}>
@@ -244,7 +242,7 @@ export default function OrderStatusDisplayPage() {
         <div className={`grid grid-cols-1 ${isFullscreen ? 'lg:grid-cols-2 gap-12' : 'lg:grid-cols-2 gap-8'}`}>
           <div>
             <div className="flex items-center gap-3 mb-6">
-              <div className={`bg-background0/20 rounded-full flex items-center justify-center ${isFullscreen ? 'w-14 h-14' : 'w-10 h-10'}`}>
+              <div className={`bg-primary/20 rounded-full flex items-center justify-center ${isFullscreen ? 'w-14 h-14' : 'w-10 h-10'}`}>
                 <Clock className={`text-accent ${isFullscreen ? 'h-7 w-7' : 'h-5 w-5'}`} />
               </div>
               <div>
@@ -261,7 +259,7 @@ export default function OrderStatusDisplayPage() {
               {inProgressOrders.length === 0 ? (
                 <div className="col-span-full text-center py-12 text-muted-foreground">
                   <Loader2 className={`mx-auto mb-4 opacity-30 ${isFullscreen ? 'h-16 w-16' : 'h-12 w-12'}`} />
-                  <p className={isFullscreen ? 'text-xl' : ''}>لا توجد طلبات قيد التحضير</p>
+                  <p className={isFullscreen ? 'text-xl' : ''}>{tc("لا توجد طلبات قيد التحضير", "No orders in preparation")}</p>
                 </div>
               ) : (
                 inProgressOrders.map(order => (
@@ -290,7 +288,7 @@ export default function OrderStatusDisplayPage() {
               {readyOrders.length === 0 ? (
                 <div className="col-span-full text-center py-12 text-muted-foreground">
                   <CheckCircle2 className={`mx-auto mb-4 opacity-30 ${isFullscreen ? 'h-16 w-16' : 'h-12 w-12'}`} />
-                  <p className={isFullscreen ? 'text-xl' : ''}>لا توجد طلبات جاهزة</p>
+                  <p className={isFullscreen ? 'text-xl' : ''}>{tc("لا توجد طلبات جاهزة", "No ready orders")}</p>
                 </div>
               ) : (
                 readyOrders.map(order => (

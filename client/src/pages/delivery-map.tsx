@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useLocation } from 'wouter';
-import { MapContainer, TileLayer, Marker, Polygon, useMapEvents } from 'react-leaflet';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,19 +7,9 @@ import { Label } from '@/components/ui/label';
 import { useCartStore } from '@/lib/cart-store';
 import { useToast } from '@/hooks/use-toast';
 import { MapPin, Navigation, Check } from 'lucide-react';
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
+import { useTranslate } from '@/lib/useTranslate';
+import AppleMap from '@/components/apple-map';
 
-// Fix for default marker icon
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-});
-
-// Free delivery zones (Al-Suwaidi, Al-Badia, Dahrat Al-Badia)
-// More accurate coordinates for these neighborhoods in Riyadh
 const FREE_DELIVERY_ZONES = [
   {
     name: 'السويدي',
@@ -54,26 +43,7 @@ const FREE_DELIVERY_ZONES = [
   },
 ];
 
-// Riyadh center coordinates
 const RIYADH_CENTER = { lat: 24.7136, lng: 46.6753 };
-
-interface LocationMarkerProps {
-  position: { lat: number; lng: number };
-  setPosition: (pos: { lat: number; lng: number }) => void;
-}
-
-function LocationMarker({ position, setPosition }: LocationMarkerProps) {
-  useMapEvents({
-    click(e) {
-      setPosition({
-        lat: e.latlng.lat,
-        lng: e.latlng.lng,
-      });
-    },
-  });
-
-  return position ? <Marker position={[position.lat, position.lng]} /> : null;
-}
 
 function isPointInPolygon(point: { lat: number; lng: number }, polygon: { lat: number; lng: number }[]) {
   let inside = false;
@@ -91,24 +61,23 @@ export default function DeliveryMapPage() {
   const [, setLocation] = useLocation();
   const { setDeliveryInfo, cartItems } = useCartStore();
   const { toast } = useToast();
-  
+  const tc = useTranslate();
+
   const [position, setPosition] = useState<{ lat: number; lng: number }>(RIYADH_CENTER);
   const [fullAddress, setFullAddress] = useState('');
   const [isInFreeZone, setIsInFreeZone] = useState(false);
   const [zoneName, setZoneName] = useState('');
 
-  // Validate cart on mount
   if (!cartItems || cartItems.length === 0) {
     toast({
-      title: 'السلة فارغة',
-      description: 'الرجاء إضافة منتجات إلى السلة أولاً',
+      title: tc('السلة فارغة', 'Cart is Empty'),
+      description: tc('الرجاء إضافة منتجات إلى السلة أولاً', 'Please add products to your cart first'),
       variant: 'destructive',
     });
     setLocation('/menu');
   }
 
   useEffect(() => {
-    // Check if position is in any free delivery zone
     for (const zone of FREE_DELIVERY_ZONES) {
       if (isPointInPolygon(position, zone.coordinates)) {
         setIsInFreeZone(true);
@@ -124,15 +93,12 @@ export default function DeliveryMapPage() {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          setPosition({
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-          });
+          setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         },
-        (error) => {
+        () => {
           toast({
-            title: 'خطأ في تحديد الموقع',
-            description: 'لم نتمكن من الوصول إلى موقعك الحالي',
+            title: tc('خطأ في تحديد الموقع', 'Location Error'),
+            description: tc('لم نتمكن من الوصول إلى موقعك الحالي', 'Could not access your current location'),
             variant: 'destructive',
           });
         }
@@ -143,8 +109,8 @@ export default function DeliveryMapPage() {
   const handleConfirm = () => {
     if (!fullAddress.trim()) {
       toast({
-        title: 'تنبيه',
-        description: 'الرجاء إدخال عنوان التوصيل',
+        title: tc('تنبيه', 'Notice'),
+        description: tc('الرجاء إدخال عنوان التوصيل', 'Please enter a delivery address'),
         variant: 'destructive',
       });
       return;
@@ -158,7 +124,7 @@ export default function DeliveryMapPage() {
         fullAddress,
         lat: position.lat,
         lng: position.lng,
-        zone: zoneName || 'الرياض',
+        zone: zoneName || tc('الرياض', 'Riyadh'),
       },
       deliveryFee,
     });
@@ -170,46 +136,35 @@ export default function DeliveryMapPage() {
     <div className="min-h-screen bg-background">
       <div className="container mx-auto max-w-4xl px-4 py-6">
         <div className="mb-6">
-          <h1 className="text-2xl font-bold mb-2" dir="rtl">حدد موقع التوصيل</h1>
-          <p className="text-muted-foreground" dir="rtl">
-            اضغط على الخريطة لتحديد موقعك
+          <h1 className="text-2xl font-bold mb-2">{tc("حدد موقع التوصيل", "Set Delivery Location")}</h1>
+          <p className="text-muted-foreground">
+            {tc("اضغط على الخريطة لتحديد موقعك", "Tap on the map to set your location")}
           </p>
         </div>
 
-        {/* Map */}
-        <Card className="mb-6">
+        {/* Apple Maps picker */}
+        <Card className="mb-4">
           <CardContent className="p-0">
-            <div className="h-[400px] sm:h-[500px] rounded-md overflow-hidden">
-              <MapContainer
-                center={[RIYADH_CENTER.lat, RIYADH_CENTER.lng]}
-                zoom={12}
-                style={{ height: '100%', width: '100%' }}
-              >
-                <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                />
-                
-                {/* Free delivery zones */}
-                {FREE_DELIVERY_ZONES.map((zone, idx) => (
-                  <Polygon
-                    key={idx}
-                    positions={zone.coordinates.map(c => [c.lat, c.lng])}
-                    pathOptions={{
-                      color: '#22c55e',
-                      fillColor: '#22c55e',
-                      fillOpacity: 0.2,
-                    }}
-                  />
-                ))}
-
-                <LocationMarker position={position} setPosition={setPosition} />
-              </MapContainer>
-            </div>
+            <AppleMap
+              mode="pick"
+              center={{ lat: position.lat, lng: position.lng, label: tc("موقع التوصيل", "Delivery Location") }}
+              height="400px"
+              className="rounded-md"
+              onLocationPick={(lat, lng) => setPosition({ lat, lng })}
+            />
           </CardContent>
         </Card>
 
-        {/* Current Location Button */}
+        {/* Free zone indicators */}
+        <div className="grid grid-cols-3 gap-2 mb-4 text-center text-xs">
+          {FREE_DELIVERY_ZONES.map((z) => (
+            <div key={z.name} className="flex items-center gap-1 bg-primary/10 text-primary px-2 py-1.5 rounded-lg justify-center">
+              <div className="w-2.5 h-2.5 rounded-full bg-primary/60" />
+              {z.name}
+            </div>
+          ))}
+        </div>
+
         <Button
           onClick={getCurrentLocation}
           variant="outline"
@@ -217,39 +172,35 @@ export default function DeliveryMapPage() {
           data-testid="button-current-location"
         >
           <Navigation className="w-4 h-4 ml-2" />
-          <span dir="rtl">استخدم موقعي الحالي</span>
+          <span>{tc("استخدم موقعي الحالي", "Use My Current Location")}</span>
         </Button>
 
-        {/* Delivery Info */}
         <Card className="mb-6">
           <CardContent className="p-5">
             <div className="space-y-5">
-              {/* Address Input */}
               <div>
-                <Label htmlFor="address" className="mb-3 block text-base font-semibold" dir="rtl">
-                  عنوان التوصيل
+                <Label htmlFor="address" className="mb-3 block text-base font-semibold">
+                  {tc("عنوان التوصيل", "Delivery Address")}
                 </Label>
                 <Input
                   id="address"
-                  placeholder="مثال: شارع الأمير محمد بن عبدالعزيز، البديعة"
+                  placeholder={tc("مثال: شارع الأمير محمد بن عبدالعزيز، البديعة", "e.g. Prince Mohammed bin Abdulaziz Street, Al-Badia")}
                   value={fullAddress}
                   onChange={(e) => setFullAddress(e.target.value)}
-                  dir="rtl"
                   className="text-base"
                   data-testid="input-address"
                 />
               </div>
 
-              {/* Zone Info */}
               <div className={`p-4 rounded-md ${isInFreeZone ? 'bg-green-50 dark:bg-green-950' : 'bg-yellow-50 dark:bg-yellow-950'}`}>
-                <div className="flex items-start gap-3" dir="rtl">
+                <div className="flex items-start gap-3">
                   <MapPin className={`w-6 h-6 mt-0.5 flex-shrink-0 ${isInFreeZone ? 'text-green-600' : 'text-yellow-600'}`} />
                   <div className="flex-1 min-w-0">
                     <p className={`font-semibold mb-1 ${isInFreeZone ? 'text-green-700 dark:text-green-300' : 'text-yellow-700 dark:text-yellow-300'}`}>
-                      {isInFreeZone ? 'منطقة توصيل مجاني ' : 'رسوم التوصيل: 10 ريال'}
+                      {isInFreeZone ? tc('منطقة توصيل مجاني', 'Free Delivery Zone') : tc('رسوم التوصيل: 10 ريال', 'Delivery Fee: 10 SAR')}
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      {isInFreeZone ? `الحي: ${zoneName}` : 'خارج مناطق التوصيل المجاني'}
+                      {isInFreeZone ? `${tc('الحي:', 'District:')} ${zoneName}` : tc('خارج مناطق التوصيل المجاني', 'Outside free delivery zones')}
                     </p>
                   </div>
                 </div>
@@ -258,14 +209,13 @@ export default function DeliveryMapPage() {
           </CardContent>
         </Card>
 
-        {/* Confirm Button */}
         <Button
           onClick={handleConfirm}
           className="w-full"
           size="lg"
           data-testid="button-confirm"
         >
-          <span dir="rtl">تأكيد الموقع والمتابعة للدفع</span>
+          <span>{tc("تأكيد الموقع والمتابعة للدفع", "Confirm Location & Continue to Payment")}</span>
           <Check className="w-5 h-5 mr-2" />
         </Button>
       </div>

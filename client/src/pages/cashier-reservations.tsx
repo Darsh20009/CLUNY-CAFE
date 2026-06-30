@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
+import { useTranslate } from "@/lib/useTranslate";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient } from "@/lib/queryClient";
+import { queryClient, getErrorMessage } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Search, Calendar, Phone, Users, Clock, CheckCircle2, XCircle, Clock3 } from "lucide-react";
+import { MobileBottomNav } from "@/components/MobileBottomNav";
 
 interface Reservation {
   tableId: string;
@@ -26,16 +28,26 @@ interface Reservation {
 }
 
 export default function CashierReservations() {
+  const tc = useTranslate();
   const { toast } = useToast();
   const [searchPhone, setSearchPhone] = useState("");
   const [filteredReservations, setFilteredReservations] = useState<Reservation[]>([]);
   const [sortBy, setSortBy] = useState<'time' | 'guests' | 'status'>('time');
 
+  // Get current employee's branchId for branch isolation
+  const employeeBranchId = (() => {
+    try {
+      const stored = localStorage.getItem("currentEmployee");
+      return stored ? JSON.parse(stored)?.branchId : undefined;
+    } catch { return undefined; }
+  })();
+
   // Fetch all reservations for current branch
   const { data: allReservations = [], isLoading } = useQuery({
-    queryKey: ["/api/tables"],
+    queryKey: ["/api/tables", employeeBranchId || 'all'],
     queryFn: async () => {
-      const response = await fetch("/api/tables");
+      const url = employeeBranchId ? `/api/tables?branchId=${employeeBranchId}` : "/api/tables";
+      const response = await fetch(url, { credentials: 'include' });
       if (!response.ok) throw new Error("Failed to fetch tables");
       const tables = await response.json();
       
@@ -61,15 +73,15 @@ export default function CashierReservations() {
     }
 
     try {
-      const response = await fetch(`/api/tables/reservations/customer/${searchPhone}`);
+      const response = await fetch(`/api/tables/reservations/customer/${searchPhone}`, { credentials: 'include' });
       if (response.ok) {
         const data = await response.json();
         setFilteredReservations(data);
       }
     } catch (error) {
       toast({
-        title: "خطأ",
-        description: "فشل البحث عن الحجوزات",
+        title: tc("خطأ", "Error"),
+        description: tc("فشل البحث عن الحجوزات", "Failed to search reservations"),
         variant: "destructive"
       });
     }
@@ -79,23 +91,24 @@ export default function CashierReservations() {
   const confirmMutation = useMutation({
     mutationFn: async (tableId: string) => {
       const response = await fetch(`/api/tables/${tableId}/approve-reservation`, {
-        method: 'POST'
+        method: 'POST',
+        credentials: 'include'
       });
-      if (!response.ok) throw new Error("فشل في تأكيد الحجز");
+      if (!response.ok) throw new Error(tc("فشل في تأكيد الحجز", "Failed to confirm reservation"));
       return response.json();
     },
     onSuccess: () => {
       toast({
-        title: "تم",
-        description: "تم تأكيد الحجز بنجاح",
+        title: tc("تم", "Done"),
+        description: tc("تم تأكيد الحجز بنجاح", "Reservation confirmed successfully"),
         className: "bg-green-600 text-white border-green-700"
       });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
     },
     onError: (error) => {
       toast({
-        title: "خطأ",
-        description: error.message,
+        title: tc("خطأ", "Error"),
+        description: getErrorMessage(error, tc("فشل تأكيد الحجز", "Failed to confirm reservation")),
         variant: "destructive"
       });
     }
@@ -105,23 +118,24 @@ export default function CashierReservations() {
   const cancelMutation = useMutation({
     mutationFn: async (tableId: string) => {
       const response = await fetch(`/api/tables/${tableId}/cancel-reservation`, {
-        method: 'POST'
+        method: 'POST',
+        credentials: 'include'
       });
-      if (!response.ok) throw new Error("فشل في إلغاء الحجز");
+      if (!response.ok) throw new Error(tc("فشل في إلغاء الحجز", "Failed to cancel reservation"));
       return response.json();
     },
     onSuccess: () => {
       toast({
-        title: "تم",
-        description: "تم إلغاء الحجز",
+        title: tc("تم", "Done"),
+        description: tc("تم إلغاء الحجز", "Reservation cancelled"),
         className: "bg-red-600 text-white border-red-700"
       });
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
     },
     onError: (error) => {
       toast({
-        title: "خطأ",
-        description: error.message,
+        title: tc("خطأ", "Error"),
+        description: getErrorMessage(error, tc("فشل إلغاء الحجز", "Failed to cancel reservation")),
         variant: "destructive"
       });
     }
@@ -152,13 +166,13 @@ export default function CashierReservations() {
   const getStatusDisplay = (status: string) => {
     switch (status) {
       case 'pending':
-        return <Badge variant="outline" className="bg-yellow-50 text-yellow-800 border-yellow-300">قيد الانتظار</Badge>;
+        return <Badge variant="outline" className="bg-yellow-50 text-yellow-800 border-yellow-300">{tc("قيد الانتظار", "Pending")}</Badge>;
       case 'confirmed':
-        return <Badge className="bg-green-600 text-white">مؤكد</Badge>;
+        return <Badge className="bg-green-600 text-white">{tc("مؤكد", "Confirmed")}</Badge>;
       case 'cancelled':
-        return <Badge variant="outline" className="bg-red-50 text-red-800 border-red-300">ملغى</Badge>;
+        return <Badge variant="outline" className="bg-red-50 text-red-800 border-red-300">{tc("ملغى", "Cancelled")}</Badge>;
       case 'expired':
-        return <Badge variant="outline" className="bg-gray-50 text-gray-800 border-gray-300">منتهي</Badge>;
+        return <Badge variant="outline" className="bg-gray-50 text-gray-800 border-gray-300">{tc("منتهي", "Expired")}</Badge>;
       default:
         return null;
     }
@@ -185,12 +199,12 @@ export default function CashierReservations() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-4" dir="rtl">
+    <div className="min-h-screen bg-background p-4 pb-20">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">إدارة الحجوزات</h1>
-          <p className="text-gray-600">عرض وإدارة جميع حجوزات الطاولات</p>
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">{tc("إدارة الحجوزات", "Reservation Management")}</h1>
+          <p className="text-gray-600">{tc("عرض وإدارة جميع حجوزات الطاولات", "View and manage all table reservations")}</p>
         </div>
 
         {/* Search & Filter Bar */}
@@ -198,13 +212,13 @@ export default function CashierReservations() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Search className="w-5 h-5" />
-              البحث والتصفية
+              {tc("البحث والتصفية", "Search & Filter")}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex gap-2">
               <Input
-                placeholder="رقم الجوال (مثال: 501234567)"
+                placeholder={tc("رقم الجوال (مثال: 501234567)", "Phone (e.g. 501234567)")}
                 value={searchPhone}
                 onChange={(e) => setSearchPhone(e.target.value)}
                 className="flex-1"
@@ -216,7 +230,7 @@ export default function CashierReservations() {
                 data-testid="button-search"
               >
                 <Search className="w-4 h-4 ml-2" />
-                بحث
+                {tc("بحث", "Search")}
               </Button>
             </div>
 
@@ -229,7 +243,7 @@ export default function CashierReservations() {
                 className="text-xs"
                 data-testid="button-sort-time"
               >
-                الترتيب حسب الوقت
+                {tc("الترتيب حسب الوقت", "Sort by time")}
               </Button>
               <Button
                 variant={sortBy === 'guests' ? 'default' : 'outline'}
@@ -238,7 +252,7 @@ export default function CashierReservations() {
                 className="text-xs"
                 data-testid="button-sort-guests"
               >
-                الترتيب حسب عدد الضيوف
+                {tc("الترتيب حسب عدد الضيوف", "Sort by guests")}
               </Button>
               <Button
                 variant={sortBy === 'status' ? 'default' : 'outline'}
@@ -247,7 +261,7 @@ export default function CashierReservations() {
                 className="text-xs"
                 data-testid="button-sort-status"
               >
-                الترتيب حسب الحالة
+                {tc("الترتيب حسب الحالة", "Sort by status")}
               </Button>
             </div>
 
@@ -255,25 +269,25 @@ export default function CashierReservations() {
             <div className="grid grid-cols-4 gap-2 pt-4 border-t">
               <div className="text-center p-2 bg-blue-50 rounded">
                 <p className="text-2xl font-bold text-blue-600">{allReservations.length}</p>
-                <p className="text-xs text-gray-600">إجمالي</p>
+                <p className="text-xs text-gray-600">{tc("إجمالي", "Total")}</p>
               </div>
               <div className="text-center p-2 bg-yellow-50 rounded">
                 <p className="text-2xl font-bold text-yellow-600">
                   {allReservations.filter((r: any) => r.reservation.status === 'pending').length}
                 </p>
-                <p className="text-xs text-gray-600">قيد الانتظار</p>
+                <p className="text-xs text-gray-600">{tc("قيد الانتظار", "Pending")}</p>
               </div>
               <div className="text-center p-2 bg-green-50 rounded">
                 <p className="text-2xl font-bold text-green-600">
                   {allReservations.filter((r: any) => r.reservation.status === 'confirmed').length}
                 </p>
-                <p className="text-xs text-gray-600">مؤكدة</p>
+                <p className="text-xs text-gray-600">{tc("مؤكدة", "Confirmed")}</p>
               </div>
               <div className="text-center p-2 bg-gray-50 rounded">
                 <p className="text-2xl font-bold text-gray-600">
                   {allReservations.filter((r: any) => r.reservation.status === 'expired').length}
                 </p>
-                <p className="text-xs text-gray-600">منتهية</p>
+                <p className="text-xs text-gray-600">{tc("منتهية", "Expired")}</p>
               </div>
             </div>
           </CardContent>
@@ -284,13 +298,13 @@ export default function CashierReservations() {
           {isLoading ? (
             <Card>
               <CardContent className="pt-8 text-center text-gray-500">
-                جاري تحميل الحجوزات...
+                {tc("جاري تحميل الحجوزات...", "Loading reservations...")}
               </CardContent>
             </Card>
           ) : filteredReservations.length === 0 ? (
             <Card>
               <CardContent className="pt-8 text-center text-gray-500">
-                لا توجد حجوزات
+                {tc("لا توجد حجوزات", "No reservations found")}
               </CardContent>
             </Card>
           ) : (
@@ -302,7 +316,7 @@ export default function CashierReservations() {
                     <div className="space-y-4">
                       <div className="flex items-center gap-2">
                         <div className="text-2xl font-bold text-blue-600">
-                          طاولة {item.tableNumber}
+                          {tc("طاولة", "Table")} {item.tableNumber}
                         </div>
                         <div>{getStatusDisplay(item.reservation.status)}</div>
                       </div>
@@ -311,7 +325,7 @@ export default function CashierReservations() {
                         <Users className="w-5 h-5 text-blue-500" />
                         <div>
                           <p className="font-semibold">{item.reservation.customerName}</p>
-                          <p className="text-sm text-gray-600">عدد الضيوف: {item.reservation.numberOfGuests}</p>
+                          <p className="text-sm text-gray-600">{tc("عدد الضيوف:", "Guests:")} {item.reservation.numberOfGuests}</p>
                         </div>
                       </div>
 
@@ -335,7 +349,7 @@ export default function CashierReservations() {
                         <div className="flex items-center gap-2 text-gray-700">
                           <Clock3 className="w-5 h-5 text-orange-500" />
                           <div>
-                            <p className="text-sm text-gray-600">ينتهي في:</p>
+                            <p className="text-sm text-gray-600">{tc("ينتهي في:", "Expires at:")}</p>
                             <p className="font-semibold text-orange-600">
                               {formatTime(item.reservation.autoExpiryTime)}
                             </p>
@@ -346,7 +360,7 @@ export default function CashierReservations() {
                       {item.reservation.extensionCount ? (
                         <div className="flex items-center gap-2 text-green-700">
                           <Clock className="w-5 h-5" />
-                          <p className="text-sm">تم تمديد الحجز</p>
+                          <p className="text-sm">{tc("تم تمديد الحجز", "Reservation extended")}</p>
                         </div>
                       ) : null}
                     </div>
@@ -362,7 +376,7 @@ export default function CashierReservations() {
                         data-testid={`button-confirm-${item.tableId}`}
                       >
                         <CheckCircle2 className="w-4 h-4 ml-2" />
-                        تأكيد الحجز
+                        {tc("تأكيد الحجز", "Confirm Reservation")}
                       </Button>
                       <Button
                         onClick={() => cancelMutation.mutate(item.tableId)}
@@ -372,7 +386,7 @@ export default function CashierReservations() {
                         data-testid={`button-cancel-${item.tableId}`}
                       >
                         <XCircle className="w-4 h-4 ml-2" />
-                        إلغاء الحجز
+                        {tc("إلغاء الحجز", "Cancel Reservation")}
                       </Button>
                     </div>
                   )}
@@ -382,6 +396,7 @@ export default function CashierReservations() {
           )}
         </div>
       </div>
+      <MobileBottomNav />
     </div>
   );
 }

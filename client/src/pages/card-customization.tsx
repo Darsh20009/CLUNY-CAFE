@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslate } from "@/lib/useTranslate";
 import { useLocation } from "wouter";
 import { useCustomer } from "@/contexts/CustomerContext";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,7 @@ import CardCustomizer, { CARD_DESIGNS, type CardDesign } from "@/components/card
 import { customerStorage } from "@/lib/customer-storage";
 
 export default function CardCustomizationPage() {
+  const tc = useTranslate();
   const [, navigate] = useLocation();
   const { customer, isAuthenticated } = useCustomer();
   const [selectedDesign, setSelectedDesign] = useState<CardDesign | null>(null);
@@ -47,8 +49,8 @@ export default function CardCustomizationPage() {
       // Show success message
       const event = new CustomEvent('toast', {
         detail: {
-          title: 'تم الحفظ بنجاح!',
-          description: `تم حفظ تصميم ${design.name}`,
+          title: tc('تم الحفظ بنجاح!', 'Saved Successfully!'),
+          description: tc("تم حفظ التصميم", "Design saved"),
           duration: 3000
         }
       });
@@ -70,9 +72,9 @@ export default function CardCustomizationPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-background/20">
       {/* Header */}
-      <div className="sticky top-0 z-50 bg-white/80 backdrop-blur-sm border-b border-border">
+      <div className="sticky top-0 z-50 bg-background/80 backdrop-blur-sm border-b border-border">
         <div className="max-w-2xl mx-auto px-4 py-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-foreground">تخصيص بطاقتك</h1>
+          <h1 className="text-xl font-bold text-foreground">{tc("تخصيص بطاقتك", "Customize Your Card")}</h1>
           <Button
             variant="ghost"
             size="icon"
@@ -88,10 +90,10 @@ export default function CardCustomizationPage() {
       <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
         {/* Hero Section */}
         <div className="relative group animate-in fade-in-0 slide-in-from-top-10 duration-500">
-          <div className="absolute -inset-1 bg-gradient-to-r from-amber-400/30 via-primary/50/30 to-amber-400/30 rounded-2xl blur-lg opacity-50 group-hover:opacity-75 transition-opacity duration-500"></div>
-          <div className="relative bg-gradient-to-br from-amber-50/90 via-primary/5/80 to-background/90 backdrop-blur-sm rounded-2xl p-8 border-2 border-primary/50 shadow-xl">
+          <div className="absolute -inset-1 bg-gradient-to-r from-primary/30 via-primary/20 to-primary/30 rounded-2xl blur-lg opacity-50 group-hover:opacity-75 transition-opacity duration-500"></div>
+          <div className="relative bg-gradient-to-br from-primary/5 via-background to-background backdrop-blur-sm rounded-2xl p-8 border-2 border-primary/50 shadow-xl">
             <div className="flex items-start gap-4">
-              <div className="p-3 bg-gradient-to-r from-amber-500 to-orange-600 rounded-full text-white shadow-lg">
+              <div className="p-3 bg-primary rounded-full text-primary-foreground shadow-lg">
                 <Sparkles className="w-6 h-6" />
               </div>
               <div>
@@ -139,19 +141,19 @@ export default function CardCustomizationPage() {
             disabled={isSaving || !selectedDesign}
             className="text-base"
           >
-            {isSaving ? 'جاري الحفظ...' : 'حفظ التصميم'}
+            {isSaving ? tc('جاري الحفظ...', 'Saving...') : tc('حفظ التصميم', 'Save Design')}
           </Button>
         </div>
 
         {/* Tips Section */}
         <Card className="border-blue-200 bg-blue-50/30">
           <CardContent className="pt-6">
-            <h3 className="font-semibold text-blue-900 mb-3">نصائح:</h3>
+            <h3 className="font-semibold text-blue-900 mb-3">{tc("نصائح:", "Tips:")}</h3>
             <ul className="space-y-2 text-sm text-blue-800">
-              <li>✓ اختر التصميم الذي يناسبك من القائمة</li>
-              <li>✓ انظر المعاينة لترى كيف ستبدو بطاقتك</li>
-              <li>✓ يمكنك تغيير التصميم في أي وقت من هنا</li>
-              <li>✓ تصاميمك محفوظة على جهازك بشكل آمن</li>
+              <li>{tc("✓ اختر التصميم الذي يناسبك من القائمة", "✓ Choose a design that suits you from the list")}</li>
+              <li>{tc("✓ انظر المعاينة لترى كيف ستبدو بطاقتك", "✓ View the preview to see how your card will look")}</li>
+              <li>{tc("✓ يمكنك تغيير التصميم في أي وقت من هنا", "✓ You can change the design anytime from here")}</li>
+              <li>{tc("✓ تصاميمك محفوظة على جهازك بشكل آمن", "✓ Your designs are saved securely on your device")}</li>
             </ul>
           </CardContent>
         </Card>

@@ -723,6 +723,7 @@ export class ErpAccountingService {
     cogs: number;
     grossProfit: number;
     netIncome: number;
+    source: string;
   }> {
     const query: any = {
       tenantId,
@@ -757,21 +758,82 @@ export class ErpAccountingService {
       }
     }
 
-    const revenue = Object.entries(revenueAccounts).map(([accountName, amount]) => ({ accountName, amount }));
+    let revenue = Object.entries(revenueAccounts).map(([accountName, amount]) => ({ accountName, amount }));
     const expenses = Object.entries(expenseAccounts).map(([accountName, amount]) => ({ accountName, amount }));
-    const totalRevenue = revenue.reduce((sum, r) => sum + r.amount, 0);
-    const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+    let totalRevenue = revenue.reduce((sum, r) => sum + r.amount, 0);
+    let totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+    let source = "journal";
+
+    // --- Fallback: Read directly from completed orders when no journal entries cover revenue ---
+    // This ensures the income statement works even before the chart of accounts is initialized
+    const { default: mongoose } = await import("mongoose");
+    const OrderModel = mongoose.models["Order"] as any;
+    if (OrderModel) {
+      const orderQuery: any = {
+        status: { $in: ["completed", "delivered", "paid", "payment_confirmed"] },
+        createdAt: { $gte: startDate, $lte: endDate },
+      };
+      if (branchId) orderQuery.branchId = branchId;
+      if (tenantId && tenantId !== "demo-tenant") orderQuery.tenantId = tenantId;
+
+      const orders = await OrderModel.find(orderQuery).lean();
+
+      if (orders.length > 0) {
+        const orderRevenue = orders.reduce((sum: number, o: any) => sum + (o.total || o.totalAmount || o.subtotal || 0), 0);
+        const orderCogs = orders.reduce((sum: number, o: any) => sum + (o.costOfGoods || 0), 0);
+
+        if (totalRevenue === 0 && orderRevenue > 0) {
+          // No journal entries found — use order data directly
+          totalRevenue = orderRevenue;
+          cogs = orderCogs;
+          revenue = [{ accountName: "إيرادات المبيعات", amount: orderRevenue }];
+          source = "orders";
+        } else if (totalRevenue > 0 && orderCogs > 0 && cogs === 0) {
+          // Journal entries have revenue but COGS not journalized yet — fill from orders
+          cogs = orderCogs;
+          source = "hybrid";
+        }
+
+        // Also include approved ERP expenses in the period
+        const ExpenseErpModel = mongoose.models["ExpenseErp"] as any;
+        if (ExpenseErpModel && totalExpenses === 0) {
+          const erpExpenses = await ExpenseErpModel.find({
+            tenantId,
+            status: "approved",
+            createdAt: { $gte: startDate, $lte: endDate },
+          }).lean();
+          for (const exp of erpExpenses) {
+            const key = exp.category || "مصروفات تشغيلية";
+            const categoryLabel: Record<string, string> = {
+              operating: "مصروفات تشغيلية",
+              salary: "رواتب وأجور",
+              rent: "إيجار",
+              utilities: "مرافق",
+              marketing: "تسويق",
+              maintenance: "صيانة",
+              other: "مصروفات أخرى",
+            };
+            const expKey = categoryLabel[key] || key;
+            const existing = expenseAccounts[expKey] || 0;
+            expenseAccounts[expKey] = existing + (exp.totalAmount || exp.amount || 0);
+          }
+          totalExpenses = Object.values(expenseAccounts).reduce((s, v) => s + v, 0);
+        }
+      }
+    }
+
     const grossProfit = totalRevenue - cogs;
     const netIncome = grossProfit - totalExpenses;
 
     return {
       revenue,
       totalRevenue: parseFloat(totalRevenue.toFixed(2)),
-      expenses,
+      expenses: Object.entries(expenseAccounts).map(([accountName, amount]) => ({ accountName, amount })),
       totalExpenses: parseFloat(totalExpenses.toFixed(2)),
       cogs: parseFloat(cogs.toFixed(2)),
       grossProfit: parseFloat(grossProfit.toFixed(2)),
       netIncome: parseFloat(netIncome.toFixed(2)),
+      source,
     };
   }
 

@@ -3,7 +3,7 @@ interface SarIconProps {
   size?: number;
 }
 
-export default function SarIcon({ className = "", size = 14 }: SarIconProps) {
+export function SarIcon({ className = "", size = 14 }: SarIconProps) {
   return (
     <img
       src="/sar-icon.png"
@@ -15,3 +15,5 @@ export default function SarIcon({ className = "", size = 14 }: SarIconProps) {
     />
   );
 }
+
+export default SarIcon;

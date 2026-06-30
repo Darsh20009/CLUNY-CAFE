@@ -28,11 +28,12 @@ export function useNotifications(options?: UseNotificationsOptions) {
   const [isLoading, setIsLoading] = useState(false);
   const subscriptionRef = useRef<PushSubscription | null>(null);
 
+  // ✅ Prevent duplicate POST /api/push/subscribe calls
+  const serverSyncedRef = useRef(false);
+  const syncingRef = useRef(false);
+
   const registerServiceWorker = useCallback(async () => {
-    if (!('serviceWorker' in navigator)) {
-      console.warn('Service Worker not supported');
-      return null;
-    }
+    if (!('serviceWorker' in navigator)) return null;
     try {
       const registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
       await navigator.serviceWorker.ready;
@@ -43,69 +44,63 @@ export function useNotifications(options?: UseNotificationsOptions) {
     }
   }, []);
 
-  const subscribeToPush = useCallback(async () => {
-    if (isLoading) return;
-    setIsLoading(true);
+  // ✅ Internal helper — sends subscription to server ONCE
+  const syncSubToServer = useCallback(async (sub: PushSubscription) => {
+    if (serverSyncedRef.current || syncingRef.current) return;
+    if (!options?.userId) return;
+    syncingRef.current = true;
     try {
-      const registration = await registerServiceWorker();
-      if (!registration) {
-        setIsLoading(false);
-        return;
-      }
-
-      const existingSub = await registration.pushManager.getSubscription();
-      if (existingSub) {
-        subscriptionRef.current = existingSub;
-        setIsSubscribed(true);
-        await fetch('/api/push/subscribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            subscription: existingSub.toJSON(),
-            userType: options?.userType || 'customer',
-            userId: options?.userId || 'anonymous',
-            branchId: options?.branchId,
-          }),
-        });
-        setIsLoading(false);
-        return;
-      }
-
-      const response = await fetch('/api/push/vapid-key');
-      const { publicKey } = await response.json();
-
-      if (!publicKey) {
-        console.error('No VAPID public key available');
-        setIsLoading(false);
-        return;
-      }
-
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
-      });
-
-      subscriptionRef.current = subscription;
-
       await fetch('/api/push/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subscription: subscription.toJSON(),
+          subscription: sub.toJSON(),
           userType: options?.userType || 'customer',
           userId: options?.userId || 'anonymous',
           branchId: options?.branchId,
         }),
       });
+      serverSyncedRef.current = true;
+    } catch {
+      // ignore
+    } finally {
+      syncingRef.current = false;
+    }
+  }, [options?.userType, options?.userId, options?.branchId]);
 
+  const subscribeToPush = useCallback(async () => {
+    if (isLoading || syncingRef.current) return;
+    setIsLoading(true);
+    try {
+      const registration = await registerServiceWorker();
+      if (!registration) return;
+
+      const existingSub = await registration.pushManager.getSubscription();
+      if (existingSub) {
+        subscriptionRef.current = existingSub;
+        setIsSubscribed(true);
+        await syncSubToServer(existingSub);
+        return;
+      }
+
+      const response = await fetch('/api/push/vapid-key');
+      const { publicKey } = await response.json();
+      if (!publicKey) return;
+
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey) as unknown as BufferSource,
+      });
+
+      subscriptionRef.current = subscription;
       setIsSubscribed(true);
-      console.log('[Push] Successfully subscribed');
+      await syncSubToServer(subscription);
     } catch (error) {
       console.error('[Push] Subscription failed:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [options?.userType, options?.userId, options?.branchId, isLoading, registerServiceWorker]);
+  }, [isLoading, registerServiceWorker, syncSubToServer]);
 
   const unsubscribeFromPush = useCallback(async () => {
     try {
@@ -118,6 +113,7 @@ export function useNotifications(options?: UseNotificationsOptions) {
           body: JSON.stringify({ endpoint }),
         });
         subscriptionRef.current = null;
+        serverSyncedRef.current = false;
         setIsSubscribed(false);
       }
     } catch (error) {
@@ -148,45 +144,42 @@ export function useNotifications(options?: UseNotificationsOptions) {
     }
   }, []);
 
+  // ✅ Single consolidated effect — check existing subscription once on mount
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
 
-    const checkExisting = async () => {
+    const init = async () => {
       try {
         const registration = await navigator.serviceWorker.ready;
         const existingSub = await registration.pushManager.getSubscription();
         if (existingSub) {
           subscriptionRef.current = existingSub;
           setIsSubscribed(true);
+          // Sync to server if we have a userId
           if (options?.userId) {
-            await fetch('/api/push/subscribe', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                subscription: existingSub.toJSON(),
-                userType: options?.userType || 'customer',
-                userId: options?.userId,
-                branchId: options?.branchId,
-              }),
-            }).catch(() => {});
+            await syncSubToServer(existingSub);
           }
+        } else if (options?.autoSubscribe && options?.userId && Notification.permission === 'granted') {
+          // ✅ Only auto-subscribe if no existing sub and conditions are met
+          await subscribeToPush();
         }
-      } catch (e) {
+      } catch {
         // silently ignore
       }
     };
-    checkExisting();
-  }, [options?.userId, options?.userType, options?.branchId]);
 
+    init();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // ✅ Only run once on mount — not on every userId change
+
+  // ✅ Re-sync when userId changes (e.g., login after mount), but throttled
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
-
-    if (permission === 'granted' && options?.autoSubscribe && options?.userId) {
-      subscribeToPush();
-    }
-  }, [permission, options?.autoSubscribe, options?.userId]);
+    if (!options?.userId || !isSubscribed || !subscriptionRef.current) return;
+    // If userId changed and we haven't synced yet, re-sync
+    serverSyncedRef.current = false;
+    syncSubToServer(subscriptionRef.current).catch(() => {});
+  }, [options?.userId]);
 
   return {
     permission,

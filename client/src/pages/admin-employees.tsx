@@ -1,10 +1,11 @@
 import { useState } from 'react';
+import { useTranslate } from "@/lib/useTranslate";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
-import { Plus, Search, Edit2, Trash2, ChevronDown, X, Download, Trash } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, ChevronDown, X, Download, Trash, Clock, Shield, QrCode } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -12,6 +13,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 interface Employee {
   id: string;
@@ -22,10 +25,27 @@ interface Employee {
   role: string;
   isActivated: number;
   branchId?: string;
+  shiftStartTime?: string;
+  shiftEndTime?: string;
+  workDays?: string[];
+  allowedPages?: string[];
+  permissions?: string[];
 }
 
+const WORK_DAYS = [
+  { id: 'الأحد', name: 'الأحد' },
+  { id: 'الاثنين', name: 'الاثنين' },
+  { id: 'الثلاثاء', name: 'الثلاثاء' },
+  { id: 'الأربعاء', name: 'الأربعاء' },
+  { id: 'الخميس', name: 'الخميس' },
+  { id: 'الجمعة', name: 'الجمعة' },
+  { id: 'السبت', name: 'السبت' },
+];
+
 export default function AdminEmployees() {
+  const tc = useTranslate();
   const [, navigate] = useLocation();
+  const { toast } = useToast();
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -38,109 +58,178 @@ export default function AdminEmployees() {
     phone: '',
     jobTitle: '',
     role: 'cashier',
+    shiftStartTime: '',
+    shiftEndTime: '',
+    workDays: [] as string[],
     allowedPages: [] as string[],
     permissions: [] as string[],
   });
 
   const AVAILABLE_PAGES = [
+    { id: 'dashboard', name: 'لوحة التحكم' },
+    { id: 'cashier', name: 'الكاشير' },
     { id: 'pos', name: 'نقاط البيع' },
+    { id: 'shifts', name: 'الورديات' },
     { id: 'orders', name: 'الطلبات' },
+    { id: 'kitchen', name: 'المطبخ' },
+    { id: 'tables', name: 'الطاولات' },
+    { id: 'menu_management', name: 'إدارة القائمة' },
     { id: 'inventory', name: 'المخزون' },
+    { id: 'reports', name: 'التقارير' },
     { id: 'accounting', name: 'المحاسبة' },
+    { id: 'employees', name: 'إدارة الموظفين' },
     { id: 'settings', name: 'الإعدادات' },
     { id: 'delivery', name: 'التوصيل' },
-    { id: 'reports', name: 'التقارير' },
   ];
 
-  const PERMISSIONS = [
-    { id: 'void_order', name: 'إلغاء الطلبات' },
-    { id: 'give_discount', name: 'منح خصومات' },
-    { id: 'open_drawer', name: 'فتح درج النقود' },
-    { id: 'edit_inventory', name: 'تعديل المخزون' },
-    { id: 'view_reports', name: 'عرض التقارير المالية' },
+  const PERMISSION_GROUPS = [
+    { category: 'الطلبات', items: [
+      { id: 'order.create', name: 'إنشاء طلب' },
+      { id: 'order.view', name: 'عرض الطلبات' },
+      { id: 'order.void', name: 'إلغاء طلب' },
+      { id: 'order.refund', name: 'استرجاع طلب' },
+      { id: 'order.apply_discount', name: 'تطبيق خصم' },
+      { id: 'order.modify', name: 'تعديل طلب' },
+    ]},
+    { category: 'المطبخ', items: [
+      { id: 'kitchen.view_queue', name: 'عرض طابور المطبخ' },
+      { id: 'kitchen.update_status', name: 'تحديث حالة الطلب' },
+    ]},
+    { category: 'المخزون', items: [
+      { id: 'inventory.view', name: 'عرض المخزون' },
+      { id: 'inventory.stock_in', name: 'إدخال مخزون' },
+      { id: 'inventory.stock_out', name: 'إخراج مخزون' },
+      { id: 'inventory.waste', name: 'تسجيل هدر' },
+      { id: 'inventory.adjustment', name: 'تعديل مخزون' },
+    ]},
+    { category: 'القائمة', items: [
+      { id: 'menu.view', name: 'عرض القائمة' },
+      { id: 'menu.create', name: 'إضافة صنف' },
+      { id: 'menu.edit', name: 'تعديل صنف' },
+      { id: 'menu.delete', name: 'حذف صنف' },
+    ]},
+    { category: 'التقارير', items: [
+      { id: 'reports.daily', name: 'تقرير يومي' },
+      { id: 'reports.branch', name: 'تقرير الفرع' },
+      { id: 'reports.all_branches', name: 'تقارير كل الفروع' },
+      { id: 'reports.export', name: 'تصدير التقارير' },
+    ]},
+    { category: 'الورديات', items: [
+      { id: 'shift.open', name: 'فتح وردية' },
+      { id: 'shift.close', name: 'إغلاق وردية' },
+      { id: 'shift.view_history', name: 'سجل الورديات' },
+      { id: 'shift.cash_movement', name: 'حركة نقدية' },
+    ]},
+    { category: 'نقاط البيع', items: [
+      { id: 'pos.open_drawer', name: 'فتح درج النقود' },
+      { id: 'pos.apply_coupon', name: 'تطبيق كوبون' },
+    ]},
+    { category: 'أخرى', items: [
+      { id: 'delivery.manage', name: 'إدارة التوصيل' },
+      { id: 'tables.manage', name: 'إدارة الطاولات' },
+      { id: 'accounting.view', name: 'عرض المحاسبة' },
+      { id: 'accounting.export', name: 'تصدير المحاسبة' },
+      { id: 'employees.view', name: 'عرض الموظفين' },
+      { id: 'employees.create', name: 'إضافة موظف' },
+      { id: 'employees.edit', name: 'تعديل موظف' },
+      { id: 'employees.delete', name: 'حذف موظف' },
+      { id: 'settings.branch', name: 'إعدادات الفرع' },
+      { id: 'settings.cafe', name: 'إعدادات المقهى' },
+    ]},
   ];
+
+  const ALL_PERMISSIONS = PERMISSION_GROUPS.flatMap(g => g.items);
+
+  const [branchId, setBranchId] = useState('');
 
   const { data: employees = [], refetch } = useQuery({
     queryKey: ['/api/employees'],
-    queryFn: async () => {
-      const res = await fetch('/api/employees');
-      if (!res.ok) throw new Error('Failed to fetch employees');
-      return res.json();
-    },
   });
+
+  const { data: branches = [] } = useQuery<{ id: string; nameAr: string }[]>({
+    queryKey: ['/api/branches'],
+  });
+
+  const resetForm = () => ({
+    fullName: '',
+    username: '',
+    phone: '',
+    jobTitle: '',
+    role: 'cashier',
+    shiftStartTime: '',
+    shiftEndTime: '',
+    workDays: [] as string[],
+    allowedPages: [] as string[],
+    permissions: [] as string[],
+  });
+
+  const resetBranchId = () => setBranchId('');
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch('/api/employees', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error('Failed to create employee');
+      const res = await apiRequest('POST', '/api/employees', data);
       return res.json();
     },
     onSuccess: () => {
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ['/api/employees'] });
       setShowAddForm(false);
-      setFormData({ 
-        fullName: '', 
-        username: '', 
-        phone: '', 
-        jobTitle: '', 
-        role: 'cashier',
-        allowedPages: [],
-        permissions: []
-      });
+      setFormData(resetForm());
+      resetBranchId();
+      toast({ title: tc('تم إضافة الموظف بنجاح', 'Employee added successfully') });
+    },
+    onError: (err: any) => {
+      toast({ title: tc('خطأ', 'Error'), description: err.message, variant: 'destructive' });
     },
   });
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, data }: any) => {
-      const res = await fetch(`/api/employees/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error('Failed to update employee');
+      const res = await apiRequest('PATCH', `/api/employees/${id}`, data);
       return res.json();
     },
     onSuccess: () => {
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ['/api/employees'] });
       setEditingId(null);
-      setFormData({ 
-        fullName: '', 
-        username: '', 
-        phone: '', 
-        jobTitle: '', 
-        role: 'cashier',
-        allowedPages: [],
-        permissions: []
-      });
+      setFormData(resetForm());
+      toast({ title: tc('تم تحديث الموظف بنجاح', 'Employee updated successfully') });
+    },
+    onError: (err: any) => {
+      toast({ title: tc('خطأ', 'Error'), description: err.message, variant: 'destructive' });
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`/api/employees/${id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error('Failed to delete employee');
+      const res = await apiRequest('DELETE', `/api/employees/${id}`);
       return res.json();
     },
-    onSuccess: () => refetch(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/employees'] });
+      toast({ title: tc('تم حذف الموظف بنجاح', 'Employee deleted successfully') });
+    },
+    onError: (err: any) => {
+      toast({ title: tc('خطأ', 'Error'), description: err.message, variant: 'destructive' });
+    },
   });
 
   const handleSubmit = (e: any) => {
     e.preventDefault();
+    const payload = {
+      ...formData,
+      branchId: branchId || undefined,
+      shiftTime: formData.shiftStartTime && formData.shiftEndTime
+        ? `${formData.shiftStartTime}-${formData.shiftEndTime}`
+        : undefined,
+    };
     if (editingId) {
-      updateMutation.mutate({ id: editingId, data: formData });
+      updateMutation.mutate({ id: editingId, data: payload });
     } else {
-      createMutation.mutate(formData);
+      createMutation.mutate(payload);
     }
   };
 
-  const filteredEmployees = employees.filter((emp: Employee) => {
-    const matchSearch = emp.fullName.includes(search) || emp.phone.includes(search) || emp.username.includes(search);
+  const filteredEmployees = (employees as Employee[]).filter((emp: Employee) => {
+    const matchSearch = emp.fullName?.includes(search) || emp.phone?.includes(search) || emp.username?.includes(search);
     const matchRole = roleFilter === 'all' || emp.role === roleFilter;
     const matchStatus = statusFilter === 'all' || (statusFilter === 'active' ? emp.isActivated === 1 : emp.isActivated === 0);
     return matchSearch && matchRole && matchStatus;
@@ -194,56 +283,61 @@ export default function AdminEmployees() {
     link.click();
   };
 
+  const getRoleLabel = (role: string) => {
+    const labels: Record<string, string> = {
+      cleaner: tc('عامل نظافة','Cleaner'),
+      driver: tc('سائق توصيل','Driver'),
+      accountant: tc('محاسب','Accountant'),
+      cashier: tc('كاشير','Cashier'),
+      barista: tc('باريستا','Barista'),
+      supervisor: tc('مشرف','Supervisor'),
+      manager: tc('مدير فرع','Branch Manager'),
+      owner: tc('مالك','Owner'),
+      admin: tc('مدير النظام','Admin'),
+    };
+    return labels[role] || role;
+  };
+
   return (
-    <div className="p-6 space-y-6 bg-white dark:bg-background min-h-screen">
-      {/* Header */}
+    <div className="p-6 space-y-6 bg-background min-h-screen">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">إدارة الموظفين</h1>
-          <p className="text-muted-foreground mt-1">إدارة بيانات الموظفين والأدوار والصلاحيات</p>
+          <h1 className="text-3xl font-bold">{tc("إدارة الموظفين", "Employee Management")}</h1>
+          <p className="text-muted-foreground mt-1">{tc("إدارة بيانات الموظفين والأدوار والصلاحيات", "Manage employee data, roles, and permissions")}</p>
         </div>
         <Button 
           onClick={() => {
             setShowAddForm(!showAddForm);
             setEditingId(null);
-            setFormData({ 
-              fullName: '', 
-              username: '', 
-              phone: '', 
-              jobTitle: '', 
-              role: 'cashier',
-              allowedPages: [],
-              permissions: []
-            });
+            setFormData(resetForm());
           }}
           className="bg-accent hover:bg-accent"
           data-testid="button-add-employee"
         >
           <Plus className="w-4 h-4 ml-2" />
-          إضافة موظف
+          {tc("إضافة موظف", "Add Employee")}
         </Button>
       </div>
 
-      {/* Add/Edit Form */}
       {(showAddForm || editingId) && (
-        <Card className="border-orange-200 dark:border-orange-900/30 bg-background dark:bg-accent/10">
+        <Card className="border-primary/30 bg-background dark:bg-accent/10">
           <CardHeader className="pb-4">
-            <CardTitle>{editingId ? 'تعديل الموظف' : 'إضافة موظف جديد'}</CardTitle>
+            <CardTitle>{editingId ? tc('تعديل الموظف', 'Edit Employee') : tc('إضافة موظف جديد', 'Add New Employee')}</CardTitle>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-1">الاسم الكامل</label>
+                  <label className="block text-sm font-medium mb-1">{tc("الاسم الكامل", "Full Name")}</label>
                   <Input
-                    placeholder="أحمد محمد"
+                    placeholder={tc("أحمد محمد", "Ahmed Mohammed")}
                     value={formData.fullName}
                     onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
                     data-testid="input-fullname"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">اسم المستخدم</label>
+                  <label className="block text-sm font-medium mb-1">{tc("اسم المستخدم", "Username")}</label>
                   <Input
                     placeholder="ahmed123"
                     value={formData.username}
@@ -252,7 +346,7 @@ export default function AdminEmployees() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">رقم الهاتف</label>
+                  <label className="block text-sm font-medium mb-1">{tc("رقم الهاتف", "Phone Number")}</label>
                   <Input
                     placeholder="0501234567"
                     value={formData.phone}
@@ -261,106 +355,203 @@ export default function AdminEmployees() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">المسمى الوظيفي</label>
+                  <label className="block text-sm font-medium mb-1">{tc("المسمى الوظيفي", "Job Title")}</label>
                   <Input
-                    placeholder="كاشير"
+                    placeholder={tc("كاشير", "Cashier")}
                     value={formData.jobTitle}
                     onChange={(e) => setFormData({ ...formData, jobTitle: e.target.value })}
                     data-testid="input-jobtitle"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">الدور</label>
+                  <label className="block text-sm font-medium mb-1">{tc("الدور", "Role")}</label>
                   <Select value={formData.role} onValueChange={(value) => setFormData({ ...formData, role: value })}>
                     <SelectTrigger data-testid="select-role">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="cashier">كاشير</SelectItem>
-                      <SelectItem value="barista">باريستا</SelectItem>
-                      <SelectItem value="manager">مدير</SelectItem>
-                      <SelectItem value="admin">مسؤول</SelectItem>
-                      <SelectItem value="driver">سائق</SelectItem>
+                      <SelectItem value="cleaner">{tc("عامل نظافة", "Cleaner")}</SelectItem>
+                      <SelectItem value="driver">{tc("سائق توصيل", "Driver")}</SelectItem>
+                      <SelectItem value="accountant">{tc("محاسب", "Accountant")}</SelectItem>
+                      <SelectItem value="cashier">{tc("كاشير", "Cashier")}</SelectItem>
+                      <SelectItem value="barista">{tc("باريستا", "Barista")}</SelectItem>
+                      <SelectItem value="supervisor">{tc("مشرف", "Supervisor")}</SelectItem>
+                      <SelectItem value="manager">{tc("مدير فرع", "Branch Manager")}</SelectItem>
+                      <SelectItem value="owner">{tc("مالك", "Owner")}</SelectItem>
+                      <SelectItem value="admin">{tc("مدير النظام", "Admin")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">{tc("الفرع", "Branch")}</label>
+                  <Select value={branchId || "none"} onValueChange={(v) => setBranchId(v === 'none' ? '' : v)}>
+                    <SelectTrigger data-testid="select-branch">
+                      <SelectValue placeholder={tc("اختر الفرع", "Select branch")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">{tc("— غير محدد —", "— Not assigned —")}</SelectItem>
+                      {(branches as { id: string; nameAr: string }[]).map((b) => (
+                        <SelectItem key={b.id} value={b.id}>{b.nameAr}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
-              {/* Advanced Permissions */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-muted/30 rounded-lg border border-border">
-                <div>
-                  <label className="block text-sm font-bold mb-3 flex items-center gap-2">
-                    <ChevronDown className="w-4 h-4" />
-                    الصفحات المسموحة
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {AVAILABLE_PAGES.map(page => (
-                      <label key={page.id} className="flex items-center gap-2 p-2 hover:bg-background rounded cursor-pointer transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={formData.allowedPages?.includes(page.id)}
-                          onChange={(e) => {
-                            const pages = formData.allowedPages || [];
-                            const newPages = e.target.checked 
-                              ? [...pages, page.id] 
-                              : pages.filter(p => p !== page.id);
-                            setFormData({
-                              ...formData,
-                              allowedPages: newPages
-                            });
-                          }}
-                          className="w-4 h-4 rounded border-gray-300 text-accent focus:ring-accent"
-                        />
-                        <span className="text-sm">{page.name}</span>
-                      </label>
-                    ))}
+              <div className="p-4 bg-muted/30 rounded-lg border border-border">
+                <div className="flex items-center gap-2 mb-3">
+                  <Clock className="w-4 h-4 text-primary" />
+                  <label className="block text-sm font-bold">{tc("مواقيت الدوام", "Work Schedule")}</label>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">{tc("بداية الدوام", "Shift Start")}</label>
+                    <Input
+                      type="time"
+                      value={formData.shiftStartTime}
+                      onChange={(e) => setFormData({ ...formData, shiftStartTime: e.target.value })}
+                      data-testid="input-shiftstart"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">{tc("نهاية الدوام", "Shift End")}</label>
+                    <Input
+                      type="time"
+                      value={formData.shiftEndTime}
+                      onChange={(e) => setFormData({ ...formData, shiftEndTime: e.target.value })}
+                      data-testid="input-shiftend"
+                    />
                   </div>
                 </div>
-
                 <div>
-                  <label className="block text-sm font-bold mb-3 flex items-center gap-2">
-                    <ChevronDown className="w-4 h-4" />
-                    صلاحيات خاصة
-                  </label>
-                  <div className="grid grid-cols-1 gap-2">
-                    {PERMISSIONS.map(perm => (
-                      <label key={perm.id} className="flex items-center gap-2 p-2 hover:bg-background rounded cursor-pointer transition-colors">
+                  <label className="block text-xs text-muted-foreground mb-2">{tc("أيام العمل", "Work Days")}</label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {WORK_DAYS.map(day => (
+                      <label key={day.id} className="flex items-center gap-2 p-2 hover:bg-background rounded cursor-pointer transition-colors border border-transparent hover:border-border">
                         <input
                           type="checkbox"
-                          checked={formData.permissions?.includes(perm.id)}
+                          checked={formData.workDays.includes(day.id)}
                           onChange={(e) => {
-                            const perms = formData.permissions || [];
-                            const newPerms = e.target.checked 
-                              ? [...perms, perm.id] 
-                              : perms.filter(p => p !== perm.id);
-                            setFormData({
-                              ...formData,
-                              permissions: newPerms
-                            });
+                            const days = e.target.checked
+                              ? [...formData.workDays, day.id]
+                              : formData.workDays.filter(d => d !== day.id);
+                            setFormData({ ...formData, workDays: days });
                           }}
-                          className="w-4 h-4 rounded border-gray-300 text-accent focus:ring-accent"
+                          className="w-4 h-4 rounded"
+                          data-testid={`checkbox-workday-${day.id}`}
                         />
-                        <span className="text-sm">{perm.name}</span>
+                        <span className="text-sm">{day.name}</span>
                       </label>
                     ))}
                   </div>
                 </div>
               </div>
 
+              <div className="p-4 bg-muted/30 rounded-lg border border-border">
+                <div className="flex items-center justify-between mb-3">
+                  <label className="block text-sm font-bold flex items-center gap-2">
+                    <ChevronDown className="w-4 h-4" />
+                    {tc("الصفحات المسموحة", "Allowed Pages")}
+                  </label>
+                  <span className="text-xs text-muted-foreground">
+                    {formData.allowedPages.length === 0 ? tc('الافتراضي حسب الدور', 'Default by role') : `${formData.allowedPages.length} ${tc('صفحة', 'pages')}`}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mb-3">{tc("اتركها فارغة لاستخدام الافتراضي حسب الدور، أو خصّص الصفحات يدوياً", "Leave empty to use defaults by role, or customize pages manually")}</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                  {AVAILABLE_PAGES.map(page => (
+                    <label key={page.id} className="flex items-center gap-2 p-2 hover:bg-background rounded cursor-pointer transition-colors border border-transparent hover:border-border">
+                      <input
+                        type="checkbox"
+                        checked={formData.allowedPages?.includes(page.id)}
+                        onChange={(e) => {
+                          const pages = formData.allowedPages || [];
+                          const newPages = e.target.checked 
+                            ? [...pages, page.id] 
+                            : pages.filter(p => p !== page.id);
+                          setFormData({
+                            ...formData,
+                            allowedPages: newPages
+                          });
+                        }}
+                        className="w-4 h-4 rounded border-gray-300 text-[#2D9B6E] focus:ring-[#2D9B6E]"
+                      />
+                      <span className="text-sm">{page.name}</span>
+                    </label>
+                  ))}
+                </div>
+                {formData.allowedPages.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="mt-2 text-xs text-muted-foreground"
+                    onClick={() => setFormData({ ...formData, allowedPages: [] })}
+                  >
+                    {tc("إعادة للافتراضي", "Reset to Default")}
+                  </Button>
+                )}
+              </div>
+
+              <div className="p-4 bg-muted/30 rounded-lg border border-border">
+                <div className="flex items-center justify-between mb-3">
+                  <label className="block text-sm font-bold flex items-center gap-2">
+                    <ChevronDown className="w-4 h-4" />
+                    {tc("صلاحيات تفصيلية", "Granular Permissions")}
+                  </label>
+                  <span className="text-xs text-muted-foreground">
+                    {formData.permissions.length === 0 ? tc('الافتراضي حسب الدور', 'Default by role') : `${formData.permissions.length} ${tc('صلاحية إضافية', 'extra permissions')}`}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mb-3">{tc("أضف صلاحيات إضافية فوق الافتراضي حسب الدور", "Add extra permissions on top of the role defaults")}</p>
+                <div className="space-y-4">
+                  {PERMISSION_GROUPS.map(group => (
+                    <div key={group.category}>
+                      <p className="text-xs font-bold text-[#2D9B6E] mb-2">{group.category}</p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1">
+                        {group.items.map(perm => (
+                          <label key={perm.id} className="flex items-center gap-2 p-1.5 hover:bg-background rounded cursor-pointer transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={formData.permissions?.includes(perm.id)}
+                              onChange={(e) => {
+                                const perms = formData.permissions || [];
+                                const newPerms = e.target.checked 
+                                  ? [...perms, perm.id] 
+                                  : perms.filter(p => p !== perm.id);
+                                setFormData({
+                                  ...formData,
+                                  permissions: newPerms
+                                });
+                              }}
+                              className="w-3.5 h-3.5 rounded border-gray-300 text-[#2D9B6E] focus:ring-[#2D9B6E]"
+                            />
+                            <span className="text-xs">{perm.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {formData.permissions.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="mt-2 text-xs text-muted-foreground"
+                    onClick={() => setFormData({ ...formData, permissions: [] })}
+                  >
+                    {tc("مسح الصلاحيات الإضافية", "Clear Extra Permissions")}
+                  </Button>
+                )}
+              </div>
+
               <div className="flex gap-3 pt-2">
                 <Button type="submit" className="bg-accent hover:bg-accent" data-testid="button-save-employee">
-                  {editingId ? 'تحديث' : 'إضافة'}
+                  {editingId ? tc('تحديث', 'Update') : tc('إضافة', 'Add')}
                 </Button>
-                <Button 
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setShowAddForm(false);
-                    setEditingId(null);
-                  }}
-                  data-testid="button-cancel"
-                >
-                  إلغاء
+                <Button type="button" variant="outline" onClick={() => { setShowAddForm(false); setEditingId(null); }} data-testid="button-cancel">
+                  {tc("إلغاء", "Cancel")}
                 </Button>
               </div>
             </form>
@@ -368,18 +559,12 @@ export default function AdminEmployees() {
         </Card>
       )}
 
-      {/* Bulk Actions & Filters */}
       {selectedEmployees.size > 0 && (
         <div className="flex items-center gap-3 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-          <span className="text-sm font-medium">{selectedEmployees.size} موظف مختار</span>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={handleBulkDelete}
-            data-testid="button-bulk-delete"
-          >
+          <span className="text-sm font-medium">{selectedEmployees.size} {tc("موظف مختار", "employees selected")}</span>
+          <Button variant="destructive" size="sm" onClick={handleBulkDelete} data-testid="button-bulk-delete">
             <Trash className="w-4 h-4 ml-2" />
-            حذف المختارين
+            {tc("حذف المختارين", "Delete Selected")}
           </Button>
         </div>
       )}
@@ -388,7 +573,7 @@ export default function AdminEmployees() {
         <div className="flex-1 relative">
           <Search className="absolute right-3 top-2.5 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="ابحث برقم الهاتف أو الاسم..."
+            placeholder={tc("ابحث برقم الهاتف أو الاسم...", "Search by phone or name...")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-4"
@@ -400,11 +585,13 @@ export default function AdminEmployees() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">جميع الأدوار</SelectItem>
-            <SelectItem value="cashier">كاشير</SelectItem>
-            <SelectItem value="barista">باريستا</SelectItem>
-            <SelectItem value="manager">مدير</SelectItem>
-            <SelectItem value="driver">سائق</SelectItem>
+            <SelectItem value="all">{tc("جميع الأدوار", "All Roles")}</SelectItem>
+            <SelectItem value="cleaner">{tc("عامل نظافة", "Cleaner")}</SelectItem>
+            <SelectItem value="driver">{tc("سائق", "Driver")}</SelectItem>
+            <SelectItem value="accountant">{tc("محاسب", "Accountant")}</SelectItem>
+            <SelectItem value="cashier">{tc("كاشير", "Cashier")}</SelectItem>
+            <SelectItem value="barista">{tc("باريستا", "Barista")}</SelectItem>
+            <SelectItem value="manager">{tc("مدير", "Manager")}</SelectItem>
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -412,9 +599,9 @@ export default function AdminEmployees() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">جميع الحالات</SelectItem>
-            <SelectItem value="active">نشط</SelectItem>
-            <SelectItem value="inactive">معطل</SelectItem>
+            <SelectItem value="all">{tc("جميع الحالات", "All Statuses")}</SelectItem>
+            <SelectItem value="active">{tc("نشط", "Active")}</SelectItem>
+            <SelectItem value="inactive">{tc("معطل", "Inactive")}</SelectItem>
           </SelectContent>
         </Select>
         <Button
@@ -423,111 +610,160 @@ export default function AdminEmployees() {
           data-testid="button-export-csv"
         >
           <Download className="w-4 h-4 ml-2" />
-          تصدير
+          {tc("تصدير", "Export")}
         </Button>
       </div>
 
-      {/* Employees Table */}
-      <Card className="border-0 bg-white dark:bg-card">
+      <Card className="border-0 bg-card">
         <CardHeader className="pb-4">
-          <CardTitle className="text-lg">
-            الموظفون ({filteredEmployees.length})
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg">
+              {tc("الموظفون", "Employees")} ({filteredEmployees.length})
+            </CardTitle>
+            {filteredEmployees.length > 0 && (
+              <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={selectedEmployees.size === filteredEmployees.length && filteredEmployees.length > 0}
+                  onChange={(e) => handleSelectAll(e.target.checked)}
+                  className="w-4 h-4"
+                  data-testid="checkbox-select-all"
+                />
+                {tc("تحديد الكل", "Select all")}
+              </label>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           {filteredEmployees.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b-2 border-orange-200 dark:border-orange-900/30">
-                    <th className="text-right p-4 font-semibold w-8">
+            <>
+              {/* Desktop table */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b-2 border-border">
+                      <th className="text-right p-3 font-semibold w-8"></th>
+                      <th className="text-right p-3 font-semibold">{tc("الاسم", "Name")}</th>
+                      <th className="text-right p-3 font-semibold">{tc("رقم الهاتف", "Phone")}</th>
+                      <th className="text-right p-3 font-semibold">{tc("المسمى", "Title")}</th>
+                      <th className="text-right p-3 font-semibold">{tc("الدور", "Role")}</th>
+                      <th className="text-right p-3 font-semibold">{tc("الدوام", "Schedule")}</th>
+                      <th className="text-right p-3 font-semibold">{tc("الحالة", "Status")}</th>
+                      <th className="text-right p-3 font-semibold">{tc("الإجراءات", "Actions")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredEmployees.map((emp: Employee) => (
+                      <tr key={emp.id} className="border-b border-border hover:bg-muted/30 transition-colors">
+                        <td className="p-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedEmployees.has(emp.id)}
+                            onChange={() => handleSelectEmployee(emp.id)}
+                            className="w-4 h-4"
+                            data-testid={`checkbox-employee-${emp.id}`}
+                          />
+                        </td>
+                        <td className="p-3 font-medium">{emp.fullName}</td>
+                        <td className="p-3 text-muted-foreground text-xs" dir="ltr">{emp.phone}</td>
+                        <td className="p-3 text-muted-foreground text-xs">{emp.jobTitle}</td>
+                        <td className="p-3">
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+                            {getRoleLabel(emp.role)}
+                          </span>
+                        </td>
+                        <td className="p-3 text-xs text-muted-foreground">
+                          {(emp as any).shiftStartTime && (emp as any).shiftEndTime
+                            ? <span dir="ltr">{(emp as any).shiftStartTime} - {(emp as any).shiftEndTime}</span>
+                            : <span className="text-muted-foreground/40">—</span>}
+                        </td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                            emp.isActivated === 1
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400'
+                              : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+                          }`}>
+                            {emp.isActivated === 1 ? tc('نشط','Active') : tc('معطل','Inactive')}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex gap-1">
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0"
+                              onClick={() => { setEditingId(emp.id); setBranchId((emp as any).branchId || ''); setFormData({ fullName: emp.fullName, username: emp.username, phone: emp.phone, jobTitle: emp.jobTitle, role: emp.role, shiftStartTime: (emp as any).shiftStartTime || '', shiftEndTime: (emp as any).shiftEndTime || '', workDays: (emp as any).workDays || [], allowedPages: (emp as any).allowedPages || [], permissions: (emp as any).permissions || [] }); setShowAddForm(false); }}
+                              data-testid={`button-edit-${emp.id}`}>
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="sm" className={`h-8 w-8 p-0 ${(emp as any).faceEnrolledAt ? "text-emerald-600" : "text-gray-400 hover:text-indigo-600"}`}
+                              onClick={() => navigate(`/admin/employees/${emp.id}/face-enrollment`)}
+                              data-testid={`button-face-${emp.id}`}>
+                              <Shield className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                              onClick={() => deleteMutation.mutate(emp.id)}
+                              data-testid={`button-delete-${emp.id}`}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile cards */}
+              <div className="md:hidden space-y-3">
+                {filteredEmployees.map((emp: Employee) => (
+                  <div key={emp.id} className={`rounded-xl border p-3 transition-colors ${selectedEmployees.has(emp.id) ? 'border-primary/50 bg-primary/5' : 'border-border bg-card'}`}>
+                    <div className="flex items-start gap-3">
                       <input
                         type="checkbox"
-                        checked={selectedEmployees.size === filteredEmployees.length && filteredEmployees.length > 0}
-                        onChange={(e) => handleSelectAll(e.target.checked)}
-                        className="w-4 h-4"
-                        data-testid="checkbox-select-all"
+                        checked={selectedEmployees.has(emp.id)}
+                        onChange={() => handleSelectEmployee(emp.id)}
+                        className="w-4 h-4 mt-1 shrink-0"
+                        data-testid={`checkbox-mobile-${emp.id}`}
                       />
-                    </th>
-                    <th className="text-right p-4 font-semibold">الاسم</th>
-                    <th className="text-right p-4 font-semibold">رقم الهاتف</th>
-                    <th className="text-right p-4 font-semibold">المسمى الوظيفي</th>
-                    <th className="text-right p-4 font-semibold">الدور</th>
-                    <th className="text-right p-4 font-semibold">الحالة</th>
-                    <th className="text-right p-4 font-semibold">الإجراءات</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredEmployees.map((emp: Employee) => (
-                    <tr key={emp.id} className="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                      <td className="p-4">
-                        <input
-                          type="checkbox"
-                          checked={selectedEmployees.has(emp.id)}
-                          onChange={() => handleSelectEmployee(emp.id)}
-                          className="w-4 h-4"
-                          data-testid={`checkbox-employee-${emp.id}`}
-                        />
-                      </td>
-                      <td className="p-4 font-medium">{emp.fullName}</td>
-                      <td className="p-4 text-muted-foreground">{emp.phone}</td>
-                      <td className="p-4 text-muted-foreground">{emp.jobTitle}</td>
-                      <td className="p-4">
-                        <span className="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
-                          {emp.role === 'cashier' ? 'كاشير' : emp.role === 'barista' ? 'باريستا' : emp.role === 'manager' ? 'مدير' : emp.role === 'driver' ? 'سائق' : emp.role}
-                        </span>
-                      </td>
-                      <td className="p-4">
-                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          emp.isActivated === 1
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400'
-                            : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                        }`}>
-                          {emp.isActivated === 1 ? 'نشط' : 'معطل'}
-                        </span>
-                      </td>
-                      <td className="p-4">
-                        <div className="flex gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setEditingId(emp.id);
-                              setFormData({
-                                fullName: emp.fullName,
-                                username: emp.username,
-                                phone: emp.phone,
-                                jobTitle: emp.jobTitle,
-                                role: emp.role,
-                                allowedPages: (emp as any).allowedPages || [],
-                                permissions: (emp as any).permissions || [],
-                              });
-                              setShowAddForm(false);
-                            }}
-                            data-testid={`button-edit-${emp.id}`}
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
-                            onClick={() => deleteMutation.mutate(emp.id)}
-                            data-testid={`button-delete-${emp.id}`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="font-semibold text-sm truncate">{emp.fullName}</span>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium shrink-0 ${
+                            emp.isActivated === 1
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400'
+                              : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+                          }`}>
+                            {emp.isActivated === 1 ? tc('نشط','Active') : tc('معطل','Inactive')}
+                          </span>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground mb-2">
+                          <span dir="ltr">{emp.phone}</span>
+                          {emp.jobTitle && <span>{emp.jobTitle}</span>}
+                          {(emp as any).shiftStartTime && <span dir="ltr">{(emp as any).shiftStartTime} - {(emp as any).shiftEndTime}</span>}
+                        </div>
+                        <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+                          {getRoleLabel(emp.role)}
+                        </span>
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0"
+                          onClick={() => { setEditingId(emp.id); setBranchId((emp as any).branchId || ''); setFormData({ fullName: emp.fullName, username: emp.username, phone: emp.phone, jobTitle: emp.jobTitle, role: emp.role, shiftStartTime: (emp as any).shiftStartTime || '', shiftEndTime: (emp as any).shiftEndTime || '', workDays: (emp as any).workDays || [], allowedPages: (emp as any).allowedPages || [], permissions: (emp as any).permissions || [] }); setShowAddForm(false); }}
+                          data-testid={`button-mobile-edit-${emp.id}`}>
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                          onClick={() => deleteMutation.mutate(emp.id)}
+                          data-testid={`button-mobile-delete-${emp.id}`}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           ) : (
             <div className="text-center py-12">
-              <h3 className="text-lg font-semibold mb-2">لا توجد موظفون</h3>
-              <p className="text-muted-foreground">ابدأ بإضافة موظف جديد</p>
+              <h3 className="text-lg font-semibold mb-2">{tc("لا توجد موظفون", "No employees found")}</h3>
+              <p className="text-muted-foreground">{tc("ابدأ بإضافة موظف جديد", "Start by adding a new employee")}</p>
             </div>
           )}
         </CardContent>

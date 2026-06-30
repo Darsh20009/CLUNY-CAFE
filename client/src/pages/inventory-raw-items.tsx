@@ -1,3 +1,4 @@
+import { useTranslate, tc } from "@/lib/useTranslate";
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -47,29 +48,29 @@ import {
   CheckCircle,
 } from "lucide-react";
 
-const categoryLabels: Record<string, { label: string; icon: any; color: string }> = {
+const categoryLabels: Record<string, { labelAr: string; labelEn: string; icon: any; color: string }> = {
   ingredient: { 
-    label: "مكون", 
+    labelAr: "مكون", labelEn: "Ingredient", 
     icon: Coffee,
-    color: "bg-primary text-accent border-primary dark:bg-primary/30 dark:text-accent dark:border-primary"
+    color: "bg-green-100 text-green-800 border-green-200"
   },
   packaging: { 
-    label: "تغليف", 
+    labelAr: "تغليف", labelEn: "Packaging", 
     icon: Box,
     color: "bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700"
   },
   equipment: { 
-    label: "معدات", 
+    labelAr: "معدات", labelEn: "Equipment", 
     icon: Wrench,
     color: "bg-slate-100 text-slate-800 border-slate-200 dark:bg-card/30 dark:text-slate-300 dark:border-slate-700"
   },
   consumable: { 
-    label: "مستهلكات", 
+    labelAr: "مستهلكات", labelEn: "Consumable", 
     icon: Droplet,
     color: "bg-green-100 text-green-800 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700"
   },
   other: { 
-    label: "أخرى", 
+    labelAr: "أخرى", labelEn: "Other", 
     icon: HelpCircle,
     color: "bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-900/30 dark:text-gray-300 dark:border-gray-700"
   },
@@ -94,6 +95,7 @@ interface RawItem {
   category: string;
   unit: string;
   unitCost: number;
+  currentStock: number;
   minStockLevel: number;
   maxStockLevel?: number;
   supplierId?: string;
@@ -102,6 +104,7 @@ interface RawItem {
 
 export default function InventoryRawItemsPage() {
   const { toast } = useToast();
+  const tc = useTranslate();
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -114,7 +117,7 @@ export default function InventoryRawItemsPage() {
     nameEn: "",
     description: "",
     category: "ingredient",
-    unit: "kg",
+    unit: "g",
     unitCost: 0,
     minStockLevel: 0,
     maxStockLevel: 0,
@@ -130,10 +133,10 @@ export default function InventoryRawItemsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/raw-items"] });
       setIsAddDialogOpen(false);
       resetForm();
-      toast({ title: "تم إضافة المادة الخام بنجاح" });
+      toast({ title: tc("تم إضافة المادة الخام بنجاح", "Raw material added successfully") });
     },
     onError: (error: any) => {
-      toast({ title: error.message || "فشل في إضافة المادة الخام", variant: "destructive" });
+      toast({ title: error.message || tc("فشل في إضافة المادة الخام", "Failed to add raw material"), variant: "destructive" });
     },
   });
 
@@ -145,10 +148,10 @@ export default function InventoryRawItemsPage() {
       setIsEditDialogOpen(false);
       setSelectedItem(null);
       resetForm();
-      toast({ title: "تم تحديث المادة الخام بنجاح" });
+      toast({ title: tc("تم تحديث المادة الخام بنجاح", "Raw material updated successfully") });
     },
     onError: (error: any) => {
-      toast({ title: error.message || "فشل في تحديث المادة الخام", variant: "destructive" });
+      toast({ title: error.message || tc("فشل في تحديث المادة الخام", "Failed to update raw material"), variant: "destructive" });
     },
   });
 
@@ -156,10 +159,10 @@ export default function InventoryRawItemsPage() {
     mutationFn: (id: string) => apiRequest("DELETE", `/api/inventory/raw-items/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/raw-items"] });
-      toast({ title: "تم حذف المادة الخام بنجاح" });
+      toast({ title: tc("تم حذف المادة الخام بنجاح", "Raw material deleted successfully") });
     },
     onError: (error: any) => {
-      toast({ title: error.message || "فشل في حذف المادة الخام", variant: "destructive" });
+      toast({ title: error.message || tc("فشل في حذف المادة الخام", "Failed to delete raw material"), variant: "destructive" });
     },
   });
 
@@ -170,7 +173,7 @@ export default function InventoryRawItemsPage() {
       nameEn: "",
       description: "",
       category: "ingredient",
-      unit: "kg",
+      unit: "g",
       unitCost: 0,
       minStockLevel: 0,
       maxStockLevel: 0,
@@ -194,7 +197,7 @@ export default function InventoryRawItemsPage() {
   };
 
   const handleDelete = (id: string) => {
-    if (confirm("هل أنت متأكد من حذف هذه المادة الخام؟")) {
+    if (confirm(tc("هل أنت متأكد من حذف هذه المادة الخام؟", "Are you sure you want to delete this raw material?"))) {
       deleteMutation.mutate(id);
     }
   };
@@ -230,15 +233,15 @@ export default function InventoryRawItemsPage() {
   }
 
   return (
-    <div className="p-6 space-y-6" dir="rtl">
+    <div className="min-h-screen bg-white text-gray-900 p-6 space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-4">
-          <div className="p-3 rounded-2xl bg-gradient-to-br from-amber-100 to-amber-200 dark:from-amber-900/50 dark:to-amber-800/50">
-            <Package className="h-8 w-8 text-accent dark:text-accent" />
+          <div className="p-3 rounded-2xl bg-gradient-to-br from-green-100 to-green-200 shadow-sm shadow-green-200">
+            <Package className="h-8 w-8 text-green-700" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold">المواد الخام</h1>
-            <p className="text-muted-foreground text-sm">إدارة المواد الخام والمكونات</p>
+            <h1 className="text-2xl font-bold">{tc("المواد الخام", "Raw Materials")}</h1>
+            <p className="text-muted-foreground text-sm">{tc("إدارة المواد الخام والمكونات", "Manage raw materials and ingredients")}</p>
           </div>
         </div>
         <Button 
@@ -252,36 +255,36 @@ export default function InventoryRawItemsPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-xl border p-4 bg-gradient-to-br from-amber-50 to-amber-100 dark:from-amber-900/30 dark:to-amber-800/30 border-primary dark:border-primary">
+        <div className="rounded-xl border p-4 bg-gradient-to-br from-primary/5 to-primary/10 dark:from-primary/20 dark:to-primary/10 border-primary dark:border-primary">
           <div className="flex items-center justify-between gap-2 mb-2">
-            <span className="text-sm font-medium text-muted-foreground">إجمالي المواد</span>
+            <span className="text-sm font-medium text-muted-foreground">{tc("إجمالي المواد", "Total Items")}</span>
             <Package className="h-4 w-4 text-accent" />
           </div>
           <div className="text-3xl font-bold text-accent dark:text-accent">{rawItems.length}</div>
-          <p className="text-xs text-muted-foreground mt-1">مادة خام مسجلة</p>
+          <p className="text-xs text-muted-foreground mt-1">{tc("مادة خام مسجلة", "registered materials")}</p>
         </div>
 
         <div className="rounded-xl border p-4 bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/30 dark:to-blue-800/30 border-blue-200 dark:border-blue-700">
           <div className="flex items-center justify-between gap-2 mb-2">
-            <span className="text-sm font-medium text-muted-foreground">المكونات</span>
+            <span className="text-sm font-medium text-muted-foreground">{tc("المكونات", "Ingredients")}</span>
             <Coffee className="h-4 w-4 text-blue-600" />
           </div>
           <div className="text-3xl font-bold text-blue-700 dark:text-blue-300">{categoryCounts['ingredient'] || 0}</div>
-          <p className="text-xs text-muted-foreground mt-1">مكون رئيسي</p>
+          <p className="text-xs text-muted-foreground mt-1">{tc("مكون رئيسي", "main ingredients")}</p>
         </div>
 
         <div className="rounded-xl border p-4 bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/30 dark:to-green-800/30 border-green-200 dark:border-green-700">
           <div className="flex items-center justify-between gap-2 mb-2">
-            <span className="text-sm font-medium text-muted-foreground">التغليف</span>
+            <span className="text-sm font-medium text-muted-foreground">{tc("التغليف", "Packaging")}</span>
             <Box className="h-4 w-4 text-green-600" />
           </div>
           <div className="text-3xl font-bold text-green-700 dark:text-green-300">{categoryCounts['packaging'] || 0}</div>
-          <p className="text-xs text-muted-foreground mt-1">مادة تغليف</p>
+          <p className="text-xs text-muted-foreground mt-1">{tc("مادة تغليف", "packaging materials")}</p>
         </div>
 
         <div className="rounded-xl border p-4 bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/30 dark:to-purple-800/30 border-purple-200 dark:border-purple-700">
           <div className="flex items-center justify-between gap-2 mb-2">
-            <span className="text-sm font-medium text-muted-foreground">متوسط التكلفة</span>
+            <span className="text-sm font-medium text-muted-foreground">{tc("متوسط التكلفة", "Avg. Cost")}</span>
             <CircleDollarSign className="h-4 w-4 text-purple-600" />
           </div>
           <div className="text-3xl font-bold text-black dark:text-black">
@@ -297,7 +300,7 @@ export default function InventoryRawItemsPage() {
             <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="بحث بالاسم أو الكود..."
+                placeholder={tc("بحث بالاسم أو الكود...", "Search by name or code...")}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pr-10"
@@ -306,15 +309,15 @@ export default function InventoryRawItemsPage() {
             </div>
             <Select value={categoryFilter} onValueChange={setCategoryFilter}>
               <SelectTrigger className="w-[180px]" data-testid="select-category-filter">
-                <SelectValue placeholder="الفئة" />
+                <SelectValue placeholder={tc("الفئة", "Category")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">جميع الفئات</SelectItem>
-                {Object.entries(categoryLabels).map(([key, { label, icon: Icon }]) => (
+                <SelectItem value="all">{tc("جميع الفئات", "All Categories")}</SelectItem>
+                {Object.entries(categoryLabels).map(([key, { labelAr, labelEn, icon: Icon }]) => (
                   <SelectItem key={key} value={key}>
                     <div className="flex items-center gap-2">
                       <Icon className="h-4 w-4" />
-                      {label}
+                      {tc(labelAr, labelEn)}
                     </div>
                   </SelectItem>
                 ))}
@@ -327,13 +330,14 @@ export default function InventoryRawItemsPage() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead className="text-right">الكود</TableHead>
-                  <TableHead className="text-right">الاسم</TableHead>
-                  <TableHead className="text-right">الفئة</TableHead>
-                  <TableHead className="text-right">الوحدة</TableHead>
-                  <TableHead className="text-right">التكلفة</TableHead>
-                  <TableHead className="text-right">الحد الأدنى</TableHead>
-                  <TableHead className="text-right">الإجراءات</TableHead>
+                  <TableHead className="text-right">{tc("الكود", "Code")}</TableHead>
+                  <TableHead className="text-right">{tc("الاسم", "Name")}</TableHead>
+                  <TableHead className="text-right">{tc("الفئة", "Category")}</TableHead>
+                  <TableHead className="text-right">{tc("الوحدة", "Unit")}</TableHead>
+                  <TableHead className="text-right">{tc("التكلفة", "Cost")}</TableHead>
+                  <TableHead className="text-right">{tc("المخزون المتبقي", "Current Stock")}</TableHead>
+                  <TableHead className="text-right">{tc("الحد الأدنى", "Min Level")}</TableHead>
+                  <TableHead className="text-right">{tc("الإجراءات", "Actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -341,8 +345,8 @@ export default function InventoryRawItemsPage() {
                   <TableRow>
                     <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                       <Package className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                      <p className="font-medium">لا توجد مواد خام</p>
-                      <p className="text-sm">أضف مواد خام جديدة للبدء</p>
+                      <p className="font-medium">{tc("لا توجد مواد خام", "No raw materials found")}</p>
+                      <p className="text-sm">{tc("أضف مواد خام جديدة للبدء", "Add new raw materials to get started")}</p>
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -375,7 +379,7 @@ export default function InventoryRawItemsPage() {
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={categoryInfo.color}>
-                            {categoryInfo.label}
+                            {tc(categoryInfo.labelAr, categoryInfo.labelEn)}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -384,6 +388,23 @@ export default function InventoryRawItemsPage() {
                         <TableCell>
                           <span className="font-medium">{item.unitCost.toFixed(2)}</span>
                           <span className="text-muted-foreground mr-1"><SarIcon /></span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            {(item.currentStock ?? 0) <= 0 ? (
+                              <Badge variant="outline" className="bg-red-50 text-red-700 border-red-300 dark:bg-red-900/30 dark:text-red-400 dark:border-red-700">
+                                نفاد
+                              </Badge>
+                            ) : (item.currentStock ?? 0) <= item.minStockLevel ? (
+                              <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700">
+                                {item.currentStock} {unitLabels[item.unit]}
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700">
+                                {item.currentStock ?? 0} {unitLabels[item.unit]}
+                              </Badge>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
@@ -414,8 +435,13 @@ export default function InventoryRawItemsPage() {
                               variant="ghost"
                               onClick={() => handleDelete(item.id)}
                               data-testid={`button-delete-${item.id}`}
+                              disabled={deleteMutation.isPending}
                             >
-                              <Trash2 className="h-4 w-4 text-destructive" />
+                              {deleteMutation.isPending ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              )}
                             </Button>
                           </div>
                         </TableCell>
@@ -430,7 +456,7 @@ export default function InventoryRawItemsPage() {
       </Card>
 
       <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-        <DialogContent className="max-w-2xl bg-[#F5F5DC]" dir="rtl">
+        <DialogContent className="max-w-2xl bg-white">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Plus className="h-5 w-5 text-accent" />
@@ -440,7 +466,7 @@ export default function InventoryRawItemsPage() {
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="code">الكود *</Label>
+                <Label htmlFor="code">{tc("الكود *", "Code *")}</Label>
                 <Input
                   id="code"
                   value={formData.code}
@@ -450,19 +476,19 @@ export default function InventoryRawItemsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="nameAr">الاسم بالعربي *</Label>
+                <Label htmlFor="nameAr">{tc("الاسم بالعربي *", "Arabic Name *")}</Label>
                 <Input
                   id="nameAr"
                   value={formData.nameAr}
                   onChange={(e) => setFormData({ ...formData, nameAr: e.target.value })}
-                  placeholder="حبوب قهوة"
+                  placeholder={tc("حبوب قهوة", "Coffee beans")}
                   data-testid="input-name-ar"
                 />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="nameEn">الاسم بالإنجليزي</Label>
+                <Label htmlFor="nameEn">{tc("الاسم بالإنجليزي", "English Name")}</Label>
                 <Input
                   id="nameEn"
                   value={formData.nameEn}
@@ -472,7 +498,7 @@ export default function InventoryRawItemsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="category">الفئة *</Label>
+                <Label htmlFor="category">{tc("الفئة *", "Category *")}</Label>
                 <Select
                   value={formData.category}
                   onValueChange={(value) => setFormData({ ...formData, category: value })}
@@ -481,11 +507,11 @@ export default function InventoryRawItemsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {Object.entries(categoryLabels).map(([key, { label, icon: Icon }]) => (
+                    {Object.entries(categoryLabels).map(([key, { labelAr, labelEn, icon: Icon }]) => (
                       <SelectItem key={key} value={key}>
                         <div className="flex items-center gap-2">
                           <Icon className="h-4 w-4" />
-                          {label}
+                          {tc(labelAr, labelEn)}
                         </div>
                       </SelectItem>
                     ))}
@@ -495,7 +521,7 @@ export default function InventoryRawItemsPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="unit">الوحدة *</Label>
+                <Label htmlFor="unit">{tc("الوحدة *", "Unit *")}</Label>
                 <Select
                   value={formData.unit}
                   onValueChange={(value) => setFormData({ ...formData, unit: value })}
@@ -525,7 +551,7 @@ export default function InventoryRawItemsPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="minStockLevel">الحد الأدنى للمخزون *</Label>
+                <Label htmlFor="minStockLevel">{tc("الحد الأدنى للمخزون *", "Min Stock Level *")}</Label>
                 <Input
                   id="minStockLevel"
                   type="number"
@@ -536,7 +562,7 @@ export default function InventoryRawItemsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="maxStockLevel">الحد الأقصى للمخزون</Label>
+                <Label htmlFor="maxStockLevel">{tc("الحد الأقصى للمخزون", "Max Stock Level")}</Label>
                 <Input
                   id="maxStockLevel"
                   type="number"
@@ -548,18 +574,18 @@ export default function InventoryRawItemsPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="description">الوصف</Label>
+              <Label htmlFor="description">{tc("الوصف", "Description")}</Label>
               <Input
                 id="description"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="وصف المادة الخام..."
+                placeholder={tc("وصف المادة الخام...", "Raw material description...")}
                 data-testid="input-description"
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>إلغاء</Button>
+            <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>{tc("إلغاء", "Cancel")}</Button>
             <Button
               onClick={() => createMutation.mutate(formData)}
               disabled={createMutation.isPending || !formData.code || !formData.nameAr}
@@ -574,7 +600,7 @@ export default function InventoryRawItemsPage() {
       </Dialog>
 
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="max-w-2xl bg-[#F5F5DC]" dir="rtl">
+        <DialogContent className="max-w-2xl bg-white">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Edit className="h-5 w-5 text-accent" />
@@ -622,11 +648,11 @@ export default function InventoryRawItemsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {Object.entries(categoryLabels).map(([key, { label, icon: Icon }]) => (
+                    {Object.entries(categoryLabels).map(([key, { labelAr, labelEn, icon: Icon }]) => (
                       <SelectItem key={key} value={key}>
                         <div className="flex items-center gap-2">
                           <Icon className="h-4 w-4" />
-                          {label}
+                          {tc(labelAr, labelEn)}
                         </div>
                       </SelectItem>
                     ))}
@@ -699,7 +725,7 @@ export default function InventoryRawItemsPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>إلغاء</Button>
+            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>{tc("إلغاء", "Cancel")}</Button>
             <Button
               onClick={() => selectedItem && updateMutation.mutate({ id: selectedItem.id, data: formData })}
               disabled={updateMutation.isPending || !formData.code || !formData.nameAr}

@@ -72,7 +72,7 @@ export function OrderMeta({
       const bName = getBranchName();
       return (
         <div className="flex flex-col gap-2">
-          <Badge className="bg-amber-600/80 text-white flex items-center gap-1 w-fit" data-testid={`badge-delivery-type-${orderId}`}>
+          <Badge className="bg-primary/80 text-primary-foreground flex items-center gap-1 w-fit" data-testid={`badge-delivery-type-${orderId}`}>
             <Coffee className="w-3 h-3" />
             جلوس في الكافيه
           </Badge>
@@ -109,8 +109,7 @@ export function OrderMeta({
         </div>
       )}
 
-      {/* Payment Receipt Button - Removed from customer view per request */}
-      {/* 
+      {/* Payment Receipt Button */}
       {paymentReceiptUrl && (
         <div>
           <p className="text-gray-400 text-xs mb-1">إيصال الدفع</p>
@@ -126,7 +125,6 @@ export function OrderMeta({
           </Button>
         </div>
       )}
-      */}
 
       {/* Payment Receipt Dialog */}
       <PaymentReceiptDialog

@@ -1,302 +1,441 @@
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, useLocation, Link } from "wouter";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { LoadingState, EmptyState } from "@/components/ui/states";
 import SarIcon from "@/components/sar-icon";
-import { 
-  Package, MapPin, Clock, Phone, User, CheckCircle, 
-  Truck, Coffee, ArrowRight, Home, RefreshCw
+import {
+  Package, MapPin, Clock, Phone, User, CheckCircle,
+  Truck, Coffee, Home, RefreshCw, Star, XCircle,
+  MessageCircle, Navigation, ChevronRight, Map
 } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { useTranslate } from "@/lib/useTranslate";
+import { isCapacitorNative } from "@/lib/server-url";
+import AppleMap, { MapLocation } from "@/components/apple-map";
 
-interface DeliveryOrder {
-  _id: string;
-  id?: string;
-  orderId: string;
-  orderNumber?: string;
-  status: string;
-  customerName: string;
-  customerPhone: string;
-  customerAddress: string;
-  customerLocation?: { lat: number; lng: number };
-  driverName?: string;
-  driverPhone?: string;
-  driverLocation?: { lat: number; lng: number };
-  branchName?: string;
-  estimatedDeliveryTime?: string;
-  estimatedMinutes?: number;
-  totalAmount: number;
-  items?: Array<{ name: string; quantity: number }>;
-  createdAt: string;
-  assignedAt?: string;
-  pickedUpAt?: string;
-  deliveredAt?: string;
+/** Thin wrapper used inside LiveDeliveryMap */
+function AppleDeliveryMap({ origin, destination }: { origin?: MapLocation; destination?: MapLocation }) {
+  if (!destination && !origin) return null;
+  return (
+    <AppleMap
+      mode={origin && destination ? "route" : "view"}
+      origin={origin}
+      destination={destination}
+      center={destination || origin}
+      height="220px"
+      interactive={false}
+    />
+  );
 }
 
-const STATUS_STEPS = [
-  { key: "pending", label: "جاري التجهيز", icon: Package },
-  { key: "assigned", label: "تم تعيين المندوب", icon: User },
-  { key: "picked_up", label: "تم الاستلام", icon: Coffee },
-  { key: "on_the_way", label: "في الطريق", icon: Truck },
-  { key: "delivered", label: "تم التوصيل", icon: CheckCircle },
+const STATUS_STEPS_DATA = [
+  { key: "pending",    labelAr: "جاري التجهيز",          labelEn: "Preparing",              icon: Coffee,       color: "#f59e0b" },
+  { key: "accepted",   labelAr: "تم قبول الطلب",          labelEn: "Order Accepted",          icon: CheckCircle,  color: "#6366f1" },
+  { key: "assigned",   labelAr: "تم تعيين المندوب",       labelEn: "Driver Assigned",         icon: User,         color: "#8b5cf6" },
+  { key: "picking_up", labelAr: "المندوب في الطريق للفرع", labelEn: "Driver Heading to Branch", icon: Truck,        color: "#f97316" },
+  { key: "on_the_way", labelAr: "في الطريق إليك",          labelEn: "On the Way",              icon: Navigation,   color: "#0ea5e9" },
+  { key: "delivered",  labelAr: "تم التوصيل بنجاح",        labelEn: "Delivered",               icon: CheckCircle,  color: "#22c55e" },
 ];
 
-const getStatusIndex = (status: string): number => {
-  const idx = STATUS_STEPS.findIndex(s => s.key === status);
+function getStepIndex(status: string) {
+  const idx = STATUS_STEPS_DATA.findIndex((s) => s.key === status);
   return idx >= 0 ? idx : 0;
-};
+}
 
-const getProgressPercent = (status: string): number => {
-  const idx = getStatusIndex(status);
-  return ((idx + 1) / STATUS_STEPS.length) * 100;
-};
+/* ────────────── Live Map Component (Apple MapKit JS) ────────────── */
+function LiveDeliveryMap({ order }: { order: any }) {
+  const customerLat = order.customerLat || order.deliveryAddress?.lat;
+  const customerLng = order.customerLng || order.deliveryAddress?.lng;
+  const driverLat = order.driverLocation?.lat;
+  const driverLng = order.driverLocation?.lng;
+
+  const hasCustomer = !!(customerLat && customerLng);
+  const hasDriver = !!(driverLat && driverLng);
+  const isOnTheWay = ["on_the_way", "picking_up", "assigned"].includes(order.status);
+
+  if (!hasCustomer && !hasDriver) return null;
+
+  const openInAppleMaps = () => {
+    if (hasDriver && isOnTheWay) {
+      window.open(`maps://?saddr=${driverLat},${driverLng}&daddr=${customerLat},${customerLng}&dirflg=d`, "_blank");
+    } else if (hasCustomer) {
+      window.open(`maps://?q=موقع+التوصيل&ll=${customerLat},${customerLng}&z=15`, "_blank");
+    }
+  };
+
+  const originPin = hasDriver && isOnTheWay
+    ? { lat: driverLat!, lng: driverLng!, label: "المندوب", color: "#0ea5e9" }
+    : hasCustomer
+    ? { lat: customerLat!, lng: customerLng!, label: "موقعك", color: "#22c55e" }
+    : undefined;
+
+  const destPin = hasCustomer
+    ? { lat: customerLat!, lng: customerLng!, label: "موقعك", color: "#22c55e" }
+    : undefined;
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <MapPin className="w-4 h-4 text-primary" />
+          <span className="text-white text-sm font-medium">
+            {isOnTheWay && hasDriver ? "تتبع المندوب مباشرة" : "موقع التوصيل"}
+          </span>
+        </div>
+        {isOnTheWay && hasDriver && (
+          <span className="flex items-center gap-1.5 text-xs text-sky-400">
+            <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
+            مباشر
+          </span>
+        )}
+      </div>
+
+      {/* Apple MapKit JS embedded map */}
+      {originPin && destPin && hasDriver && isOnTheWay ? (
+        <AppleDeliveryMap origin={originPin} destination={destPin} />
+      ) : destPin ? (
+        <AppleDeliveryMap destination={destPin} />
+      ) : null}
+
+      <div className="px-4 py-2 flex items-center justify-between text-xs text-gray-500 border-t border-gray-800">
+        <div className="flex items-center gap-3">
+          {hasDriver && isOnTheWay && (
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-3 rounded-full bg-sky-400 inline-block" /> المندوب
+            </span>
+          )}
+          {hasCustomer && (
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-3 rounded-full bg-green-500 inline-block" /> موقعك
+            </span>
+          )}
+        </div>
+        <button
+          onClick={openInAppleMaps}
+          className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
+          data-testid="button-open-apple-maps"
+        >
+          <Map className="w-3.5 h-3.5" />
+          {isCapacitorNative() ? "فتح في خرائط Apple" : "الاتجاهات"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function DeliveryTracking() {
   const [, params] = useRoute("/delivery/track/:orderId");
   const [, setLocation] = useLocation();
   const orderId = params?.orderId;
+  const [showRating, setShowRating] = useState(false);
+  const [rating, setRating] = useState(0);
+  const [ratingDone, setRatingDone] = useState(false);
+  const { toast } = useToast();
+  const tc = useTranslate();
 
   useEffect(() => {
-    document.title = "تتبع التوصيل - CLUNY CAFE";
+    document.title = tc("تتبع التوصيل", "Delivery Tracking");
   }, []);
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['/api/delivery/orders/by-order', orderId],
+    queryKey: ["/api/delivery/orders/by-order", orderId],
     enabled: !!orderId,
-    refetchInterval: 30000,
+    refetchInterval: 6000,
   });
 
-  const order = (data as any)?.order as DeliveryOrder | undefined;
+  const order = (data as any)?.order as any;
+
+  const rateMutation = useMutation({
+    mutationFn: (r: number) => apiRequest("PATCH", `/api/delivery/orders/${order?.id}/rate`, { rating: r }),
+    onSuccess: () => {
+      setRatingDone(true);
+      toast({ title: tc("شكراً على تقييمك!", "Thank you for your rating!") });
+    },
+  });
 
   if (!orderId) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4" dir="rtl">
-        <Card className="w-full max-w-md text-center">
-          <CardHeader>
-            <Package className="w-16 h-16 mx-auto text-muted-foreground mb-4" />
-            <CardTitle>تتبع التوصيل</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground mb-4">يرجى إدخال رقم الطلب للتتبع</p>
-            <Link href="/menu">
-              <Button className="w-full">
-                <ArrowRight className="w-4 h-4 ml-2" />
-                العودة للقائمة
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
+        <div className="text-center space-y-4">
+          <Package className="w-16 h-16 mx-auto text-gray-600" />
+          <h2 className="text-white text-xl font-bold">{tc("تتبع طلبك", "Track Your Order")}</h2>
+          <p className="text-gray-500">{tc("أدخل رقم الطلب لمتابعته", "Enter the order number to track it")}</p>
+          <Link href="/menu">
+            <Button className="bg-primary hover:bg-primary/90">{tc("العودة للقائمة", "Back to Menu")}</Button>
+          </Link>
+        </div>
       </div>
     );
   }
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background p-4" dir="rtl">
-        <LoadingState />
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="space-y-3 text-center">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-gray-400 text-sm">{tc("جاري تحميل بيانات الطلب...", "Loading order data...")}</p>
+        </div>
       </div>
     );
   }
 
   if (error || !order) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4" dir="rtl">
-        <Card className="w-full max-w-md text-center">
-          <CardHeader>
-            <Package className="w-16 h-16 mx-auto text-muted-foreground mb-4" />
-            <CardTitle>لم يتم العثور على الطلب</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground mb-4">تأكد من رقم الطلب وحاول مرة أخرى</p>
-            <Link href="/menu">
-              <Button className="w-full">
-                <Home className="w-4 h-4 ml-2" />
-                العودة للقائمة
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
+        <div className="text-center space-y-4">
+          <XCircle className="w-16 h-16 mx-auto text-red-500" />
+          <h2 className="text-white text-xl font-bold">{tc("لم يتم العثور على الطلب", "Order Not Found")}</h2>
+          <p className="text-gray-500">{tc("تأكد من رقم الطلب وحاول مرة أخرى", "Verify the order number and try again")}</p>
+          <Link href="/menu">
+            <Button variant="outline" className="border-gray-700 text-gray-300">{tc("العودة للقائمة", "Back to Menu")}</Button>
+          </Link>
+        </div>
       </div>
     );
   }
 
-  const currentStepIndex = getStatusIndex(order.status);
-  const progressPercent = getProgressPercent(order.status);
   const isDelivered = order.status === "delivered";
   const isCancelled = order.status === "cancelled";
+  const currentIdx = getStepIndex(order.status);
+  const progressPct = ((currentIdx + 1) / STATUS_STEPS_DATA.length) * 100;
+  const showMap = !!(order.customerLat || order.customerLng || order.deliveryAddress?.lat);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-primary/5" dir="rtl">
-      <header className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
-        <div className="max-w-lg mx-auto px-4 py-3">
-          <div className="flex items-center justify-between">
-            <Link href="/menu">
-              <Button variant="ghost" size="sm">
-                <ArrowRight className="w-4 h-4 ml-2" />
-                العودة
-              </Button>
-            </Link>
-            <h1 className="font-bold text-foreground">تتبع الطلب</h1>
-            <Button variant="ghost" size="icon" onClick={() => refetch()} data-testid="button-refresh">
-              <RefreshCw className="w-4 h-4" />
-            </Button>
-          </div>
+    <div className="min-h-screen bg-gray-950 text-white" dir="rtl">
+      {/* ── Header ── */}
+      <header className="sticky top-0 z-50 bg-gray-900 border-b border-gray-800">
+        <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
+          <Link href="/menu">
+            <button className="text-gray-400 hover:text-white flex items-center gap-1.5 text-sm">
+              <ChevronRight className="w-4 h-4" />
+              {tc("القائمة", "Menu")}
+            </button>
+          </Link>
+          <h1 className="font-bold text-white">{tc("تتبع الطلب", "Track Order")}</h1>
+          <button onClick={() => refetch()} className="text-gray-400 hover:text-white">
+            <RefreshCw className="w-4 h-4" />
+          </button>
         </div>
       </header>
 
-      <main className="max-w-lg mx-auto px-4 py-6 space-y-6">
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">
-                طلب {order.orderNumber || orderId?.slice(-6)}
-              </CardTitle>
-              {isCancelled ? (
-                <Badge variant="destructive">ملغي</Badge>
-              ) : isDelivered ? (
-                <Badge className="bg-green-500 text-white">تم التوصيل</Badge>
-              ) : (
-                <Badge className="bg-primary text-primary-foreground">جاري التوصيل</Badge>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-sm text-muted-foreground">
-              {new Date(order.createdAt).toLocaleString("ar-SA")}
-            </div>
-          </CardContent>
-        </Card>
+      <main className="max-w-lg mx-auto px-4 py-5 space-y-4">
 
+        {/* ── Order Header ── */}
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <p className="text-gray-400 text-xs">{tc("رقم الطلب", "Order Number")}</p>
+              <p className="text-white font-black text-xl">#{order.orderNumber || orderId?.slice(-6)}</p>
+            </div>
+            {isCancelled ? (
+              <Badge className="bg-red-500/20 text-red-400 border-0">{tc("ملغي", "Cancelled")}</Badge>
+            ) : isDelivered ? (
+              <Badge className="bg-green-500/20 text-green-400 border-0">{tc("تم التوصيل ✓", "Delivered ✓")}</Badge>
+            ) : (
+              <Badge className="bg-primary/20 text-primary border-0 animate-pulse">{tc("جاري التوصيل", "In Delivery")}</Badge>
+            )}
+          </div>
+          <p className="text-gray-500 text-xs">{new Date(order.createdAt).toLocaleString("ar-SA")}</p>
+        </div>
+
+        {/* ── Progress Bar ── */}
         {!isCancelled && (
-          <Card>
-            <CardContent className="pt-6">
-              <div className="mb-4">
-                <Progress value={progressPercent} className="h-2" />
-              </div>
-              
-              <div className="space-y-4">
-                {STATUS_STEPS.map((step, idx) => {
-                  const Icon = step.icon;
-                  const isCompleted = idx <= currentStepIndex;
-                  const isCurrent = idx === currentStepIndex;
-                  
-                  return (
-                    <div 
-                      key={step.key}
-                      className={`flex items-center gap-3 ${
-                        isCompleted ? "text-foreground" : "text-muted-foreground"
-                      }`}
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+            <div className="relative h-1.5 bg-gray-800 rounded-full mb-6 overflow-hidden">
+              <div
+                className="absolute top-0 right-0 h-full bg-primary rounded-full transition-all duration-1000"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+
+            <div className="space-y-4">
+              {STATUS_STEPS_DATA.map((step, idx) => {
+                const Icon = step.icon;
+                const done = idx <= currentIdx;
+                const current = idx === currentIdx;
+                if (idx > currentIdx + 1 && !isDelivered) return null;
+                return (
+                  <div key={step.key} className="flex items-center gap-3">
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
+                      done
+                        ? current
+                          ? "ring-2 ring-offset-2 ring-offset-gray-900"
+                          : ""
+                        : "bg-gray-800"
+                    }`}
+                      style={done ? { backgroundColor: step.color + "22" } : {}}
                     >
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                        isCompleted 
-                          ? isCurrent 
-                            ? "bg-primary text-primary-foreground animate-pulse" 
-                            : "bg-green-500 text-white"
-                          : "bg-muted"
-                      }`}>
-                        <Icon className="w-5 h-5" />
-                      </div>
-                      <div className="flex-1">
-                        <p className={`font-medium ${isCurrent ? "text-primary" : ""}`}>
-                          {step.label}
-                        </p>
-                        {isCurrent && order.estimatedMinutes && (
-                          <p className="text-sm text-muted-foreground flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            ~{order.estimatedMinutes} دقيقة متبقية
-                          </p>
-                        )}
-                      </div>
-                      {isCompleted && <CheckCircle className="w-5 h-5 text-green-500" />}
+                      <Icon
+                        className="w-4 h-4"
+                        style={{ color: done ? step.color : "#4b5563" }}
+                      />
                     </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
+                    <div className="flex-1">
+                      <p className={`text-sm font-medium ${done ? "text-white" : "text-gray-600"}`}>
+                        {tc(step.labelAr, step.labelEn)}
+                      </p>
+                      {current && order.estimatedMinutes && (
+                        <p className="text-xs text-primary flex items-center gap-1 mt-0.5">
+                          <Clock className="w-3 h-3" />
+                          {tc("وقت تقديري:", "Estimated:")} ~{order.estimatedMinutes} {tc("دقيقة", "min")}
+                        </p>
+                      )}
+                    </div>
+                    {done && !current && <CheckCircle className="w-4 h-4 text-green-500" />}
+                    {current && (
+                      <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: step.color }} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         )}
 
-        {order.driverName && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Truck className="w-5 h-5 text-primary" />
-                معلومات المندوب
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="flex items-center gap-2">
-                <User className="w-4 h-4 text-muted-foreground" />
-                <span>{order.driverName}</span>
+        {/* ── Live Map ── */}
+        {!isCancelled && showMap && (
+          <LiveDeliveryMap key={`${order.driverLocation?.lat}-${order.driverLocation?.lng}`} order={order} />
+        )}
+
+        {/* ── Driver Info ── */}
+        {order.driverName && !isCancelled && (
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center">
+                <Truck className="w-6 h-6 text-primary" />
+              </div>
+              <div className="flex-1">
+                <p className="text-gray-400 text-xs mb-0.5">{tc("المندوب", "Driver")}</p>
+                <p className="text-white font-bold">{order.driverName}</p>
               </div>
               {order.driverPhone && (
-                <div className="flex items-center gap-2">
-                  <Phone className="w-4 h-4 text-muted-foreground" />
-                  <a 
-                    href={`tel:${order.driverPhone}`} 
-                    className="text-primary hover:underline"
+                <div className="flex gap-2">
+                  <a
+                    href={`tel:${order.driverPhone}`}
+                    className="w-10 h-10 bg-green-500/20 rounded-full flex items-center justify-center"
                   >
-                    {order.driverPhone}
+                    <Phone className="w-4 h-4 text-green-400" />
+                  </a>
+                  <a
+                    href={`https://wa.me/966${order.driverPhone.replace(/^0/, "")}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="w-10 h-10 bg-green-600/20 rounded-full flex items-center justify-center"
+                  >
+                    <MessageCircle className="w-4 h-4 text-green-500" />
                   </a>
                 </div>
               )}
-            </CardContent>
-          </Card>
-        )}
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <MapPin className="w-5 h-5 text-primary" />
-              عنوان التوصيل
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm">{order.customerAddress}</p>
-          </CardContent>
-        </Card>
-
-        {order.items && order.items.length > 0 && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Coffee className="w-5 h-5 text-primary" />
-                تفاصيل الطلب
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {order.items.map((item, idx) => (
-                  <div key={idx} className="flex justify-between text-sm">
-                    <span>{item.name}</span>
-                    <span className="text-muted-foreground">×{item.quantity}</span>
-                  </div>
-                ))}
-                <div className="border-t pt-2 mt-2 flex justify-between font-bold">
-                  <span>المجموع</span>
-                  <span className="text-primary">{order.totalAmount?.toFixed(2)} <SarIcon /></span>
-                </div>
+            </div>
+            {order.driverRating && (
+              <div className="flex items-center gap-1 mt-3 pt-3 border-t border-gray-800">
+                <Star className="w-4 h-4 text-yellow-400 fill-yellow-400" />
+                <span className="text-yellow-400 text-sm font-bold">{order.driverRating}</span>
+                <span className="text-gray-600 text-xs">{tc("تقييم المندوب", "Driver Rating")}</span>
               </div>
-            </CardContent>
-          </Card>
+            )}
+          </div>
         )}
 
-        {isDelivered && (
-          <Card className="bg-green-50 dark:bg-green-950/20 border-green-200">
-            <CardContent className="pt-6 text-center">
-              <CheckCircle className="w-16 h-16 mx-auto text-green-500 mb-4" />
-              <h3 className="text-xl font-bold text-green-600 mb-2">تم التوصيل بنجاح!</h3>
-              <p className="text-muted-foreground mb-4">شكراً لطلبك من CLUNY CAFE</p>
-              <Link href="/menu">
-                <Button className="w-full">
-                  طلب جديد
+        {/* ── Delivery Address ── */}
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+          <div className="flex items-start gap-3">
+            <MapPin className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="text-gray-400 text-xs mb-1">{tc("عنوان التوصيل", "Delivery Address")}</p>
+              <p className="text-white text-sm">{order.customerAddress || tc("غير محدد", "Not specified")}</p>
+              {order.deliveryFee > 0 && (
+                <p className="text-primary text-xs mt-1">رسوم التوصيل: {order.deliveryFee?.toFixed(2)} <SarIcon size={10} className="inline" /></p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Order Items ── */}
+        {order.items && order.items.length > 0 && (
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+            <p className="text-gray-400 text-xs mb-3 flex items-center gap-2">
+              <Coffee className="w-4 h-4" />
+              {tc("تفاصيل الطلب", "Order Details")}
+            </p>
+            <div className="space-y-2">
+              {order.items.map((item: any, idx: number) => (
+                <div key={idx} className="flex items-center justify-between">
+                  <span className="text-gray-300 text-sm">{item.name}</span>
+                  <span className="text-gray-500 text-sm">×{item.quantity}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 pt-3 border-t border-gray-800 flex items-center justify-between">
+              <span className="text-gray-400 text-sm">{tc("المجموع", "Total")}</span>
+              <span className="text-white font-bold">
+                {order.totalAmount?.toFixed(2)} <SarIcon size={12} className="inline" />
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* ── SUCCESS + RATING ── */}
+        {isDelivered && !ratingDone && (
+          <div className="bg-gradient-to-br from-green-900/50 to-emerald-900/30 border border-green-500/30 rounded-2xl p-5 text-center">
+            <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+              <CheckCircle className="w-10 h-10 text-green-400" />
+            </div>
+            <h3 className="text-xl font-black text-white mb-1">{tc("تم التوصيل بنجاح!", "Delivered Successfully!")}</h3>
+            <p className="text-gray-400 text-sm mb-5">{tc("شكراً لك على طلبك — نتمنى أن تنال إعجابك", "Thank you for your order — we hope you enjoy it")}</p>
+
+            {!showRating ? (
+              <Button
+                onClick={() => setShowRating(true)}
+                className="bg-yellow-500 hover:bg-yellow-400 text-black font-bold w-full h-12 rounded-xl"
+              >
+                <Star className="w-5 h-5 ml-1.5" />
+                {tc("قيّم تجربة التوصيل", "Rate Delivery Experience")}
+              </Button>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-gray-300 text-sm">{tc("كيف كانت خدمة التوصيل؟", "How was the delivery service?")}</p>
+                <div className="flex justify-center gap-2">
+                  {[1, 2, 3, 4, 5].map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => setRating(r)}
+                      className="transition-transform hover:scale-110"
+                    >
+                      <Star className={`w-9 h-9 ${r <= rating ? "fill-yellow-400 text-yellow-400" : "text-gray-600"}`} />
+                    </button>
+                  ))}
+                </div>
+                <Button
+                  onClick={() => { if (rating > 0) rateMutation.mutate(rating); }}
+                  disabled={rating === 0 || rateMutation.isPending}
+                  className="bg-primary hover:bg-primary/90 w-full h-11 rounded-xl"
+                >
+                  {rateMutation.isPending ? tc("جاري الإرسال...", "Sending...") : tc("إرسال التقييم", "Submit Rating")}
                 </Button>
-              </Link>
-            </CardContent>
-          </Card>
+              </div>
+            )}
+
+            <Link href="/menu" className="block mt-3">
+              <Button variant="ghost" className="text-gray-400 w-full">
+                {tc("العودة للقائمة", "Back to Menu")}
+              </Button>
+            </Link>
+          </div>
+        )}
+
+        {ratingDone && (
+          <div className="text-center py-4 space-y-3">
+            <div className="flex justify-center gap-1">
+              {[1,2,3,4,5].map((r) => <Star key={r} className={`w-6 h-6 ${r <= rating ? "fill-yellow-400 text-yellow-400" : "text-gray-700"}`} />)}
+            </div>
+            <p className="text-gray-400 text-sm">{tc("شكراً على تقييمك!", "Thank you for your rating!")}</p>
+            <Link href="/menu">
+              <Button className="bg-primary hover:bg-primary/90 w-full h-11 rounded-xl">{tc("طلب جديد", "New Order")}</Button>
+            </Link>
+          </div>
         )}
       </main>
     </div>

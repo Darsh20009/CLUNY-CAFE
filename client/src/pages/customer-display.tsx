@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useOrderWebSocket } from "@/lib/websocket";
+import { useRealtimeEvent } from "@/hooks/useRealtimeEngine";
 import type { CoffeeItem } from "@shared/schema";
+import clunyLogo from "@assets/cluny-logo-customer.png";
+import { useTranslate } from "@/lib/useTranslate";
 
 type DisplayMode = "idle" | "order-review" | "payment-processing" | "payment-success";
 
@@ -52,6 +54,7 @@ export default function CustomerDisplay() {
   const stripRef = useRef<HTMLDivElement>(null);
   const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
   const highlightTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const tc = useTranslate();
 
   const siteUrl = window.location.origin;
   const qrDataUrl = useQRCode(siteUrl);
@@ -112,11 +115,7 @@ export default function CustomerDisplay() {
     }
   }, [scheduleIdle]);
 
-  useOrderWebSocket({
-    clientType: "pos-display",
-    onPosCartUpdate: handlePosUpdate,
-    enabled: true,
-  });
+  useRealtimeEvent("pos_cart_update", (msg: any) => handlePosUpdate(msg?.payload ?? msg));
 
   useEffect(() => {
     if (stripProducts.length === 0) return;
@@ -155,11 +154,11 @@ export default function CustomerDisplay() {
   }, []);
 
   const branchName = businessConfig?.tradeNameAr || businessConfig?.tradeNameEn || "CLUNY CAFE";
-  const formatPrice = (n: number) => `${n.toFixed(2)} ر.س`;
+  const formatPrice = (n: number) => `${n.toFixed(2)} ${tc("ر.س", "SAR")}`;
 
   return (
     <div
-      className="fixed inset-0 bg-[#0a1628] text-white overflow-hidden select-none"
+      className="fixed inset-0 bg-[#0a0a0a] text-white overflow-hidden select-none"
       style={{ cursor: "none", direction: "rtl" }}
     >
       {state.mode === "idle" && (
@@ -169,6 +168,7 @@ export default function CustomerDisplay() {
           siteUrl={siteUrl}
           products={stripProducts}
           stripRef={stripRef}
+          tc={tc}
         />
       )}
       {state.mode === "order-review" && (
@@ -179,13 +179,14 @@ export default function CustomerDisplay() {
           products={stripProducts}
           stripRef={stripRef}
           formatPrice={formatPrice}
+          tc={tc}
         />
       )}
       {state.mode === "payment-processing" && (
-        <PaymentProcessingScreen state={state} formatPrice={formatPrice} />
+        <PaymentProcessingScreen state={state} formatPrice={formatPrice} tc={tc} />
       )}
       {state.mode === "payment-success" && (
-        <PaymentSuccessScreen state={state} formatPrice={formatPrice} />
+        <PaymentSuccessScreen state={state} formatPrice={formatPrice} tc={tc} />
       )}
     </div>
   );
@@ -197,19 +198,21 @@ function IdleScreen({
   siteUrl,
   products,
   stripRef,
+  tc,
 }: {
   branchName: string;
   qrDataUrl: string | null;
   siteUrl: string;
   products: any[];
   stripRef: React.RefObject<HTMLDivElement>;
+  tc: (ar: string, en: string) => string;
 }) {
   return (
     <div className="flex h-full">
       <div className="flex-1 flex flex-col items-center justify-center gap-6 px-16 py-10 relative">
         <div className="flex flex-col items-center gap-5">
           <img
-            src="/logo.png"
+            src={clunyLogo}
             alt="Logo"
             className="w-44 h-44 object-contain rounded-2xl shadow-2xl"
             onError={(e) => {
@@ -223,22 +226,22 @@ function IdleScreen({
         </div>
 
         <div className="text-center mt-2">
-          <p className="text-2xl text-gray-400 font-light">أهلاً وسهلاً بكم</p>
-          <p className="text-lg text-gray-500 mt-1">في انتظار طلبكم</p>
+          <p className="text-2xl text-gray-400 font-light">{tc("أهلاً وسهلاً بكم", "Welcome")}</p>
+          <p className="text-lg text-gray-500 mt-1">{tc("في انتظار طلبكم", "Awaiting your order")}</p>
         </div>
 
-        <div className="flex flex-col items-center gap-3 mt-4 bg-[#0f2040] rounded-3xl px-8 py-6 border border-[#1e3a5f]">
+        <div className="flex flex-col items-center gap-3 mt-4 bg-[#141414] rounded-3xl px-8 py-6 border border-[#2a2a2a]">
           {qrDataUrl ? (
             <img src={qrDataUrl} alt="QR" className="w-36 h-36 rounded-xl" />
           ) : (
-            <div className="w-36 h-36 bg-[#112035] rounded-xl animate-pulse" />
+            <div className="w-36 h-36 bg-[#1a1a1a] rounded-xl animate-pulse" />
           )}
-          <p className="text-gray-400 text-sm text-center">امسح الباركود لزيارة موقعنا</p>
+          <p className="text-gray-400 text-sm text-center">{tc("امسح الباركود لزيارة موقعنا", "Scan to visit our website")}</p>
           <p className="text-[#2D9B6E] text-xs font-mono">{siteUrl.replace(/^https?:\/\//, "")}</p>
         </div>
 
         <div className="absolute bottom-8 left-1/2 -translate-x-1/2">
-          <Clock />
+          <ClockDisplay />
         </div>
       </div>
 
@@ -254,6 +257,7 @@ function OrderReviewScreen({
   products,
   stripRef,
   formatPrice,
+  tc,
 }: {
   state: DisplayState;
   highlightedItem: string | null;
@@ -261,14 +265,15 @@ function OrderReviewScreen({
   products: any[];
   stripRef: React.RefObject<HTMLDivElement>;
   formatPrice: (n: number) => string;
+  tc: (ar: string, en: string) => string;
 }) {
   return (
     <div className="flex h-full">
       <div className="flex-1 flex flex-col h-full">
-        <div className="bg-[#0f2040] px-8 py-4 flex items-center justify-between border-b border-[#1e3a5f]">
+        <div className="bg-[#141414] px-8 py-4 flex items-center justify-between border-b border-[#2a2a2a]">
           <div className="flex items-center gap-4">
             <img
-              src="/logo.png"
+              src={clunyLogo}
               alt="Logo"
               className="w-10 h-10 object-contain rounded-lg"
               onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
@@ -277,7 +282,7 @@ function OrderReviewScreen({
           </div>
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-[#2D9B6E] rounded-full animate-pulse" />
-            <span className="text-gray-400 text-sm">طلب جارٍ</span>
+            <span className="text-gray-400 text-sm">{tc("طلب جارٍ", "Order in progress")}</span>
           </div>
         </div>
 
@@ -289,7 +294,7 @@ function OrderReviewScreen({
                 className={`flex items-center justify-between rounded-2xl px-6 py-4 transition-all duration-500 ${
                   highlightedItem === item.nameAr
                     ? "bg-[#2D9B6E] scale-[1.02] shadow-lg shadow-[#2D9B6E]/30"
-                    : "bg-[#112035]"
+                    : "bg-[#1a1a1a]"
                 }`}
                 data-testid={`display-item-${idx}`}
               >
@@ -297,7 +302,9 @@ function OrderReviewScreen({
                   <span className="text-3xl font-black text-[#2D9B6E] w-10 text-center">{item.quantity}×</span>
                   <span className="text-xl font-semibold text-white">{item.nameAr}</span>
                   {highlightedItem === item.nameAr && (
-                    <span className="bg-white text-[#2D9B6E] text-xs font-bold px-2 py-0.5 rounded-full animate-bounce">جديد</span>
+                    <span className="bg-white text-[#2D9B6E] text-xs font-bold px-2 py-0.5 rounded-full animate-bounce">
+                      {tc("جديد", "New")}
+                    </span>
                   )}
                 </div>
                 <span className="text-xl font-bold text-gray-300">{formatPrice(item.price * item.quantity)}</span>
@@ -306,17 +313,17 @@ function OrderReviewScreen({
           </div>
         </div>
 
-        <div className="bg-[#0f2040] border-t border-[#1e3a5f] px-8 py-5">
+        <div className="bg-[#141414] border-t border-[#2a2a2a] px-8 py-5">
           <div className="flex justify-between items-center mb-2">
-            <span className="text-gray-400 text-lg">المجموع قبل الضريبة</span>
+            <span className="text-gray-400 text-lg">{tc("المجموع قبل الضريبة", "Subtotal before tax")}</span>
             <span className="text-gray-300 text-lg">{formatPrice(state.subtotal)}</span>
           </div>
           <div className="flex justify-between items-center mb-4">
-            <span className="text-gray-400 text-lg">ضريبة القيمة المضافة (15%)</span>
+            <span className="text-gray-400 text-lg">{tc("ضريبة القيمة المضافة (15%)", "VAT (15%)")}</span>
             <span className="text-gray-300 text-lg">{formatPrice(state.tax)}</span>
           </div>
           <div className="flex justify-between items-center bg-[#2D9B6E] rounded-2xl px-6 py-4">
-            <span className="text-white text-3xl font-bold">الإجمالي</span>
+            <span className="text-white text-3xl font-bold">{tc("الإجمالي", "Total")}</span>
             <span className="text-white text-4xl font-black">{formatPrice(state.total)}</span>
           </div>
         </div>
@@ -327,11 +334,11 @@ function OrderReviewScreen({
   );
 }
 
-function PaymentProcessingScreen({ state, formatPrice }: { state: DisplayState; formatPrice: (n: number) => string }) {
+function PaymentProcessingScreen({ state, formatPrice, tc }: { state: DisplayState; formatPrice: (n: number) => string; tc: (ar: string, en: string) => string }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-10 bg-[#0a1628]">
+    <div className="flex h-full flex-col items-center justify-center gap-10 bg-[#0a0a0a]">
       <img
-        src="/logo.png"
+        src={clunyLogo}
         alt="Logo"
         className="w-20 h-20 object-contain rounded-xl opacity-60"
         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
@@ -343,22 +350,22 @@ function PaymentProcessingScreen({ state, formatPrice }: { state: DisplayState; 
         </div>
       </div>
       <div className="text-center">
-        <h2 className="text-5xl font-black text-white mb-4">جاري الدفع...</h2>
-        <p className="text-2xl text-gray-400">يرجى الانتظار</p>
+        <h2 className="text-5xl font-black text-white mb-4">{tc("جاري الدفع...", "Processing Payment...")}</h2>
+        <p className="text-2xl text-gray-400">{tc("يرجى الانتظار", "Please wait")}</p>
       </div>
-      <div className="bg-[#0f2040] rounded-2xl px-12 py-5 text-center">
-        <span className="text-gray-400 text-xl">الإجمالي: </span>
+      <div className="bg-[#141414] rounded-2xl px-12 py-5 text-center">
+        <span className="text-gray-400 text-xl">{tc("الإجمالي: ", "Total: ")}</span>
         <span className="text-[#2D9B6E] text-3xl font-black">{formatPrice(state.total)}</span>
       </div>
     </div>
   );
 }
 
-function PaymentSuccessScreen({ state, formatPrice }: { state: DisplayState; formatPrice: (n: number) => string }) {
+function PaymentSuccessScreen({ state, formatPrice, tc }: { state: DisplayState; formatPrice: (n: number) => string; tc: (ar: string, en: string) => string }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-8 bg-[#0a1628]">
+    <div className="flex h-full flex-col items-center justify-center gap-8 bg-[#0a0a0a]">
       <img
-        src="/logo.png"
+        src={clunyLogo}
         alt="Logo"
         className="w-24 h-24 object-contain rounded-xl"
         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
@@ -369,19 +376,19 @@ function PaymentSuccessScreen({ state, formatPrice }: { state: DisplayState; for
         </div>
       </div>
       <div className="text-center">
-        <h2 className="text-6xl font-black text-white mb-4">تمت العملية بنجاح!</h2>
+        <h2 className="text-6xl font-black text-white mb-4">{tc("تمت العملية بنجاح!", "Payment Successful!")}</h2>
         {state.orderNumber && (
-          <div className="bg-[#0f2040] rounded-2xl px-8 py-3 mt-2 inline-block">
-            <span className="text-gray-400 text-xl">رقم الطلب: </span>
+          <div className="bg-[#141414] rounded-2xl px-8 py-3 mt-2 inline-block">
+            <span className="text-gray-400 text-xl">{tc("رقم الطلب: ", "Order #: ")}</span>
             <span className="text-[#2D9B6E] text-2xl font-black">{state.orderNumber}</span>
           </div>
         )}
       </div>
       <div className="bg-[#2D9B6E]/20 border border-[#2D9B6E]/40 rounded-2xl px-12 py-5 text-center">
-        <span className="text-gray-300 text-xl">المبلغ المدفوع: </span>
+        <span className="text-gray-300 text-xl">{tc("المبلغ المدفوع: ", "Amount paid: ")}</span>
         <span className="text-white text-3xl font-black">{formatPrice(state.total)}</span>
       </div>
-      <p className="text-gray-500 text-lg animate-pulse">شكراً لزيارتكم 🎉</p>
+      <p className="text-gray-500 text-lg animate-pulse">{tc("شكراً لزيارتكم", "Thank you for visiting")}</p>
     </div>
   );
 }
@@ -390,7 +397,7 @@ function ProductStrip({ products, stripRef }: { products: any[]; stripRef: React
   if (products.length === 0) return null;
   const doubled = [...products, ...products];
   return (
-    <div className="w-32 bg-[#07111e] border-r border-[#1e3a5f] flex flex-col overflow-hidden">
+    <div className="w-32 bg-[#07111e] border-r border-[#2a2a2a] flex flex-col overflow-hidden">
       <div
         ref={stripRef}
         className="flex-1 overflow-y-auto"
@@ -406,7 +413,7 @@ function ProductStrip({ products, stripRef }: { products: any[]; stripRef: React
                 draggable={false}
               />
             ) : (
-              <div className="w-full h-full bg-[#112035] rounded-lg flex items-center justify-center">
+              <div className="w-full h-full bg-[#1a1a1a] rounded-lg flex items-center justify-center">
                 <span className="text-2xl">☕</span>
               </div>
             )}
@@ -417,7 +424,7 @@ function ProductStrip({ products, stripRef }: { products: any[]; stripRef: React
   );
 }
 
-function Clock() {
+function ClockDisplay() {
   const [time, setTime] = useState(new Date());
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);

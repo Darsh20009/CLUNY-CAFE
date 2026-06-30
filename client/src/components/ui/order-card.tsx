@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge, DeliveryTypeBadge, TimerBadge } from "@/components/ui/status-badge";
 import { cn } from "@/lib/utils";
-import { Play, Check, Printer, Clock, Coffee, MapPin, User, AlertTriangle, Flame, Timer, UtensilsCrossed, Car, ShoppingBag, Bell } from "lucide-react";
+import { Play, Check, CheckCircle, Printer, Clock, Coffee, MapPin, User, AlertTriangle, Flame, Timer, UtensilsCrossed, Car, ShoppingBag, Bell } from "lucide-react";
+import { PrepCountdown } from "@/components/PrepCountdown";
 
 interface OrderItem {
   coffeeItemId: string;
@@ -50,9 +51,14 @@ interface OrderCardProps {
     carType?: string;
     carColor?: string;
     carPlate?: string;
+    plateNumber?: string;
+    customerArrived?: boolean;
+    customerArrivedAt?: string;
     branchId?: string;
     estimatedPrepTimeMinutes?: number;
+    estimatedPrepTimeInMinutes?: number;
     prepStartedAt?: string;
+    prepTimeSetAt?: string;
     priority?: 'normal' | 'rush' | 'vip';
   };
   variant?: "compact" | "detailed" | "kds";
@@ -60,6 +66,7 @@ interface OrderCardProps {
   showTimer?: boolean;
   onStartPreparing?: (id: string, estimatedPrepTime?: number) => void;
   onMarkReady?: (id: string) => void;
+  onMarkCompleted?: (id: string) => void;
   onUpdateTime?: (id: string, additionalMinutes: number) => void;
   onPrint?: (id: string) => void;
   isPending?: boolean;
@@ -120,22 +127,6 @@ function getPrepTimeRemaining(order: { prepStartedAt?: string; estimatedPrepTime
   return Math.ceil(order.estimatedPrepTimeMinutes - elapsedMinutes);
 }
 
-function getPrepTimeRemainingSeconds(order: { prepStartedAt?: string; estimatedPrepTimeMinutes?: number }): number | null {
-  if (!order.prepStartedAt || !order.estimatedPrepTimeMinutes) return null;
-  const startTime = new Date(order.prepStartedAt).getTime();
-  const endTime = startTime + order.estimatedPrepTimeMinutes * 60 * 1000;
-  const now = Date.now();
-  return Math.floor((endTime - now) / 1000);
-}
-
-function formatCountdown(totalSeconds: number): string {
-  const abs = Math.abs(totalSeconds);
-  const m = Math.floor(abs / 60);
-  const s = abs % 60;
-  const sign = totalSeconds < 0 ? '-' : '';
-  return `${sign}${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-
 function getSlaStatus(elapsedMinutes: number, estimatedPrepTime?: number): 'on-track' | 'warning' | 'overdue' {
   const targetTime = estimatedPrepTime || 10;
   if (elapsedMinutes >= targetTime) return 'overdue';
@@ -174,17 +165,17 @@ export function OrderCard({
   showTimer = true,
   onStartPreparing,
   onMarkReady,
+  onMarkCompleted,
   onUpdateTime,
   onPrint,
   isPending = false,
   className,
 }: OrderCardProps) {
   const [tick, setTick] = useState(0);
-  const isInProgress = (order.tableStatus || order.status) === "in_progress";
   useEffect(() => {
-    const interval = setInterval(() => setTick(t => t + 1), isInProgress ? 1000 : 30000);
+    const interval = setInterval(() => setTick(t => t + 1), 30000);
     return () => clearInterval(interval);
-  }, [isInProgress]);
+  }, []);
 
   const elapsedMinutes = getElapsedMinutes(order.createdAt);
   void tick;
@@ -220,12 +211,13 @@ export function OrderCard({
   }
 
   if (variant === "kds") {
-    const hasPrepMetadata = !!(order.estimatedPrepTimeMinutes || order.prepStartedAt);
+    const effectivePrepMins = order.estimatedPrepTimeMinutes || order.estimatedPrepTimeInMinutes;
+    const effectivePrepStart = order.prepStartedAt || order.prepTimeSetAt;
+    const hasPrepMetadata = !!(effectivePrepMins || effectivePrepStart);
     const slaStatus = hasPrepMetadata 
-      ? getSlaStatus(elapsedMinutes, order.estimatedPrepTimeMinutes) 
+      ? getSlaStatus(elapsedMinutes, effectivePrepMins) 
       : (isDelayed ? 'overdue' : isWarning ? 'warning' : 'on-track');
-    const prepTimeRemaining = hasPrepMetadata ? getPrepTimeRemaining(order) : null;
-    const prepTimeRemainingSeconds = hasPrepMetadata ? getPrepTimeRemainingSeconds(order) : null;
+    const prepTimeRemaining = hasPrepMetadata ? getPrepTimeRemaining({ prepStartedAt: effectivePrepStart, estimatedPrepTimeMinutes: effectivePrepMins }) : null;
     const stations = getUniqueStations(order.items);
     const orderHasAllergens = hasAllergens(order.items);
     const allergensList = getAllAllergens(order.items);
@@ -279,17 +271,20 @@ export function OrderCard({
                 <span>طاولة {order.tableNumber}</span>
               </div>
             )}
-            {(order.orderType === 'car-pickup' || order.orderType === 'car_pickup' || order.deliveryType === 'car_pickup' || order.deliveryType === 'car-pickup') && (
+            {(order.orderType === 'car-pickup' || order.orderType === 'car_pickup' || order.deliveryType === 'car_pickup' || order.deliveryType === 'car-pickup' || order.deliveryType === 'curbside') && (
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-1 text-sm text-purple-600 dark:text-purple-400 font-bold">
                   <Car className="h-3.5 w-3.5" />
                   <span>استلام من السيارة</span>
+                  {order.customerArrived && (
+                    <span className="mr-1 px-1.5 py-0.5 rounded text-xs bg-green-500 text-white animate-pulse">🚗 وصل</span>
+                  )}
                 </div>
                 {(order.carType || order.carColor || order.carInfo?.carType) && (
                   <div className="flex items-center gap-2 text-xs bg-purple-500/10 rounded p-1.5 border border-purple-500/20">
                     <span className="font-medium">{order.carInfo?.carType || order.carType}</span>
                     <span>{order.carInfo?.carColor || order.carColor}</span>
-                    <span className="font-mono font-bold">{order.carInfo?.plateNumber || order.carPlate}</span>
+                    <span className="font-mono font-bold">{order.carInfo?.plateNumber || order.plateNumber || order.carPlate}</span>
                   </div>
                 )}
               </div>
@@ -351,20 +346,14 @@ export function OrderCard({
             </div>
           )}
           
-          {prepTimeRemainingSeconds !== null && displayStatus === "in_progress" && (
-            <div className={cn(
-              "flex items-center justify-between gap-1 mt-2 p-2 rounded-lg text-xs font-medium",
-              prepTimeRemainingSeconds < 0 ? "bg-red-500/10 text-red-600 border border-red-500/20" : 
-              prepTimeRemainingSeconds < 120 ? "bg-amber-500/10 text-amber-600 border border-amber-500/20" : 
-              "bg-green-500/10 text-green-600 border border-green-500/20"
-            )}>
-              <div className="flex items-center gap-1">
-                <Timer className="h-3.5 w-3.5" />
-                <span>{prepTimeRemainingSeconds < 0 ? 'متأخر' : 'متبقي'}</span>
-              </div>
-              <span className="font-mono font-bold text-sm" dir="ltr">
-                {formatCountdown(prepTimeRemainingSeconds)}
-              </span>
+          {(order.estimatedPrepTimeInMinutes || order.estimatedPrepTimeMinutes) && (
+            <div className="mt-2">
+              <PrepCountdown
+                estimatedPrepTimeInMinutes={order.estimatedPrepTimeInMinutes || order.estimatedPrepTimeMinutes}
+                prepTimeSetAt={order.prepTimeSetAt || order.prepStartedAt || order.createdAt}
+                status={displayStatus}
+                compact={false}
+              />
             </div>
           )}
         </CardHeader>
@@ -418,7 +407,7 @@ export function OrderCard({
               <div className="grid grid-cols-2 gap-2 text-[10px] text-blue-600 dark:text-blue-400">
                 {order.carInfo?.carType || order.carType ? <span>النوع: {order.carInfo?.carType || order.carType}</span> : null}
                 {order.carInfo?.carColor || order.carColor ? <span>اللون: {order.carInfo?.carColor || order.carColor}</span> : null}
-                {order.carInfo?.plateNumber || order.carPlate ? <span className="col-span-2 font-bold">اللوحة: {order.carInfo?.plateNumber || order.carPlate}</span> : null}
+                {order.carInfo?.plateNumber || order.plateNumber || order.carPlate ? <span className="col-span-2 font-bold">اللوحة: {order.carInfo?.plateNumber || order.plateNumber || order.carPlate}</span> : null}
                 {order.arrivalTime && <span className="col-span-2 text-primary">موعد الوصول: {order.arrivalTime}</span>}
               </div>
             </div>
@@ -458,7 +447,7 @@ export function OrderCard({
                 <Button 
                   onClick={() => onStartPreparing(order.id, 5)}
                   disabled={isPending}
-                  className="flex-1 bg-amber-500 hover:bg-amber-600 text-black"
+                  className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
                   data-testid={`button-start-preparing-${order.orderNumber}`}
                 >
                   <Play className="h-4 w-4 ml-2" />
@@ -498,6 +487,18 @@ export function OrderCard({
                   </Button>
                 )}
               </div>
+            )}
+            {displayStatus === "ready" && onMarkCompleted && (
+              <Button
+                onClick={() => onMarkCompleted(order.id)}
+                disabled={isPending}
+                variant="outline"
+                className="flex-1 border-green-500 text-green-600 hover:bg-green-50"
+                data-testid={`button-mark-completed-${order.orderNumber}`}
+              >
+                <CheckCircle className="h-4 w-4 ml-2" />
+                تم التسليم
+              </Button>
             )}
             {onPrint && (
               <Button 
@@ -578,7 +579,7 @@ export function OrderCard({
             <Button 
               onClick={() => onStartPreparing(order.id)}
               disabled={isPending}
-              className="flex-1 bg-amber-500 hover:bg-amber-600 text-black"
+              className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
               data-testid={`button-start-preparing-${order.orderNumber}`}
             >
               <Play className="h-4 w-4 ml-2" />
@@ -594,6 +595,18 @@ export function OrderCard({
             >
               <Check className="h-4 w-4 ml-2" />
               جاهز للتسليم
+            </Button>
+          )}
+          {displayStatus === "ready" && onMarkCompleted && (
+            <Button
+              onClick={() => onMarkCompleted(order.id)}
+              disabled={isPending}
+              variant="outline"
+              className="flex-1 border-green-500 text-green-600 hover:bg-green-50"
+              data-testid={`button-mark-completed-${order.orderNumber}`}
+            >
+              <CheckCircle className="h-4 w-4 ml-2" />
+              تم التسليم
             </Button>
           )}
         </CardFooter>

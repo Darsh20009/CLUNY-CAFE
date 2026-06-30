@@ -25,7 +25,7 @@ export default function QRCodeComponent({
 
  const generateQRDataURL = (text: string) => {
   // Enhanced QR code with coffee theme colors
-  const finalUrl = text.includes('http') ? text.replace('http://localhost:5000', 'https://www.cluny.cafe') : `https://www.cluny.cafe${text}`;
+  const finalUrl = text.includes('http') ? text.replace(/https?:\/\/localhost:\d+/, window.location.origin) : `${window.location.origin}${text}`;
   return `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(finalUrl)}&bgcolor=FFFBEB&color=92400E&qzone=3&format=png&ecc=M`;
  };
 
@@ -41,11 +41,11 @@ export default function QRCodeComponent({
  {title && (
  <div className="space-y-2">
  <div className="flex items-center justify-center space-x-2 space-x-reverse">
- <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></div>
- <h3 className="font-amiri text-2xl font-bold bg-gradient-to-r from-amber-800 to-orange-700 bg-clip-text text-transparent">
+ <div className="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
+ <h3 className="font-amiri text-2xl font-bold text-primary">
  {title}
  </h3>
- <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></div>
+ <div className="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
  </div>
  <div className="w-24 h-0.5 bg-gradient-to-r from-transparent via-amber-400 to-transparent mx-auto"></div>
  </div>
@@ -55,7 +55,7 @@ export default function QRCodeComponent({
  <div className="relative group">
  {/* Multiple glow layers for depth */}
  <div className="absolute inset-0 bg-amber-400/30 rounded-3xl blur-xl group-hover:blur-2xl transition-all duration-500"></div>
- <div className="absolute inset-0 bg-orange-300/20 rounded-3xl blur-lg group-hover:blur-xl transition-all duration-500 delay-75"></div>
+ <div className="absolute inset-0 bg-primary/20 rounded-3xl blur-lg group-hover:blur-xl transition-all duration-500 delay-75"></div>
  
  <div className="relative bg-white rounded-3xl p-6 border-4 border-amber-200 shadow-2xl group-hover:shadow-amber-300/50 transition-all duration-500 group-hover:scale-105">
  {/* Corner decorations */}
@@ -100,13 +100,13 @@ export default function QRCodeComponent({
 
  <div className="space-y-3">
  <div className="flex items-center justify-center space-x-3 space-x-reverse text-amber-700">
- <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-orange-500 rounded-full flex items-center justify-center shadow-lg">
+ <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center shadow-lg">
  <QrCode className="w-4 h-4 text-white" />
  </div>
  <span className="text-lg font-bold font-amiri">
  وجّه الكاميرا نحو الرمز للطلب
  </span>
- <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-orange-500 rounded-full flex items-center justify-center shadow-lg">
+ <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center shadow-lg">
  <span className="text-white text-xs"></span>
  </div>
  </div>

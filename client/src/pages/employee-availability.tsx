@@ -3,14 +3,16 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import type { CoffeeItem } from "@shared/schema";
-import { Coffee, Check, X } from "lucide-react";
+import { Coffee } from "lucide-react";
+import { useTranslate } from "@/lib/useTranslate";
+import { MobileBottomNav } from "@/components/MobileBottomNav";
 
 export default function EmployeeAvailability() {
   const { toast } = useToast();
+  const tc = useTranslate();
   const [selectedStatus, setSelectedStatus] = useState<{[key: string]: string}>({});
 
   const { data: items = [], isLoading } = useQuery<CoffeeItem[]>({
@@ -30,14 +32,14 @@ export default function EmployeeAvailability() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/coffee-items"] });
       toast({
-        title: "تم التحديث",
-        description: "تم تحديث حالة المشروب بنجاح",
+        title: tc("تم التحديث", "Updated"),
+        description: tc("تم تحديث حالة المشروب بنجاح", "Drink availability updated successfully"),
       });
     },
     onError: () => {
       toast({
-        title: "خطأ",
-        description: "فشل تحديث حالة المشروب",
+        title: tc("خطأ", "Error"),
+        description: tc("فشل تحديث حالة المشروب", "Failed to update drink status"),
         variant: "destructive",
       });
     }
@@ -46,21 +48,21 @@ export default function EmployeeAvailability() {
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-muted-foreground">جاري التحميل...</p>
+        <p className="text-muted-foreground">{tc("جاري التحميل...", "Loading...")}</p>
       </div>
     );
   }
 
   return (
-    <div dir="rtl" className="min-h-screen bg-background p-4 md:p-6">
+    <div className="min-h-screen bg-gray-50 p-4 md:p-6 pb-20">
       <div className="max-w-6xl mx-auto">
         <div className="mb-6">
           <h1 className="font-amiri text-3xl font-bold text-primary flex items-center gap-2">
             <Coffee className="w-8 h-8" />
-            إدارة توفر المشروبات
+            {tc("إدارة توفر المشروبات", "Manage Drink Availability")}
           </h1>
           <p className="text-muted-foreground mt-2">
-            تغيير حالة توفر المشروبات (متاح / نفذت الكمية / قريباً)
+            {tc("تغيير حالة توفر المشروبات (متاح / نفذت الكمية / قريباً)", "Change drink availability (Available / Out of Stock / Coming Soon)")}
           </p>
         </div>
 
@@ -72,13 +74,16 @@ export default function EmployeeAvailability() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex flex-wrap gap-2 pt-2 border-t">
-                  <Badge variant={item.availabilityStatus === 'available' || !item.availabilityStatus ? 'default' : 'secondary'} className={item.availabilityStatus === 'available' || !item.availabilityStatus ? 'bg-green-500 hover:bg-green-600' : ''}>
-                    متوفر
+                  <Badge
+                    variant={item.availabilityStatus === 'available' || !item.availabilityStatus ? 'default' : 'secondary'}
+                    className={item.availabilityStatus === 'available' || !item.availabilityStatus ? 'bg-green-500 hover:bg-green-600' : ''}
+                  >
+                    {tc("متوفر", "Available")}
                   </Badge>
-                  {item.availabilityStatus === 'out_of_stock' && <Badge variant="destructive">نفذت الكمية</Badge>}
-                  {item.availabilityStatus === 'coming_soon' && <Badge variant="secondary" className="bg-blue-500 text-white">قريباً</Badge>}
-                  {item.availabilityStatus === 'temporarily_unavailable' && <Badge variant="outline" className="text-orange-500 border-orange-500">غير متوفر حالياً</Badge>}
-                  {item.availabilityStatus === 'new' && <Badge variant="default" className="bg-purple-500 animate-pulse">جديد</Badge>}
+                  {item.availabilityStatus === 'out_of_stock' && <Badge variant="destructive">{tc("نفذت الكمية", "Out of Stock")}</Badge>}
+                  {item.availabilityStatus === 'coming_soon' && <Badge variant="secondary" className="bg-blue-500 text-white">{tc("قريباً", "Coming Soon")}</Badge>}
+                  {item.availabilityStatus === 'temporarily_unavailable' && <Badge variant="outline" className="text-orange-500 border-orange-500">{tc("غير متوفر حالياً", "Temporarily Unavailable")}</Badge>}
+                  {item.availabilityStatus === 'new' && <Badge variant="default" className="bg-purple-500 animate-pulse">{tc("جديد", "New")}</Badge>}
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">
@@ -87,25 +92,25 @@ export default function EmployeeAvailability() {
                     variant={item.availabilityStatus === 'available' || !item.availabilityStatus ? 'default' : 'outline'}
                     className="h-8 text-xs"
                     onClick={() => updateAvailabilityMutation.mutate({ itemId: item.id, availabilityStatus: 'available' })}
-                  >متوفر</Button>
+                  >{tc("متوفر", "Available")}</Button>
                   <Button
                     size="sm"
                     variant={item.availabilityStatus === 'out_of_stock' ? 'destructive' : 'outline'}
                     className="h-8 text-xs"
                     onClick={() => updateAvailabilityMutation.mutate({ itemId: item.id, availabilityStatus: 'out_of_stock' })}
-                  >نفذ</Button>
+                  >{tc("نفذ", "Out")}</Button>
                   <Button
                     size="sm"
                     variant={item.availabilityStatus === 'coming_soon' ? 'default' : 'outline'}
                     className="h-8 text-xs bg-blue-500 hover:bg-blue-600"
                     onClick={() => updateAvailabilityMutation.mutate({ itemId: item.id, availabilityStatus: 'coming_soon' })}
-                  >قريباً</Button>
+                  >{tc("قريباً", "Soon")}</Button>
                   <Button
                     size="sm"
                     variant={item.availabilityStatus === 'new' ? 'default' : 'outline'}
                     className="h-8 text-xs bg-purple-500 hover:bg-purple-600"
                     onClick={() => updateAvailabilityMutation.mutate({ itemId: item.id, availabilityStatus: 'new' })}
-                  >جديد</Button>
+                  >{tc("جديد", "New")}</Button>
                 </div>
               </CardContent>
             </Card>
@@ -115,10 +120,11 @@ export default function EmployeeAvailability() {
         {items.length === 0 && (
           <div className="text-center py-12">
             <Coffee className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-            <p className="text-muted-foreground text-lg">لا توجد مشروبات</p>
+            <p className="text-muted-foreground text-lg">{tc("لا توجد مشروبات", "No drinks found")}</p>
           </div>
         )}
       </div>
+      <MobileBottomNav />
     </div>
   );
 }

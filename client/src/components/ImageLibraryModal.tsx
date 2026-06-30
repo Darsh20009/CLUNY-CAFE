@@ -1,8 +1,8 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Upload, Check, Image as ImageIcon, Loader2 } from "lucide-react";
+import { Upload, Check, Image as ImageIcon, Loader2, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface DrinkImage {
@@ -24,6 +24,7 @@ export function ImageLibraryModal({ open, onClose, onSelect, currentUrl }: Image
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [selected, setSelected] = useState<string | null>(currentUrl || null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const { data: images = [], isLoading } = useQuery<DrinkImage[]>({
     queryKey: ["/api/drink-images"],
@@ -32,6 +33,14 @@ export function ImageLibraryModal({ open, onClose, onSelect, currentUrl }: Image
   });
 
   const handleUpload = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "نوع الملف غير مدعوم", description: "يُرجى اختيار ملف صورة", variant: "destructive" });
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      toast({ title: "حجم الملف كبير جداً", description: "الحد الأقصى 15MB", variant: "destructive" });
+      return;
+    }
     setUploading(true);
     try {
       const formData = new FormData();
@@ -52,13 +61,29 @@ export function ImageLibraryModal({ open, onClose, onSelect, currentUrl }: Image
       const data = await res.json();
       await queryClient.invalidateQueries({ queryKey: ["/api/drink-images"] });
       setSelected(data.url);
-      toast({ title: "تم رفع الصورة", description: "الصورة محفوظة في المكتبة" });
+      toast({ title: "✓ تم رفع الصورة", description: "الصورة محفوظة في المكتبة" });
     } catch (err: any) {
       toast({ title: "خطأ في رفع الصورة", description: err?.message || "فشل رفع الصورة", variant: "destructive" });
     } finally {
       setUploading(false);
     }
   };
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleUpload(file);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setIsDragOver(false);
+  }, []);
 
   const handleConfirm = () => {
     if (selected) {
@@ -77,8 +102,8 @@ export function ImageLibraryModal({ open, onClose, onSelect, currentUrl }: Image
           </DialogTitle>
         </DialogHeader>
 
-        {/* Upload button */}
-        <div className="px-4 py-3 border-b border-primary/10">
+        {/* Upload area */}
+        <div className="px-4 py-3 border-b border-primary/10 space-y-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -90,19 +115,35 @@ export function ImageLibraryModal({ open, onClose, onSelect, currentUrl }: Image
               e.target.value = "";
             }}
           />
-          <Button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="w-full bg-primary/20 hover:bg-primary/30 border border-primary/30 text-accent h-10"
-            variant="outline"
+
+          {/* Drag & drop zone */}
+          <div
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onClick={() => !uploading && fileInputRef.current?.click()}
+            className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
+              isDragOver
+                ? "border-accent bg-accent/10"
+                : "border-primary/30 hover:border-primary/50 hover:bg-primary/5"
+            }`}
+            data-testid="drop-zone-image"
           >
-            {uploading
-              ? <><Loader2 className="w-4 h-4 animate-spin ml-2" />جاري الرفع...</>
-              : <><Upload className="w-4 h-4 ml-2" />رفع صورة جديدة</>
-            }
-          </Button>
-          <p className="text-center text-[10px] text-gray-500 mt-1">JPG · PNG · WEBP · GIF · BMP — الحد الأقصى 15MB</p>
+            {uploading ? (
+              <div className="flex flex-col items-center gap-2">
+                <Loader2 className="w-8 h-8 animate-spin text-accent" />
+                <p className="text-accent text-sm">جاري رفع الصورة...</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-2">
+                <Upload className={`w-8 h-8 ${isDragOver ? 'text-accent' : 'text-primary/40'}`} />
+                <p className="text-sm font-medium text-accent/80">
+                  {isDragOver ? "أفلت الصورة هنا" : "اسحب صورة هنا أو انقر للاختيار"}
+                </p>
+                <p className="text-[10px] text-gray-500">JPG · PNG · WEBP · GIF — الحد الأقصى 15MB</p>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Image grid */}
@@ -125,17 +166,19 @@ export function ImageLibraryModal({ open, onClose, onSelect, currentUrl }: Image
                   <button
                     key={img.filename}
                     type="button"
-                    onClick={() => setSelected(img.url)}
+                    onClick={() => setSelected(isSelected ? null : img.url)}
                     className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all ${
                       isSelected
                         ? "border-accent shadow-lg shadow-accent/20 scale-[0.97]"
                         : "border-primary/20 hover:border-primary/50"
                     }`}
+                    data-testid={`image-option-${img.filename}`}
                   >
                     <img
                       src={img.url}
                       alt={img.filename}
                       className="w-full h-full object-cover"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                     />
                     {isSelected && (
                       <div className="absolute inset-0 bg-accent/30 flex items-center justify-center">
@@ -165,7 +208,8 @@ export function ImageLibraryModal({ open, onClose, onSelect, currentUrl }: Image
             type="button"
             onClick={handleConfirm}
             disabled={!selected}
-            className="flex-1 bg-gradient-to-r from-amber-500 to-amber-700 text-white"
+            className="flex-1 bg-primary text-primary-foreground"
+            data-testid="button-confirm-image"
           >
             اختيار الصورة
           </Button>

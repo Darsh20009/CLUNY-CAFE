@@ -11,14 +11,19 @@ import { useLoyaltyCard } from "@/hooks/useLoyaltyCard";
 import { customerStorage } from "@/lib/customer-storage";
 import { useToast } from "@/hooks/use-toast";
 import SarIcon from "@/components/sar-icon";
+import { useTranslate } from "@/lib/useTranslate";
+import { useTranslation } from "react-i18next";
 
 interface PersonalizedOffer {
   id: string;
   title: string;
+  titleEn: string;
   description: string;
+  descriptionEn: string;
   discount: number;
   type: 'loyalty' | 'comeback' | 'birthday' | 'frequent' | 'new';
   expiresIn?: string;
+  expiresInEn?: string;
   coffeeItemId?: string;
   coffeeItem?: any;
 }
@@ -28,12 +33,16 @@ export default function MyOffersPage() {
   const [, setLocation] = useLocation();
   const { card: loyaltyCard } = useLoyaltyCard();
   const { toast } = useToast();
+  const tc = useTranslate();
+  const { i18n } = useTranslation();
+  const isEn = i18n.language === 'en';
+  const dir = isEn ? 'ltr' : 'rtl';
 
   const handleUseOffer = (offer: PersonalizedOffer) => {
     customerStorage.setActiveOffer({
       id: offer.id,
-      title: offer.title,
-      description: offer.description,
+      title: isEn ? offer.titleEn : offer.title,
+      description: isEn ? offer.descriptionEn : offer.description,
       discount: offer.discount,
       type: offer.type,
       coffeeItemId: offer.coffeeItemId,
@@ -41,8 +50,8 @@ export default function MyOffersPage() {
     });
     
     toast({
-      title: "تم تفعيل العرض!",
-      description: `${offer.title} - سيتم تطبيقه عند الدفع`,
+      title: tc("تم تفعيل العرض!", "Offer Activated!"),
+      description: `${isEn ? offer.titleEn : offer.title} - ${tc("سيتم تطبيقه عند الدفع", "Will be applied at checkout")}`,
     });
     
     setLocation("/menu");
@@ -70,40 +79,44 @@ export default function MyOffersPage() {
     const points = loyaltyCard?.points || 0;
     const orderCount = orders.length;
 
-    // Points discount
     const pointsRedemption = offersConfig?.pointsRedemption;
     if (pointsRedemption?.enabled !== false) {
       const minPoints = pointsRedemption?.minPoints ?? 100;
       if (points >= minPoints) {
+        const sarDiscount = (points / ptsPerSar).toFixed(0);
         result.push({
           id: 'points-discount',
           title: 'خصم نقاطك!',
-          description: `لديك ${points} نقطة يمكنك استخدامها للحصول على خصم ${(points / ptsPerSar).toFixed(0)} ريال`,
+          titleEn: 'Redeem Your Points!',
+          description: `لديك ${points} نقطة يمكنك استخدامها للحصول على خصم ${sarDiscount} ريال`,
+          descriptionEn: `You have ${points} points you can redeem for a ${sarDiscount} SAR discount`,
           discount: Math.floor(points / ptsPerSar),
           type: 'loyalty'
         });
       }
     }
 
-    // First order discount
     const firstOrderDiscount = offersConfig?.firstOrderDiscount;
     if (firstOrderDiscount?.enabled !== false && orderCount === 0) {
       const discountValue = firstOrderDiscount?.value ?? 15;
       const discountType = firstOrderDiscount?.discountType ?? 'percent';
       const expiresDays = firstOrderDiscount?.expiresDays ?? 7;
-      const discountText = discountType === 'amount' ? `خصم ${discountValue} ريال` : `خصم ${discountValue}%`;
+      const discountTextAr = discountType === 'amount' ? `خصم ${discountValue} ريال` : `خصم ${discountValue}%`;
+      const discountTextEn = discountType === 'amount' ? `${discountValue} SAR discount` : `${discountValue}% discount`;
       
       result.push({
         id: 'first-order',
         title: 'عرض الترحيب!',
-        description: `احصل على ${discountText} على طلبك الأول كعميل جديد`,
+        titleEn: 'Welcome Offer!',
+        description: `احصل على ${discountTextAr} على طلبك الأول كعميل جديد`,
+        descriptionEn: `Get a ${discountTextEn} on your first order as a new customer`,
         discount: discountValue,
         type: 'new',
-        expiresIn: `${expiresDays} أيام`
+        expiresIn: `${expiresDays} أيام`,
+        expiresInEn: `${expiresDays} days`
       });
     }
 
-    // Comeback discount
     const comebackDiscount = offersConfig?.comebackDiscount;
     if (comebackDiscount?.enabled !== false) {
       const minOrders = comebackDiscount?.minOrders ?? 0;
@@ -112,39 +125,44 @@ export default function MyOffersPage() {
         const discountValue = comebackDiscount?.value ?? 10;
         const discountType = comebackDiscount?.discountType ?? 'percent';
         const expiresDays = comebackDiscount?.expiresDays ?? 3;
-        const discountText = discountType === 'amount' ? `خصم ${discountValue} ريال` : `خصم ${discountValue}%`;
+        const discountTextAr = discountType === 'amount' ? `خصم ${discountValue} ريال` : `خصم ${discountValue}%`;
+        const discountTextEn = discountType === 'amount' ? `${discountValue} SAR discount` : `${discountValue}% discount`;
         
         result.push({
           id: 'comeback',
           title: 'اشتقنا لك!',
-          description: `احصل على ${discountText} على طلبك القادم`,
+          titleEn: "We Missed You!",
+          description: `احصل على ${discountTextAr} على طلبك القادم`,
+          descriptionEn: `Get a ${discountTextEn} on your next order`,
           discount: discountValue,
           type: 'comeback',
-          expiresIn: `${expiresDays} أيام`
+          expiresIn: `${expiresDays} أيام`,
+          expiresInEn: `${expiresDays} days`
         });
       }
     }
 
-    // Frequent customer discount
     const frequentDiscount = offersConfig?.frequentDiscount;
     if (frequentDiscount?.enabled !== false) {
       const minOrders = frequentDiscount?.minOrders ?? 5;
       if (orderCount >= minOrders) {
         const discountValue = frequentDiscount?.value ?? 20;
         const discountType = frequentDiscount?.discountType ?? 'percent';
-        const discountText = discountType === 'amount' ? `خصم ${discountValue} ريال` : `خصم ${discountValue}%`;
+        const discountTextAr = discountType === 'amount' ? `خصم ${discountValue} ريال` : `خصم ${discountValue}%`;
+        const discountTextEn = discountType === 'amount' ? `${discountValue} SAR discount` : `${discountValue}% discount`;
         
         result.push({
           id: 'frequent',
           title: 'عميل مميز!',
-          description: `كمكافأة لولائك، احصل على ${discountText} على أي مشروب`,
+          titleEn: 'VIP Customer!',
+          description: `كمكافأة لولائك، احصل على ${discountTextAr} على أي مشروب`,
+          descriptionEn: `As a reward for your loyalty, get a ${discountTextEn} on any drink`,
           discount: discountValue,
           type: 'frequent'
         });
       }
     }
 
-    // Special drink discount
     const specialDrinkDiscount = offersConfig?.specialDrinkDiscount;
     if (specialDrinkDiscount?.enabled !== false && coffeeItems.length > 0) {
       const stableIndex = (customer?.phone?.length || 0) % coffeeItems.length;
@@ -152,22 +170,25 @@ export default function MyOffersPage() {
       if (featuredItem) {
         const discountValue = specialDrinkDiscount?.value ?? 25;
         const discountType = specialDrinkDiscount?.discountType ?? 'percent';
-        const discountText = discountType === 'amount' ? `خصم ${discountValue} ريال على` : `خصم ${discountValue}% على`;
+        const discountTextAr = discountType === 'amount' ? `خصم ${discountValue} ريال على` : `خصم ${discountValue}% على`;
+        const discountTextEn = discountType === 'amount' ? `${discountValue} SAR off` : `${discountValue}% off`;
         
         result.push({
           id: 'special-drink',
           title: 'عرض خاص على مشروبك المفضل',
-          description: `${discountText} ${featuredItem.nameAr}`,
+          titleEn: 'Special Offer on Your Favorite Drink',
+          description: `${discountTextAr} ${featuredItem.nameAr}`,
+          descriptionEn: `${discountTextEn} ${featuredItem.nameEn || featuredItem.nameAr}`,
           discount: discountValue,
           type: 'frequent',
           coffeeItemId: featuredItem.id,
           coffeeItem: featuredItem,
-          expiresIn: 'اليوم فقط'
+          expiresIn: 'اليوم فقط',
+          expiresInEn: 'Today only'
         });
       }
     }
 
-    // Almost there
     const pointsRedemptionConfig = offersConfig?.pointsRedemption;
     const minPointsThreshold = pointsRedemptionConfig?.minPoints ?? 100;
     if (points >= 50 && points < minPointsThreshold) {
@@ -177,7 +198,9 @@ export default function MyOffersPage() {
       result.push({
         id: 'almost-there',
         title: 'اقتربت من المكافأة!',
+        titleEn: 'Almost There!',
         description: `تحتاج ${pointsNeeded} نقطة إضافية للحصول على خصم ${sarValue.toFixed(0)} ريال`,
+        descriptionEn: `You need ${pointsNeeded} more points for a ${sarValue.toFixed(0)} SAR discount`,
         discount: 0,
         type: 'loyalty'
       });
@@ -214,10 +237,10 @@ export default function MyOffersPage() {
         <div className="container max-w-lg mx-auto p-4 flex flex-col items-center justify-center min-h-[50vh] space-y-4">
           <Sparkles className="w-12 h-12 text-primary" />
           <p className="font-ibm-arabic text-muted-foreground text-center">
-            سجل دخولك لاكتشاف عروضك الخاصة
+            {tc("سجل دخولك لاكتشاف عروضك الخاصة", "Log in to discover your exclusive offers")}
           </p>
           <Button onClick={() => setLocation("/auth")} data-testid="button-login">
-            تسجيل الدخول
+            {tc("تسجيل الدخول", "Log In")}
           </Button>
         </div>
       </CustomerLayout>
@@ -226,7 +249,7 @@ export default function MyOffersPage() {
 
   return (
     <CustomerLayout>
-      <div className="container max-w-lg mx-auto p-4 pb-24" dir="rtl">
+      <div className="container max-w-lg mx-auto p-4 pb-24" dir={dir}>
         <div className="flex items-center gap-3 mb-6">
           <Button
             variant="ghost"
@@ -239,9 +262,9 @@ export default function MyOffersPage() {
           <div>
             <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
               <Sparkles className="w-6 h-6 text-primary" />
-              عروضك الخاصة
+              {tc("عروضك الخاصة", "Your Exclusive Offers")}
             </h1>
-            <p className="text-sm text-muted-foreground">عروض مخصصة لك بناءً على تفضيلاتك</p>
+            <p className="text-sm text-muted-foreground">{tc("عروض مخصصة لك بناءً على تفضيلاتك", "Offers tailored to your preferences")}</p>
           </div>
         </div>
 
@@ -249,16 +272,16 @@ export default function MyOffersPage() {
           <Card className="text-center p-8">
             <CardContent>
               <Gift className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-              <p className="text-lg font-medium text-foreground">لا توجد عروض حالياً</p>
+              <p className="text-lg font-medium text-foreground">{tc("لا توجد عروض حالياً", "No offers available")}</p>
               <p className="text-sm text-muted-foreground mt-2">
-                استمر في الطلب لفتح عروض خاصة بك
+                {tc("استمر في الطلب لفتح عروض خاصة بك", "Keep ordering to unlock special offers")}
               </p>
               <Button 
                 onClick={() => setLocation("/menu")} 
                 className="mt-4"
                 data-testid="button-explore-menu"
               >
-                استكشف القائمة
+                {tc("استكشف القائمة", "Explore Menu")}
               </Button>
             </CardContent>
           </Card>
@@ -276,23 +299,23 @@ export default function MyOffersPage() {
                       {getOfferIcon(offer.type)}
                     </div>
                     <div className="flex-1">
-                      <h3 className="font-bold text-lg">{offer.title}</h3>
+                      <h3 className="font-bold text-lg">{isEn ? offer.titleEn : offer.title}</h3>
                       {offer.expiresIn && (
                         <div className="flex items-center gap-1 text-xs text-white/80 mt-1">
                           <Clock className="w-3 h-3" />
-                          <span>ينتهي خلال {offer.expiresIn}</span>
+                          <span>{tc("ينتهي خلال", "Expires in")} {isEn ? offer.expiresInEn : offer.expiresIn}</span>
                         </div>
                       )}
                     </div>
                     {offer.discount > 0 && (
                       <Badge className="bg-white text-foreground font-bold text-lg px-3 py-1">
-                        {offer.type === 'loyalty' ? `${offer.discount} ر.س` : `${offer.discount}%`}
+                        {offer.type === 'loyalty' ? <>{offer.discount} <SarIcon size={13} /></> : `${offer.discount}%`}
                       </Badge>
                     )}
                   </div>
                 </div>
                 <CardContent className="p-4">
-                  <p className="text-foreground">{offer.description}</p>
+                  <p className="text-foreground">{isEn ? offer.descriptionEn : offer.description}</p>
                   {offer.coffeeItem && (
                     <div className="mt-3 flex items-center gap-3 bg-muted/50 rounded-lg p-3">
                       {offer.coffeeItem.imageUrl && (
@@ -300,10 +323,11 @@ export default function MyOffersPage() {
                           src={offer.coffeeItem.imageUrl} 
                           alt={offer.coffeeItem.nameAr}
                           className="w-12 h-12 rounded-lg object-cover"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                         />
                       )}
                       <div>
-                        <p className="font-medium text-foreground">{offer.coffeeItem.nameAr}</p>
+                        <p className="font-medium text-foreground">{isEn ? (offer.coffeeItem.nameEn || offer.coffeeItem.nameAr) : offer.coffeeItem.nameAr}</p>
                         <p className="text-sm text-muted-foreground">
                           <span className="line-through">{offer.coffeeItem.price} <SarIcon /></span>
                           <span className="text-primary font-bold mr-2">
@@ -319,7 +343,7 @@ export default function MyOffersPage() {
                     disabled={offer.discount === 0}
                     data-testid={`button-use-offer-${offer.id}`}
                   >
-                    {offer.discount > 0 ? 'استخدم العرض' : 'استمر في جمع النقاط'}
+                    {offer.discount > 0 ? tc("استخدم العرض", "Use Offer") : tc("استمر في جمع النقاط", "Keep Collecting Points")}
                   </Button>
                 </CardContent>
               </Card>
@@ -331,13 +355,13 @@ export default function MyOffersPage() {
           <CardHeader>
             <CardTitle className="text-sm flex items-center gap-2">
               <Gift className="w-4 h-4 text-primary" />
-              كيف تحصل على المزيد من العروض؟
+              {tc("كيف تحصل على المزيد من العروض؟", "How to Get More Offers?")}
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground space-y-2">
-            <p>• اطلب بانتظام لفتح عروض العملاء المميزين</p>
-            <p>• اجمع النقاط واستبدلها بخصومات</p>
-            <p>• ادعُ أصدقاءك واحصل على 50 نقطة لكل صديق</p>
+            <p>• {tc("اطلب بانتظام لفتح عروض العملاء المميزين", "Order regularly to unlock VIP offers")}</p>
+            <p>• {tc("اجمع النقاط واستبدلها بخصومات", "Collect points and redeem for discounts")}</p>
+            <p>• {tc("ادعُ أصدقاءك واحصل على 50 نقطة لكل صديق", "Refer friends and earn 50 points per referral")}</p>
           </CardContent>
         </Card>
       </div>

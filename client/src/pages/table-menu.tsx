@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { useTranslate } from "@/lib/useTranslate";
 import { useRoute, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -12,6 +13,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import clunyLogo from "@assets/cluny-logo-customer.png";
 import SarIcon from "@/components/sar-icon";
+import type { AddonPreview } from "@/components/menu-layouts";
+import { OptionPills } from "@/components/menu-layouts";
 
 interface ITable {
   id: string;
@@ -59,6 +62,7 @@ interface MenuCategory {
 }
 
 export default function TableMenuNew() {
+  const tc = useTranslate();
   const [, navigate] = useLocation();
   const [match, params] = useRoute("/table-menu/:qrToken");
   const { toast } = useToast();
@@ -91,7 +95,7 @@ export default function TableMenuNew() {
     retry: 1,
     queryFn: async () => {
       const response = await fetch(`/api/tables/qr/${qrToken}`);
-      if (!response.ok) throw new Error("الطاولة غير موجودة");
+      if (!response.ok) throw new Error(tc("الطاولة غير موجودة", "Table not found"));
       return response.json();
     },
   });
@@ -108,7 +112,7 @@ export default function TableMenuNew() {
     enabled: !!table?.currentOrderId,
     queryFn: async () => {
       const response = await fetch(`/api/orders/${table?.currentOrderId}`);
-      if (!response.ok) throw new Error("الطلب غير موجود");
+      if (!response.ok) throw new Error(tc("الطلب غير موجود", "Order not found"));
       return response.json();
     },
   });
@@ -129,8 +133,15 @@ export default function TableMenuNew() {
     queryKey: ["/api/product-addons"],
   });
 
-  const { data: itemsWithAddons = [] } = useQuery<string[]>({
-    queryKey: ["/api/coffee-items-with-addons"],
+  const { data: itemsWithAddonsList = [] } = useQuery<string[]>({
+    queryKey: ["/api/coffee-items/with-addons"],
+    staleTime: 5 * 60 * 1000,
+  });
+  const itemsWithAddonsSet = useMemo(() => new Set(itemsWithAddonsList), [itemsWithAddonsList]);
+
+  const { data: itemAddonsMap = {} } = useQuery<Record<string, AddonPreview[]>>({
+    queryKey: ["/api/coffee-items/addons-preview"],
+    staleTime: 5 * 60 * 1000,
   });
 
   const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -150,46 +161,21 @@ export default function TableMenuNew() {
     Coffee, Flame, Snowflake, Star, Cake, Utensils, Sparkles
   };
 
-  const drinkSystemCategories = [
-    { id: "all", name: t("menu.categories.all"), icon: Coffee, isSystem: true },
-    { id: "hot", name: t("menu.categories.hot"), icon: Flame, isSystem: true },
-    { id: "cold", name: t("menu.categories.cold"), icon: Snowflake, isSystem: true },
-    { id: "specialty", name: t("menu.categories.specialty"), icon: Star, isSystem: true },
-    { id: "drinks", name: t("menu.categories.drinks") || "المشروبات", icon: Coffee, isSystem: true },
-    { id: "additional_drinks", name: "مشروبات إضافية", icon: Plus, isSystem: true },
-    { id: "desserts", name: t("menu.categories.desserts"), icon: Cake, isSystem: true },
-  ];
+  const allTab = { id: "all", name: t("menu.categories.all"), icon: Coffee };
 
-  const foodSystemCategories = [
-    { id: "all", name: t("menu.categories.all"), icon: Utensils, isSystem: true },
-    { id: "food", name: t("menu.categories.food"), icon: Utensils, isSystem: true },
-    { id: "sandwiches", name: "السندوتشات", icon: Utensils, isSystem: true },
-    { id: "bakery", name: t("menu.categories.bakery"), icon: Cake, isSystem: true },
-    { id: "croissant", name: "الكرواسون", icon: Cake, isSystem: true },
-    { id: "cake", name: "الكيك", icon: Cake, isSystem: true },
-    { id: "desserts", name: t("menu.categories.desserts"), icon: Star, isSystem: true },
-  ];
+  const filteredDynamic = dynamicCategories.filter(c => {
+    if (!isBothModes) return true;
+    return !c.department || c.department === activeMode;
+  });
 
-  const systemCategories = isBothModes
-    ? (activeMode === "food" ? foodSystemCategories : drinkSystemCategories)
-    : drinkSystemCategories;
-
-  const customCategories = dynamicCategories
-    .filter(c => {
-      if (c.isSystem) return false;
-      if (isBothModes) {
-        return !c.department || c.department === activeMode;
-      }
-      return true;
-    })
-    .map(c => ({
+  const categories = [
+    allTab,
+    ...filteredDynamic.map(c => ({
       id: c.id,
       name: i18n.language === 'ar' ? c.nameAr : (c.nameEn || c.nameAr),
       icon: iconMap[c.icon || 'Coffee'] || Coffee,
-      isSystem: false
-    }));
-
-  const categories = [...systemCategories, ...customCategories];
+    })),
+  ];
 
   const getGroupingKey = (item: CoffeeItem): string => {
     if ((item as any).groupId) return (item as any).groupId;
@@ -212,20 +198,17 @@ export default function TableMenuNew() {
 
   const representativeItems = Object.values(groupedItems).map(group => group[0]);
 
-  const drinkCategoryIds = ['basic', 'hot', 'cold', 'specialty', 'drinks'];
-  const foodCategoryIds = ['food', 'bakery', 'desserts'];
+  const drinkCategoryIds = dynamicCategories.filter(c => c.department === 'drinks').map(c => c.id);
+  const foodCategoryIds = dynamicCategories.filter(c => c.department === 'food').map(c => c.id);
 
   const filteredItems = representativeItems.filter(item => {
     const matchesCategory = selectedCategory === "all" || item.category === selectedCategory;
     const name = i18n.language === 'ar' ? item.nameAr : item.nameEn || item.nameAr;
     const matchesSearch = name.toLowerCase().includes(searchQuery.toLowerCase());
 
-    const drinkIds = [...drinkCategoryIds, ...dynamicCategories.filter(c => c.department === 'drinks').map(c => c.id)];
-    const foodIds = [...foodCategoryIds, ...dynamicCategories.filter(c => c.department === 'food').map(c => c.id)];
-
     const matchesMode = !isBothModes || (
       selectedCategory !== "all"
-        ? (activeMode === "drinks" ? drinkIds.includes(item.category) : foodIds.includes(item.category))
+        ? (activeMode === "drinks" ? drinkCategoryIds.includes(item.category) : foodCategoryIds.includes(item.category))
         : true
     );
 
@@ -234,10 +217,8 @@ export default function TableMenuNew() {
 
   const sortedFilteredItems = [...filteredItems].sort((a, b) => {
     if (!isBothModes || selectedCategory !== "all") return 0;
-    const drinkIds = [...drinkCategoryIds, ...dynamicCategories.filter(c => c.department === 'drinks').map(c => c.id)];
-    const foodIds = [...foodCategoryIds, ...dynamicCategories.filter(c => c.department === 'food').map(c => c.id)];
-    const aMatchesMode = activeMode === "drinks" ? drinkIds.includes(a.category) : foodIds.includes(a.category);
-    const bMatchesMode = activeMode === "drinks" ? drinkIds.includes(b.category) : foodIds.includes(b.category);
+    const aMatchesMode = activeMode === "drinks" ? drinkCategoryIds.includes(a.category) : foodCategoryIds.includes(a.category);
+    const bMatchesMode = activeMode === "drinks" ? drinkCategoryIds.includes(b.category) : foodCategoryIds.includes(b.category);
     if (aMatchesMode && !bMatchesMode) return -1;
     if (!aMatchesMode && bMatchesMode) return 1;
     return 0;
@@ -310,8 +291,8 @@ export default function TableMenuNew() {
     } catch (error) {
       console.error("Add to cart error:", error);
       toast({
-        title: "خطأ",
-        description: "فشل في إضافة المنتج للسلة",
+        title: tc("خطأ", "Error"),
+        description: tc("فشل في إضافة المنتج للسلة", "Failed to add product to cart"),
         variant: "destructive"
       });
     }
@@ -372,15 +353,15 @@ export default function TableMenuNew() {
       });
       if (response.ok) {
         toast({
-          title: "تم التمديد",
-          description: "تم تمديد الحجز لمدة ساعة إضافية",
+          title: tc("تم التمديد", "Extended"),
+          description: tc("تم تمديد الحجز لمدة ساعة إضافية", "Reservation extended by one hour"),
         });
         queryClient.invalidateQueries({ queryKey: ["/api/tables/qr", qrToken] });
       }
     } catch (error) {
       toast({
-        title: "خطأ",
-        description: "فشل تمديد الحجز",
+        title: tc("خطأ", "Error"),
+        description: tc("فشل تمديد الحجز", "Failed to extend reservation"),
         variant: "destructive"
       });
     }
@@ -389,8 +370,8 @@ export default function TableMenuNew() {
   const handleCheckout = async () => {
     if (cart.length === 0) {
       toast({
-        title: "السلة فارغة",
-        description: "الرجاء إضافة عناصر للسلة أولاً",
+        title: tc("السلة فارغة", "Cart Empty"),
+        description: tc("الرجاء إضافة عناصر للسلة أولاً", "Please add items to cart first"),
         variant: "destructive",
       });
       return;
@@ -399,8 +380,8 @@ export default function TableMenuNew() {
     if (table?.reservedFor?.customerName) {
       if (reservationStatus === "after_window") {
         toast({
-          title: "انتهاء فترة الحجز",
-          description: "آسفون، فترة الحجز قد انتهت. يمكنك عمل طلب عادي جديد.",
+          title: tc("انتهاء فترة الحجز", "Reservation Expired"),
+          description: tc("آسفون، فترة الحجز قد انتهت. يمكنك عمل طلب عادي جديد.", "Sorry, reservation has expired. You can place a new regular order."),
           variant: "destructive",
         });
         return;
@@ -408,8 +389,8 @@ export default function TableMenuNew() {
 
       if (reservationStatus === "before_window") {
         toast({
-          title: "الحجز في وقت لاحق",
-          description: "الحجز لم يبدأ بعد. يمكنك عمل طلب عادي الآن.",
+          title: tc("الحجز في وقت لاحق", "Reservation Not Started"),
+          description: tc("الحجز لم يبدأ بعد. يمكنك عمل طلب عادي الآن.", "Reservation has not started yet. You can place a regular order now."),
         });
         setReservationPhoneVerified(true);
         return;
@@ -419,8 +400,8 @@ export default function TableMenuNew() {
         const phoneToVerify = reservationPhoneInput.trim();
         if (!phoneToVerify) {
           toast({
-            title: "التحقق من الحجز",
-            description: "الرجاء إدخال رقم الجوال المسجل في الحجز",
+            title: tc("التحقق من الحجز", "Verify Reservation"),
+            description: tc("الرجاء إدخال رقم الجوال المسجل في الحجز", "Please enter the phone number registered for this reservation"),
             variant: "destructive",
           });
           return;
@@ -431,8 +412,8 @@ export default function TableMenuNew() {
 
         if (reservationPhone !== inputPhone && reservationPhone !== phoneToVerify) {
           toast({
-            title: "خطأ في التحقق",
-            description: "رقم الجوال غير مطابق للحجز",
+            title: tc("خطأ في التحقق", "Verification Error"),
+            description: tc("رقم الجوال غير مطابق للحجز", "Phone number does not match reservation"),
             variant: "destructive",
           });
           return;
@@ -464,8 +445,8 @@ export default function TableMenuNew() {
     const isAvailable = item.isAvailable !== 0 && (item.availabilityStatus === 'available' || item.availabilityStatus === 'new' || !item.availabilityStatus);
     if (!isAvailable) {
       toast({
-        title: "غير متوفر",
-        description: "نعتذر، هذا المنتج غير متوفر حالياً",
+        title: tc("غير متوفر", "Unavailable"),
+        description: tc("نعتذر، هذا المنتج غير متوفر حالياً", "Sorry, this product is currently unavailable"),
         variant: "destructive"
       });
       return;
@@ -475,9 +456,10 @@ export default function TableMenuNew() {
     const group = groupedItems[groupKey] || [item];
     const hasMultipleVariants = group.length > 1;
     const hasSizes = item.availableSizes && item.availableSizes.length > 0;
-    const hasAddons = itemsWithAddons.includes((item as any).id);
+    const hasAddons = itemsWithAddonsSet.has(item.id);
+    const hasBundledItems = (item as any).bundledItems?.some((s: any) => s.items?.length > 0);
 
-    if (hasMultipleVariants || hasSizes || hasAddons) {
+    if (hasMultipleVariants || hasSizes || hasAddons || hasBundledItems) {
       setSelectedItem(item);
       setIsModalOpen(true);
     } else {
@@ -500,11 +482,11 @@ export default function TableMenuNew() {
 
   if (!table) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center" dir="rtl">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
           <Coffee className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-          <h2 className="text-2xl font-bold mb-2">طاولة غير موجودة</h2>
-          <p className="text-muted-foreground">عذراً، لم نتمكن من العثور على هذه الطاولة.</p>
+          <h2 className="text-2xl font-bold mb-2">{tc("طاولة غير موجودة", "Table Not Found")}</h2>
+          <p className="text-muted-foreground">{tc("عذراً، لم نتمكن من العثور على هذه الطاولة.", "Sorry, we could not find this table.")}</p>
         </div>
       </div>
     );
@@ -512,18 +494,26 @@ export default function TableMenuNew() {
 
   return (
     <div className="min-h-screen bg-background" dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}>
-      <header className="fixed top-0 inset-x-0 z-[60] h-16 bg-primary/40 backdrop-blur-md border-b border-white/10 flex items-center justify-between px-4">
+      <header className="fixed top-0 inset-x-0 z-[60] h-16 bg-black/60 backdrop-blur-md border-b border-white/10 flex items-center justify-between px-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-white/10 p-1.5 flex items-center justify-center">
             <img src={clunyLogo} alt="Logo" className="w-full h-full object-contain" />
           </div>
           <div className="flex flex-col">
-            <h1 className="text-base font-black text-white leading-tight">CLUNY</h1>
+            <h1 className="text-base font-black text-white leading-tight">CLUNY CAFE</h1>
             <span className="text-[10px] font-bold text-white/60 tracking-wider uppercase">CAFE</span>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate('/')}
+            className="p-1.5 rounded-xl bg-white/10 text-white border border-white/10 flex items-center justify-center hover:bg-white/20 transition-colors"
+            aria-label="رجوع"
+            data-testid="button-back-home"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
           <Badge className="bg-white/20 text-white border-white/10 px-3 py-1">
             <MapPin className="w-3 h-3 ml-1" />
             طاولة {table.tableNumber}
@@ -560,7 +550,7 @@ export default function TableMenuNew() {
           </div>
 
           {table?.reservedFor?.status === 'pending' && (
-            <div className="bg-card rounded-2xl border border-border p-4 shadow-sm" dir="rtl">
+            <div className="bg-card rounded-2xl border border-border p-4 shadow-sm">
               <div className="flex justify-between items-start gap-3">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-2">
@@ -599,13 +589,23 @@ export default function TableMenuNew() {
                   <p className="text-sm text-muted-foreground mb-3">
                     لديك طلب تم طلبه سابقاً من هذه الطاولة ولا يزال في الانتظار.
                   </p>
-                  <Button
-                    onClick={() => navigate(`/table-order-tracking/${table?.currentOrderId}`)}
-                    size="sm"
-                    data-testid="button-view-pending-order"
-                  >
-                    متابعة الطلب السابق
-                  </Button>
+                  <div className="flex gap-2 flex-wrap">
+                    <Button
+                      onClick={() => navigate(`/table-order-tracking/${table?.currentOrderId}`)}
+                      size="sm"
+                      variant="outline"
+                      data-testid="button-view-pending-order"
+                    >
+                      متابعة الطلب السابق
+                    </Button>
+                    <Button
+                      onClick={() => navigate(`/table-pay/${table?.id}`)}
+                      size="sm"
+                      data-testid="button-pay-now"
+                    >
+                      ادفع الآن 💳
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -669,7 +669,7 @@ export default function TableMenuNew() {
                             });
                           } else {
                             toast({
-                              title: "خطأ",
+                              title: tc("خطأ", "Error"),
                               description: "رقم الجوال غير مطابق",
                               variant: "destructive",
                             });
@@ -764,7 +764,7 @@ export default function TableMenuNew() {
                       className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                       alt={i18n.language === 'ar' ? item.nameAr : item.nameEn || item.nameAr}
                       onError={(e) => {
-                        (e.target as HTMLImageElement).src = "/placeholder-coffee.png";
+                        const img = e.target as HTMLImageElement; img.src = "/images/brand-logo.png"; img.style.objectFit = "contain"; img.style.padding = "8px"; if (img.parentElement) img.parentElement.style.background = "#1a1a1a";
                       }}
                     />
                   </div>
@@ -810,14 +810,15 @@ export default function TableMenuNew() {
                         className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                         alt={i18n.language === 'ar' ? item.nameAr : item.nameEn || item.nameAr}
                         onError={(e) => {
-                          (e.target as HTMLImageElement).src = "/placeholder-coffee.png";
+                          const img = e.target as HTMLImageElement; img.src = "/images/brand-logo.png"; img.style.objectFit = "contain"; img.style.padding = "8px"; if (img.parentElement) img.parentElement.style.background = "#1a1a1a";
                         }}
                       />
                     </div>
                     <div className="flex-1 min-w-0 py-1">
-                      <h3 className="text-base font-semibold truncate text-foreground mb-1">{i18n.language === 'ar' ? item.nameAr : item.nameEn || item.nameAr}</h3>
-                      <p className="text-xs text-muted-foreground truncate mb-2">{item.description || t("menu.default_desc")}</p>
-                      <div className="flex items-center justify-between">
+                      <h3 className="text-base font-semibold truncate text-foreground mb-0.5">{i18n.language === 'ar' ? item.nameAr : item.nameEn || item.nameAr}</h3>
+                      <p className="text-xs text-muted-foreground truncate">{item.description || t("menu.default_desc")}</p>
+                      <OptionPills item={item as any} addons={itemAddonsMap[item.id]} lang={i18n.language} />
+                      <div className="flex items-center justify-between mt-2">
                         <span className="text-primary font-bold text-lg">{item.price} <small className="text-xs font-normal text-muted-foreground"><SarIcon /></small></span>
                         <Button
                           size="sm"

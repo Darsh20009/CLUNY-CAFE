@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Plus, Minus, ShoppingCart } from "lucide-react";
+import { AddonGroupsSelector, validateAddonGroups, calcAddonGroupsPrice, type SelectedAddonGroup } from "@/components/addon-groups-selector";
+import type { AddonGroup } from "@/components/addon-groups-editor";
 import { useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
@@ -35,6 +37,9 @@ export function AddToCartModal({
   const [selectedSize, setSelectedSize] = useState<string | null>(null);
   const [selectedAddons, setSelectedAddons] = useState<string[]>([]);
   const [selectedItemAddonIndices, setSelectedItemAddonIndices] = useState<number[]>([]);
+  const [selectedBundledItems, setSelectedBundledItems] = useState<Record<number, string[]>>({});
+  const [selectedReservationPackageIdx, setSelectedReservationPackageIdx] = useState<number | null>(null);
+  const [selectedAddonGroups, setSelectedAddonGroups] = useState<SelectedAddonGroup[]>([]);
   const { toast } = useToast();
   const { i18n } = useTranslation();
   const isAr = i18n.language === 'ar';
@@ -44,6 +49,7 @@ export function AddToCartModal({
     setSelectedSize(null);
     setSelectedAddons([]);
     setSelectedItemAddonIndices([]);
+    setSelectedBundledItems({});
     setSelectedVariant(null);
     onClose();
   }, [onClose]);
@@ -55,6 +61,9 @@ export function AddToCartModal({
       setSelectedSize(null);
       setSelectedAddons([]);
       setSelectedItemAddonIndices([]);
+      setSelectedBundledItems({});
+      setSelectedReservationPackageIdx(null);
+      setSelectedAddonGroups([]);
     }
   }, [isOpen, item]);
 
@@ -75,18 +84,10 @@ export function AddToCartModal({
     enabled: isOpen && !!activeItem,
   });
 
-  const generalAddons = useMemo(() => {
-    if (!activeItem) return [];
-    const itemMenuCategory = (activeItem as any).category || '';
-    return allAddons.filter(addon => {
-      if (!addon.isAvailable || addon.isAddonDrink) return false;
-      // If addon has a menuCategory set, only show it when item's category matches
-      if ((addon as any).menuCategory && itemMenuCategory) {
-        return (addon as any).menuCategory === itemMenuCategory;
-      }
-      return true; // No category restriction → show for all items
-    });
-  }, [activeItem, allAddons]);
+  const generalAddons = useMemo((): IProductAddon[] => {
+    // Never show general addons as fallback — addons must be explicitly linked to the item
+    return [];
+  }, []);
 
   const drinkAddons = useMemo(() => {
     if (!activeItem) return [];
@@ -107,6 +108,23 @@ export function AddToCartModal({
   const inlineAddons: Array<{nameAr: string; nameEn?: string; price: number}> = useMemo(() => {
     return (activeItem as any)?.addons || [];
   }, [activeItem]);
+
+  const bundledSections: Array<{
+    sectionTitle: string;
+    selectionType: 'single' | 'multiple';
+    minSelectable: number;
+    maxSelectable: number;
+    items: Array<{ productId: string; nameAr: string; nameEn?: string; imageUrl?: string; originalPrice: number; customPrice: number; }>;
+  }> = useMemo(() => (activeItem as any)?.bundledItems || [], [activeItem]);
+
+  const bundledItemsPrice = useMemo(() => {
+    return bundledSections.reduce((total, section, secIdx) => {
+      const selected = selectedBundledItems[secIdx] || [];
+      return total + section.items
+        .filter(it => selected.includes(it.productId))
+        .reduce((s, it) => s + it.customPrice, 0);
+    }, 0);
+  }, [bundledSections, selectedBundledItems]);
 
   const handleAddToCart = () => {
     if (!activeItem) return;
@@ -129,7 +147,50 @@ export function AddToCartModal({
       return;
     }
 
+    const reservationPackages: Array<{packageName: string; description?: string; price: number; duration?: string; maxGuests?: number;}> = (activeItem as any)?.reservationPackages || [];
+    if ((activeItem as any)?.isReservation && reservationPackages.length > 0 && selectedReservationPackageIdx === null) {
+      toast({
+        title: isAr ? "تنبيه" : "Notice",
+        description: isAr ? "يرجى اختيار باقة الحجز" : "Please select a reservation package",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const addonGroupsDef: AddonGroup[] = (activeItem as any)?.addonGroups || [];
+    const groupValidErr = validateAddonGroups(addonGroupsDef, selectedAddonGroups);
+    if (groupValidErr) {
+      toast({ title: isAr ? "تنبيه" : "Notice", description: groupValidErr, variant: "destructive" });
+      return;
+    }
+
+    for (let i = 0; i < bundledSections.length; i++) {
+      const section = bundledSections[i];
+      if (section.minSelectable > 0) {
+        const selected = selectedBundledItems[i] || [];
+        if (selected.length < section.minSelectable) {
+          toast({
+            title: isAr ? "تنبيه" : "Notice",
+            description: isAr ? `يرجى اختيار ${section.minSelectable === 1 ? 'منتج' : section.minSelectable + ' منتجات'} من "${section.sectionTitle}"` : `Please select from "${section.sectionTitle}"`,
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+    }
+
     const selectedItemAddons = selectedItemAddonIndices.map(idx => inlineAddons[idx]).filter(Boolean);
+
+    const selectedBundledDetails = bundledSections.map((section, secIdx) => {
+      const selectedIds = selectedBundledItems[secIdx] || [];
+      return {
+        sectionTitle: section.sectionTitle,
+        selectedItems: section.items.filter(it => selectedIds.includes(it.productId)),
+      };
+    }).filter(s => s.selectedItems.length > 0);
+
+    const selectedReservationPackage = (selectedReservationPackageIdx !== null && reservationPackages[selectedReservationPackageIdx])
+      ? reservationPackages[selectedReservationPackageIdx] : null;
 
     const cartItem = {
       coffeeItemId: activeItem.id,
@@ -137,6 +198,10 @@ export function AddToCartModal({
       selectedSize: selectedSize || "default",
       selectedAddons: selectedAddons,
       selectedItemAddons,
+      selectedBundledItems: selectedBundledDetails,
+      selectedAddonGroups,
+      isReservation: !!(activeItem as any)?.isReservation,
+      selectedReservationPackage,
     };
 
     onAddToCart(cartItem);
@@ -144,6 +209,9 @@ export function AddToCartModal({
   };
 
   if (!activeItem) return null;
+
+  const addonGroupsDef: AddonGroup[] = (activeItem as any)?.addonGroups || [];
+  const addonGroupsPrice = calcAddonGroupsPrice(selectedAddonGroups);
 
   const inlineAddonsPrice = selectedItemAddonIndices.reduce((sum, idx) => {
     return sum + (inlineAddons[idx]?.price ?? 0);
@@ -154,27 +222,33 @@ export function AddToCartModal({
     return sum + (addon?.price ?? 0);
   }, 0);
 
-  const totalPrice =
-    (selectedSize
+  const reservationPkgs: Array<{packageName: string; price: number;}> = (activeItem as any)?.reservationPackages || [];
+  const reservationPackagePrice = (selectedReservationPackageIdx !== null && reservationPkgs[selectedReservationPackageIdx])
+    ? reservationPkgs[selectedReservationPackageIdx].price : null;
+
+  const totalPrice = (activeItem as any)?.isReservation && reservationPackagePrice !== null
+    ? reservationPackagePrice * quantity
+    : (selectedSize
       ? activeItem.availableSizes?.find((s) => s.nameAr === selectedSize)?.price ??
         activeItem.price
       : activeItem.price) * quantity +
-    (productAddonPrice + inlineAddonsPrice) * quantity;
+    (productAddonPrice + inlineAddonsPrice + bundledItemsPrice + addonGroupsPrice) * quantity;
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && resetModal()}>
-      <DialogContent className="w-full max-w-sm bg-background border border-border p-0 overflow-hidden gap-0 data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom data-[state=open]:zoom-in-100 data-[state=closed]:zoom-out-100">
-        <div className="relative h-32 bg-gradient-to-br from-primary/20 to-accent/10 flex items-center justify-center">
+      <DialogContent className="max-w-sm bg-background border border-border rounded-2xl p-0 overflow-hidden flex flex-col max-h-[92vh]">
+        <div className="relative h-28 flex-shrink-0 bg-gradient-to-br from-primary/20 to-accent/10 flex items-center justify-center">
           {activeItem.imageUrl && (
             <img 
               src={activeItem.imageUrl.startsWith('/') ? activeItem.imageUrl : `/${activeItem.imageUrl}`} 
               alt={isAr ? activeItem.nameAr : activeItem.nameEn || activeItem.nameAr} 
-              className="w-24 h-24 rounded-xl object-cover border-4 border-background shadow-lg"
+              className="w-20 h-20 rounded-xl object-cover border-4 border-background shadow-lg"
             />
           )}
         </div>
         
-        <div className="px-4 pb-6 space-y-4 overflow-y-auto max-h-[75vh]">
+        <div className="flex-1 overflow-y-auto overscroll-contain">
+        <div className="px-4 pb-2 space-y-4">
           <DialogHeader className="pt-2">
             <DialogTitle className="text-xl font-bold text-center text-foreground">
               {isAr ? activeItem.nameAr : activeItem.nameEn || activeItem.nameAr}
@@ -250,139 +324,106 @@ export function AddToCartModal({
                   sections[sec].push(idx);
                 });
                 return Object.entries(sections).map(([sec, indices]) => {
-                  const isSingleSelectSection = indices.some(i => !!(inlineAddons[i] as any).isSingleSelect);
+                  const isSingleSelect = indices.some(i => (inlineAddons[i] as any).selectionType === 'single');
                   return (
-                    <div key={sec} className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Label className="text-sm font-semibold text-foreground">
-                          {sec || (isAr ? "الإضافات" : "Extras")}
-                        </Label>
-                        {isSingleSelectSection && (
-                          <span className="text-xs text-muted-foreground">{isAr ? "(اختر واحد)" : "(pick one)"}</span>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {indices.map((idx) => {
-                          const addon = inlineAddons[idx];
-                          const selected = selectedItemAddonIndices.includes(idx);
-                          const imgSrc = (addon as any).imageUrl;
-                          return (
-                            <button
-                              key={idx}
-                              onClick={() => {
-                                if (isSingleSelectSection) {
-                                  setSelectedItemAddonIndices((prev) => {
-                                    const withoutSection = prev.filter(i => !indices.includes(i));
-                                    return selected ? withoutSection : [...withoutSection, idx];
-                                  });
-                                } else {
-                                  setSelectedItemAddonIndices((prev) =>
-                                    prev.includes(idx)
-                                      ? prev.filter((i) => i !== idx)
-                                      : [...prev, idx]
-                                  );
-                                }
-                              }}
-                              className={`rounded-xl text-xs font-medium transition-all flex items-center gap-2 px-3 py-2 ${
-                                selected
-                                  ? "bg-primary text-white shadow-md ring-2 ring-primary/30"
-                                  : "bg-secondary text-foreground border border-border hover:border-primary/50"
-                              }`}
-                            >
-                              {imgSrc && (
-                                <img
-                                  src={imgSrc.startsWith('/') ? imgSrc : '/' + imgSrc}
-                                  alt={addon.nameAr}
-                                  className="w-6 h-6 rounded object-cover"
-                                />
-                              )}
-                              <span>{isAr ? addon.nameAr : ((addon as any).nameEn || addon.nameAr)}</span>
-                              {addon.price > 0 && (
-                                <span className={selected ? "text-white/80" : "text-primary font-bold"}>
-                                  +{addon.price}
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
+                  <div key={sec} className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Label className="text-sm font-semibold text-foreground">
+                        {sec || (isAr ? "الإضافات" : "Extras")}
+                      </Label>
+                      {isSingleSelect && (
+                        <span className="text-[10px] text-muted-foreground border border-border rounded-full px-2 py-0.5">
+                          {isAr ? "اختر واحداً" : "Select one"}
+                        </span>
+                      )}
                     </div>
+                    <div className="flex flex-wrap gap-2">
+                      {indices.map((idx) => {
+                        const addon = inlineAddons[idx];
+                        const selected = selectedItemAddonIndices.includes(idx);
+                        const imgSrc = (addon as any).imageUrl;
+                        return (
+                          <button
+                            key={idx}
+                            onClick={() => {
+                              if (isSingleSelect) {
+                                setSelectedItemAddonIndices((prev) => {
+                                  const withoutSection = prev.filter(i => !indices.includes(i));
+                                  return prev.includes(idx) ? withoutSection : [...withoutSection, idx];
+                                });
+                              } else {
+                                setSelectedItemAddonIndices((prev) =>
+                                  prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx]
+                                );
+                              }
+                            }}
+                            className={`rounded-xl text-xs font-medium transition-all flex items-center gap-2 px-3 py-2 ${
+                              selected
+                                ? "bg-primary text-white shadow-md ring-2 ring-primary/30"
+                                : "bg-secondary text-foreground border border-border hover:border-primary/50"
+                            }`}
+                          >
+                            {imgSrc && (
+                              <img
+                                src={imgSrc.startsWith('/') ? imgSrc : '/' + imgSrc}
+                                alt={addon.nameAr}
+                                className="w-6 h-6 rounded object-cover"
+                              />
+                            )}
+                            <span>{isAr ? addon.nameAr : ((addon as any).nameEn || addon.nameAr)}</span>
+                            {addon.price > 0 && (
+                              <span className={selected ? "text-white/80" : "text-primary font-bold"}>
+                                +{addon.price}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                   );
                 });
               })()}
             </div>
           )}
 
-          {specificAddons.length > 0 && (() => {
-            const grouped: Record<string, IProductAddon[]> = {};
-            specificAddons.forEach(addon => {
-              const cat = (addon as any).category || 'other';
-              if (!grouped[cat]) grouped[cat] = [];
-              grouped[cat].push(addon);
-            });
-            const catLabels: Record<string, string> = {
-              sugar: isAr ? "السكر" : "Sugar",
-              milk: isAr ? "الحليب" : "Milk",
-              shot: isAr ? "شوت" : "Shot",
-              syrup: isAr ? "شراب" : "Syrup",
-              topping: isAr ? "توبينج" : "Topping",
-              size: isAr ? "الحجم" : "Size",
-              flavor: isAr ? "النكهة" : "Flavor",
-              other: isAr ? "إضافات" : "Addons",
-            };
-            return (
-              <div className="space-y-3">
-                {Object.entries(grouped).map(([cat, addons]) => {
-                  const isSingleSelect = addons.some((a: any) => a.isSingleSelect === true) || cat === 'sugar' || cat === 'milk' || cat === 'size';
-                  const label = catLabels[cat] || (isAr ? "إضافات" : "Addons");
-                  return (
-                    <div key={cat} className="space-y-1.5">
-                      <div className="flex items-center gap-2">
-                        <Label className="text-sm font-semibold text-foreground">{label}</Label>
-                        {isSingleSelect && (
-                          <span className="text-xs text-muted-foreground border border-border rounded px-1.5 py-0.5">{isAr ? "اختر واحد" : "Select one"}</span>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {addons.map((addon) => (
-                          <button
-                            key={addon.id}
-                            onClick={() => {
-                              if (isSingleSelect) {
-                                const otherIdsInCat = addons.map(a => a.id).filter(id => id !== addon.id);
-                                setSelectedAddons((prev) => {
-                                  const withoutCat = prev.filter(id => !otherIdsInCat.includes(id) && id !== addon.id);
-                                  return prev.includes(addon.id) ? withoutCat : [...withoutCat, addon.id];
-                                });
-                              } else {
-                                setSelectedAddons((prev) =>
-                                  prev.includes(addon.id)
-                                    ? prev.filter((id) => id !== addon.id)
-                                    : [...prev, addon.id]
-                                );
-                              }
-                            }}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1 ${
-                              selectedAddons.includes(addon.id)
-                                ? "bg-primary text-white shadow-md"
-                                : "bg-secondary text-foreground border border-border hover:border-primary/50"
-                            }`}
-                          >
-                            {isAr ? addon.nameAr : addon.nameEn || addon.nameAr}
-                            {addon.price > 0 && (
-                              <span className={selectedAddons.includes(addon.id) ? "text-white/80" : "text-primary"}>
-                                +{addon.price}
-                              </span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
+          {addonGroupsDef.length > 0 && (
+            <AddonGroupsSelector
+              groups={addonGroupsDef}
+              value={selectedAddonGroups}
+              onChange={setSelectedAddonGroups}
+            />
+          )}
+
+          {specificAddons.length > 0 && inlineAddons.length === 0 && (
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold text-foreground">{isAr ? "الإضافات" : "Addons"}</Label>
+              <div className="flex flex-wrap gap-2">
+                {specificAddons.map((addon) => (
+                  <button
+                    key={addon.id}
+                    onClick={() => {
+                      setSelectedAddons((prev) =>
+                        prev.includes(addon.id)
+                          ? prev.filter((id) => id !== addon.id)
+                          : [...prev, addon.id]
+                      );
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1 ${
+                      selectedAddons.includes(addon.id)
+                        ? "bg-primary text-white shadow-md"
+                        : "bg-secondary text-foreground border border-border hover:border-primary/50"
+                    }`}
+                  >
+                    {isAr ? addon.nameAr : addon.nameEn || addon.nameAr}
+                    <span className={selectedAddons.includes(addon.id) ? "text-white/80" : "text-primary"}>
+                      +{addon.price}
+                    </span>
+                  </button>
+                ))}
               </div>
-            );
-          })()}
+            </div>
+          )}
 
           {generalAddons.length > 0 && (
             <div className="space-y-2">
@@ -454,6 +495,103 @@ export function AddToCartModal({
             </div>
           )}
 
+          {(activeItem as any)?.isReservation && ((activeItem as any)?.reservationPackages || []).length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🗓️</span>
+                <Label className="text-sm font-semibold text-foreground">{isAr ? "اختر باقة الحجز" : "Select Reservation Package"}</Label>
+                <span className="text-[10px] text-muted-foreground border border-border rounded-full px-2 py-0.5">{isAr ? "مطلوب" : "Required"}</span>
+              </div>
+              <div className="space-y-2">
+                {((activeItem as any)?.reservationPackages || []).map((pkg: any, idx: number) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setSelectedReservationPackageIdx(idx)}
+                    className={`w-full text-right p-3 rounded-lg border-2 transition-all ${selectedReservationPackageIdx === idx ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/30' : 'border-border bg-card hover:border-amber-300'}`}
+                    data-testid={`btn-select-pkg-${idx}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col items-start gap-0.5">
+                        <span className="font-semibold text-sm text-foreground">{pkg.packageName}</span>
+                        {pkg.description && <span className="text-xs text-muted-foreground">{pkg.description}</span>}
+                        <div className="flex items-center gap-3 mt-1">
+                          {pkg.duration && <span className="text-xs text-amber-700 bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 rounded-full">⏱️ {pkg.duration}</span>}
+                          {pkg.maxGuests && <span className="text-xs text-blue-700 bg-blue-100 dark:bg-blue-900/40 px-2 py-0.5 rounded-full">👥 {isAr ? `حتى ${pkg.maxGuests} أشخاص` : `Up to ${pkg.maxGuests} guests`}</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className={`font-bold text-sm ${selectedReservationPackageIdx === idx ? 'text-amber-600' : 'text-primary'}`}>{pkg.price}</span>
+                        <SarIcon className={`w-3.5 h-3.5 ${selectedReservationPackageIdx === idx ? 'text-amber-600' : 'text-primary'}`} />
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {bundledSections.length > 0 && bundledSections.some(s => s.items.length > 0) && (
+            <div className="space-y-3">
+              {bundledSections.filter(s => s.items.length > 0).map((section, secIdx) => (
+                <div key={secIdx} className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm font-semibold text-foreground">{section.sectionTitle || (isAr ? "منتجات مصاحبة" : "Add-on Products")}</Label>
+                    {section.minSelectable > 0 && (
+                      <span className="text-[10px] text-red-500 border border-red-200 rounded-full px-2 py-0.5">{isAr ? "إلزامي" : "Required"}</span>
+                    )}
+                    {section.selectionType === 'single' ? (
+                      <span className="text-[10px] text-muted-foreground border border-border rounded-full px-2 py-0.5">{isAr ? "اختر واحداً" : "Select one"}</span>
+                    ) : section.maxSelectable > 1 ? (
+                      <span className="text-[10px] text-muted-foreground border border-border rounded-full px-2 py-0.5">{isAr ? `حتى ${section.maxSelectable}` : `Up to ${section.maxSelectable}`}</span>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {section.items.map((bItem) => {
+                      const selectedIds = selectedBundledItems[secIdx] || [];
+                      const isSelected = selectedIds.includes(bItem.productId);
+                      return (
+                        <button
+                          key={bItem.productId}
+                          type="button"
+                          onClick={() => {
+                            setSelectedBundledItems(prev => {
+                              const current = prev[secIdx] || [];
+                              if (section.selectionType === 'single') {
+                                return {...prev, [secIdx]: isSelected ? [] : [bItem.productId]};
+                              } else {
+                                const maxSel = section.maxSelectable || 99;
+                                if (isSelected) return {...prev, [secIdx]: current.filter(id => id !== bItem.productId)};
+                                if (current.length >= maxSel) return prev;
+                                return {...prev, [secIdx]: [...current, bItem.productId]};
+                              }
+                            });
+                          }}
+                          className={`rounded-xl text-xs font-medium transition-all flex items-center gap-2 px-3 py-2 ${
+                            isSelected
+                              ? "bg-primary text-white shadow-md ring-2 ring-primary/30"
+                              : "bg-secondary text-foreground border border-border hover:border-primary/50"
+                          }`}
+                          data-testid={`btn-bundle-item-${secIdx}-${bItem.productId}`}
+                        >
+                          {bItem.imageUrl && (
+                            <img src={bItem.imageUrl.startsWith('/') ? bItem.imageUrl : '/' + bItem.imageUrl} alt={bItem.nameAr} className="w-7 h-7 rounded object-cover" />
+                          )}
+                          <div className="text-right">
+                            <div>{isAr ? bItem.nameAr : (bItem.nameEn || bItem.nameAr)}</div>
+                            <div className={`text-[10px] ${isSelected ? 'text-white/80' : 'text-primary font-bold'}`}>
+                              {bItem.customPrice === 0 ? (isAr ? "مجاني 🎁" : "Free 🎁") : <span>+{bItem.customPrice} <SarIcon size={10} /></span>}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="flex items-center justify-between bg-secondary/50 rounded-xl p-3">
             <Label className="text-sm font-semibold text-foreground">{isAr ? "الكمية" : "Quantity"}</Label>
             <div className="flex items-center gap-3">
@@ -479,22 +617,25 @@ export function AddToCartModal({
             </div>
           </div>
 
-          <div className="flex items-center justify-between pt-2">
-            <div>
-              <span className="text-xs text-muted-foreground">{isAr ? "الإجمالي" : "Total"}</span>
-              <div className="text-2xl font-bold text-primary">
-                {totalPrice.toFixed(2)} <span className="text-sm"><SarIcon /></span>
-              </div>
+        </div>
+        </div>
+
+        {/* ── Fixed footer: total + add button ── */}
+        <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-t bg-background">
+          <div>
+            <span className="text-xs text-muted-foreground">{isAr ? "الإجمالي" : "Total"}</span>
+            <div className="text-2xl font-bold text-primary">
+              {totalPrice.toFixed(2)} <span className="text-sm"><SarIcon /></span>
             </div>
-            <Button
-              onClick={handleAddToCart}
-              className="bg-primary hover:bg-primary/90 text-white px-6 py-5 rounded-xl font-bold shadow-lg"
-              data-testid="button-add-to-cart"
-            >
-              <ShoppingCart className="w-4 h-4 ml-2" />
-              {isAr ? "إضافة" : "Add"}
-            </Button>
           </div>
+          <Button
+            onClick={handleAddToCart}
+            className="bg-primary hover:bg-primary/90 text-white px-6 py-5 rounded-xl font-bold shadow-lg"
+            data-testid="button-add-to-cart"
+          >
+            <ShoppingCart className="w-4 h-4 ml-2" />
+            {isAr ? "إضافة" : "Add"}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

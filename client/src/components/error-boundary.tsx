@@ -6,6 +6,7 @@ import { AlertTriangle, RefreshCcw, Home } from "lucide-react";
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
+  silent?: boolean;
 }
 
 interface State {
@@ -24,7 +25,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error("ErrorBoundary caught an error:", error, errorInfo);
+    console.error("[ErrorBoundary] caught:", error.message, "\n", error.stack, "\n", errorInfo.componentStack);
   }
 
   handleReload = () => {
@@ -37,12 +38,14 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
+      if (this.props.silent) return null;
+
       if (this.props.fallback) {
         return this.props.fallback;
       }
 
       return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-amber-50 to-orange-100" dir="rtl">
+        <div className="min-h-screen flex items-center justify-center p-4 bg-background" dir="rtl">
           <Card className="max-w-md w-full shadow-lg">
             <CardHeader className="text-center">
               <div className="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
@@ -78,13 +81,13 @@ export class ErrorBoundary extends Component<Props, State> {
                 </Button>
               </div>
 
-              {process.env.NODE_ENV === 'development' && this.state.error && (
+              {this.state.error && (
                 <details className="mt-4 text-xs text-gray-500 bg-gray-100 p-3 rounded">
-                  <summary className="cursor-pointer font-medium">تفاصيل الخطأ (للمطورين)</summary>
-                  <pre className="mt-2 whitespace-pre-wrap overflow-auto max-h-40">
+                  <summary className="cursor-pointer font-medium">تفاصيل الخطأ</summary>
+                  <pre className="mt-2 whitespace-pre-wrap overflow-auto max-h-40 text-left" dir="ltr">
                     {this.state.error.message}
                     {"\n"}
-                    {this.state.error.stack}
+                    {this.state.error.stack?.split("\n").slice(0, 8).join("\n")}
                   </pre>
                 </details>
               )}

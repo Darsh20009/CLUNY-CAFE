@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -16,11 +16,12 @@ import { LoadingState, EmptyState, ErrorState } from "@/components/ui/states";
 import BranchLocationPicker from "@/components/branch-location-picker";
 import CouponManagement from "@/components/coupon-management";
 import { DeliveryManagement } from "@/components/delivery-management";
+import { ManagerSidebar, MobileBottomNav } from "@/components/manager-sidebar";
 import { 
  Coffee, Users, ShoppingBag, TrendingUp, DollarSign, 
  Package, MapPin, Layers, ArrowLeft, Calendar, Warehouse,
  UserCheck, Receipt, BarChart3, Download, TrendingDown, Activity, Plus, Trash2, ExternalLink, Edit2, Search,
- Gift, Star, Banknote, LineChart as LineChartIcon
+ Gift, Star, Banknote, Menu, Zap, Clock, Target, ChevronUp, ChevronDown, LogOut
 } from "lucide-react";
 import * as XLSX from 'xlsx';
 import { 
@@ -31,6 +32,9 @@ import {
 } from "recharts";
 import type { Employee, Order, Customer } from "@shared/schema";
 import SarIcon from "@/components/sar-icon";
+import { DemoDataManager } from "@/components/demo-data-manager";
+import { FlaskConical, Sparkles, Brain, Globe, Plug, Gauge, Code2 } from "lucide-react";
+import { useTranslate } from "@/lib/useTranslate";
 
 interface EmployeeWithStats extends Employee {
  orderCount?: number;
@@ -60,10 +64,27 @@ const SAUDI_CITIES = [
  { name: 'بريدة | Buraydah', lat: '26.3263', lon: '43.9750' },
 ];
 
+type DateFilterType = "today" | "yesterday" | "week" | "thisMonth" | "lastMonth" | "thisYear" | "all" | "custom";
+
+// Saudi time helper: returns Date at start/end of today in UTC+3
+function saudiStartOfDay(d?: Date): Date {
+  const target = d ? new Date(d) : new Date();
+  // UTC offset for Saudi Arabia is +3 hours
+  const utcMs = target.getTime() + (target.getTimezoneOffset() * 60000); // to UTC
+  const saudiMs = utcMs + (3 * 3600000); // to Saudi
+  const saudi = new Date(saudiMs);
+  saudi.setHours(0, 0, 0, 0);
+  return new Date(saudi.getTime() - (3 * 3600000) + (-target.getTimezoneOffset() * 60000));
+}
+
 export default function ManagerDashboard() {
  const [, setLocation] = useLocation();
  const [manager, setManager] = useState<Employee | null>(null);
- const [dateFilter, setDateFilter] = useState<"today" | "week" | "month" | "all">("all");
+ const [dateFilter, setDateFilter] = useState<DateFilterType>("thisMonth");
+ const [customStart, setCustomStart] = useState<string>("");
+ const [customEnd, setCustomEnd] = useState<string>("");
+ const [showCustomRange, setShowCustomRange] = useState(false);
+ const tc = useTranslate();
 
  // Set SEO metadata
  useEffect(() => {
@@ -82,13 +103,14 @@ export default function ManagerDashboard() {
  city: "",
  managerName: "",
  mapsUrl: "",
- latitude: 24.7136,
- longitude: 46.6753,
+ latitude: 24.0887,
+ longitude: 38.0697,
  });
  const [branchSearchQuery, setBranchSearchQuery] = useState<string>("");
  const [branchSearchResults, setBranchSearchResults] = useState<Array<{ name: string; lat: string; lon: string }>>([]);
  const [showBranchResults, setShowBranchResults] = useState(false);
  const [isSearchingBranch, setIsSearchingBranch] = useState(false);
+ const [demoManagerOpen, setDemoManagerOpen] = useState(false);
  const [managerAssignmentType, setManagerAssignmentType] = useState<"existing" | "new">("existing");
  const [selectedManagerId, setSelectedManagerId] = useState<string>("");
  const [newManagerForm, setNewManagerForm] = useState({
@@ -99,6 +121,7 @@ export default function ManagerDashboard() {
  const { toast } = useToast();
  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
  const [ordersDisplayLimit, setOrdersDisplayLimit] = useState(20);
+ const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
  const deleteOrdersMutation = useMutation({
    mutationFn: async (ids: string[]) => {
@@ -107,17 +130,17 @@ export default function ManagerDashboard() {
    onSuccess: (_, ids) => {
      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
      setSelectedOrderIds(new Set());
-     toast({ title: `تم حذف ${ids.length} طلب بنجاح`, variant: "default" });
+     toast({ title: tc(`تم حذف ${ids.length} طلب بنجاح`, `Deleted ${ids.length} orders successfully`), variant: "default" });
    },
    onError: () => {
-     toast({ title: "خطأ في حذف الطلبات", variant: "destructive" });
+     toast({ title: tc("خطأ في حذف الطلبات", "Error deleting orders"), variant: "destructive" });
    },
  });
 
  const handleBulkDelete = () => {
    const ids = Array.from(selectedOrderIds);
    if (ids.length === 0) return;
-   if (!window.confirm(`هل تريد حذف ${ids.length} طلب نهائياً؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+   if (!window.confirm(tc(`هل تريد حذف ${ids.length} طلب نهائياً؟ لا يمكن التراجع عن هذا الإجراء.`, `Delete ${ids.length} orders permanently? This cannot be undone.`))) return;
    deleteOrdersMutation.mutate(ids);
  };
 
@@ -126,9 +149,10 @@ export default function ManagerDashboard() {
  const storedEmployee = localStorage.getItem("currentEmployee");
  if (storedEmployee) {
  const emp = JSON.parse(storedEmployee);
- if (emp.role !== "manager" && emp.role !== "admin") {
+ const managerRoles = ["manager", "admin", "owner", "branch_manager"];
+ if (!managerRoles.includes(emp.role)) {
  localStorage.removeItem("currentEmployee");
- setLocation("/employee/dashboard");
+ setLocation("/manager/dashboard");
  return;
  }
 
@@ -153,7 +177,7 @@ export default function ManagerDashboard() {
  checkSession();
  }, [setLocation]);
 
- const isAdmin = manager?.role === "admin";
+ const isAdmin = manager?.role === "admin" || manager?.role === "owner";
  const managerBranchId = manager?.branchId;
 
  const searchBranchLocations = async (query: string) => {
@@ -200,10 +224,13 @@ export default function ManagerDashboard() {
  }
  };
 
+ const branchSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
  const handleBranchSearchChange = (value: string) => {
  setBranchSearchQuery(value);
- setTimeout(() => {
- searchBranchLocations(value);
+ if (branchSearchTimer.current) clearTimeout(branchSearchTimer.current);
+ branchSearchTimer.current = setTimeout(() => {
+   searchBranchLocations(value);
+   branchSearchTimer.current = null;
  }, 500);
  };
 
@@ -236,8 +263,7 @@ export default function ManagerDashboard() {
  const { data: allOrders = [] } = useQuery<Order[]>({
  queryKey: ["/api/orders"],
  enabled: !!manager,
- refetchInterval: !!manager ? 60000 : false,
- staleTime: 30000,
+ refetchInterval: !!manager ? 15000 : false,
  });
 
  const orders = isAdmin ? allOrders : allOrders.filter(order => order.branchId === managerBranchId);
@@ -248,6 +274,12 @@ export default function ManagerDashboard() {
  });
 
  const branches = isAdmin ? allBranches : allBranches.filter(branch => branch.id === managerBranchId);
+
+ const { data: systemStatus } = useQuery<any>({
+   queryKey: ["/api/system/status"],
+   enabled: !!manager,
+   refetchInterval: 30000,
+ });
 
  const availableManagers = allEmployees.filter(emp => 
  emp.role === "manager" || emp.role === "admin"
@@ -299,21 +331,21 @@ export default function ManagerDashboard() {
  city: "",
  managerName: "",
  mapsUrl: "",
- latitude: 24.7136,
- longitude: 46.6753,
+ latitude: 24.0887,
+ longitude: 38.0697,
  });
  setManagerAssignmentType("existing");
  setSelectedManagerId("");
  setNewManagerForm({ fullName: "", username: "", phone: "" });
  toast({
- title: "تم إضافة الفرع بنجاح",
- description: "تم إضافة الفرع الجديد إلى النظام",
+ title: tc("تم إضافة الفرع بنجاح", "Branch added successfully"),
+ description: tc("تم إضافة الفرع الجديد إلى النظام", "The new branch has been added to the system"),
  });
  },
  onError: (error: any) => {
  toast({
- title: "خطأ في إضافة الفرع",
- description: error.message || "حدث خطأ أثناء إضافة الفرع",
+ title: tc("خطأ في إضافة الفرع", "Error adding branch"),
+ description: error.message || tc("حدث خطأ أثناء إضافة الفرع", "An error occurred while adding the branch"),
  variant: "destructive",
  });
  },
@@ -327,14 +359,14 @@ export default function ManagerDashboard() {
  onSuccess: () => {
  queryClient.invalidateQueries({ queryKey: ["/api/branches"] });
  toast({
- title: "تم حذف الفرع بنجاح",
- description: "تم إزالة الفرع من النظام",
+ title: tc("تم حذف الفرع بنجاح", "Branch deleted successfully"),
+ description: tc("تم إزالة الفرع من النظام", "The branch has been removed from the system"),
  });
  },
  onError: (error: any) => {
  toast({
- title: "خطأ في حذف الفرع",
- description: error.message || "حدث خطأ أثناء حذف الفرع",
+ title: tc("خطأ في حذف الفرع", "Error deleting branch"),
+ description: error.message || tc("حدث خطأ أثناء حذف الفرع", "An error occurred while deleting the branch"),
  variant: "destructive",
  });
  },
@@ -387,18 +419,18 @@ export default function ManagerDashboard() {
  city: "",
  managerName: "",
  mapsUrl: "",
- latitude: 24.7136,
- longitude: 46.6753,
+ latitude: 24.0887,
+ longitude: 38.0697,
  });
  toast({
- title: "تم تحديث الفرع بنجاح",
- description: "تم تحديث بيانات الفرع",
+ title: tc("تم تحديث الفرع بنجاح", "Branch updated successfully"),
+ description: tc("تم تحديث بيانات الفرع", "Branch data has been updated"),
  });
  },
  onError: (error: any) => {
  toast({
- title: "خطأ في تحديث الفرع",
- description: error.message || "حدث خطأ أثناء تحديث الفرع",
+ title: tc("خطأ في تحديث الفرع", "Error updating branch"),
+ description: error.message || tc("حدث خطأ أثناء تحديث الفرع", "An error occurred while updating the branch"),
  variant: "destructive",
  });
  },
@@ -412,8 +444,8 @@ export default function ManagerDashboard() {
  const handleCreateBranch = () => {
  if (!branchForm.nameAr || !branchForm.address || !branchForm.city || !branchForm.phone) {
  toast({
- title: "بيانات ناقصة",
- description: "الرجاء إدخال جميع البيانات المطلوبة",
+ title: tc("بيانات ناقصة", "Missing data"),
+ description: tc("الرجاء إدخال جميع البيانات المطلوبة", "Please enter all required fields"),
  variant: "destructive",
  });
  return;
@@ -421,8 +453,8 @@ export default function ManagerDashboard() {
  
  if (managerAssignmentType === "new" && (!newManagerForm.fullName || !newManagerForm.username || !newManagerForm.phone)) {
  toast({
- title: "بيانات المدير ناقصة",
- description: "الرجاء إدخال جميع بيانات المدير الجديد",
+ title: tc("بيانات المدير ناقصة", "Manager data missing"),
+ description: tc("الرجاء إدخال جميع بيانات المدير الجديد", "Please enter all new manager details"),
  variant: "destructive",
  });
  return;
@@ -444,8 +476,8 @@ export default function ManagerDashboard() {
  if (!editingBranch) return;
  if (!branchForm.nameAr || !branchForm.address || !branchForm.city || !branchForm.phone) {
  toast({
- title: "بيانات ناقصة",
- description: "الرجاء إدخال جميع البيانات المطلوبة",
+ title: tc("بيانات ناقصة", "Missing data"),
+ description: tc("الرجاء إدخال جميع البيانات المطلوبة", "Please enter all required fields"),
  variant: "destructive",
  });
  return;
@@ -521,13 +553,13 @@ export default function ManagerDashboard() {
  XLSX.writeFile(wb, fileName);
 
  toast({
- title: "تم التصدير بنجاح",
- description: "تم تصدير البيانات إلى ملف Excel",
+ title: tc("تم التصدير بنجاح", "Exported successfully"),
+ description: tc("تم تصدير البيانات إلى ملف Excel", "Data has been exported to Excel"),
  });
  } catch (error) {
  toast({
- title: "خطأ في التصدير",
- description: "حدث خطأ أثناء تصدير البيانات",
+ title: tc("خطأ في التصدير", "Export error"),
+ description: tc("حدث خطأ أثناء تصدير البيانات", "An error occurred while exporting data"),
  variant: "destructive",
  });
  }
@@ -547,62 +579,96 @@ export default function ManagerDashboard() {
      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
      toast({
-       title: "تم بنجاح",
+       title: tc("تم بنجاح", "Done"),
        description: data.message,
        variant: "destructive",
      });
    },
    onError: () => {
      toast({
-       title: "خطأ",
-       description: "فشل تنظيف البيانات",
+       title: tc("خطأ", "Error"),
+       description: tc("فشل تنظيف البيانات", "Failed to clear data"),
        variant: "destructive",
      });
    },
  });
 
  if (!manager) {
- return <LoadingState message="جاري التحميل..." />;
+ return <LoadingState message={tc("جاري التحميل...", "Loading...")} />;
  }
 
  const getFilteredOrders = () => {
- const now = new Date();
- return orders.filter(order => {
- if (order.status === 'cancelled') return false;
- if (!order.createdAt) return dateFilter === "all";
- 
- const orderDate = new Date(order.createdAt);
- if (isNaN(orderDate.getTime())) return dateFilter === "all";
- 
- switch (dateFilter) {
- case "today":
- return orderDate.toDateString() === now.toDateString();
- case "week":
- const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
- return orderDate >= weekAgo;
- case "month":
- const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
- return orderDate >= monthAgo;
- default:
- return true;
- }
- });
+   const now = new Date();
+   return orders.filter(order => {
+     if (!order.createdAt) return dateFilter === "all";
+     const orderDate = new Date(order.createdAt);
+     if (isNaN(orderDate.getTime())) return dateFilter === "all";
+
+     switch (dateFilter) {
+       case "today": {
+         const start = saudiStartOfDay();
+         const end = new Date(start.getTime() + 24 * 3600000);
+         return orderDate >= start && orderDate < end;
+       }
+       case "yesterday": {
+         const todayStart = saudiStartOfDay();
+         const start = new Date(todayStart.getTime() - 24 * 3600000);
+         return orderDate >= start && orderDate < todayStart;
+       }
+       case "week": {
+         const start = new Date(now.getTime() - 7 * 24 * 3600000);
+         return orderDate >= start;
+       }
+       case "thisMonth": {
+         const y = now.getFullYear(), m = now.getMonth();
+         const start = new Date(y, m, 1);
+         const end   = new Date(y, m + 1, 1);
+         return orderDate >= start && orderDate < end;
+       }
+       case "lastMonth": {
+         const y = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+         const m = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+         const start = new Date(y, m, 1);
+         const end   = new Date(y, m + 1, 1);
+         return orderDate >= start && orderDate < end;
+       }
+       case "thisYear": {
+         const start = new Date(now.getFullYear(), 0, 1);
+         return orderDate >= start;
+       }
+       case "custom": {
+         if (!customStart && !customEnd) return true;
+         const start = customStart ? new Date(customStart + "T00:00:00") : null;
+         const end   = customEnd   ? new Date(customEnd   + "T23:59:59") : null;
+         if (start && orderDate < start) return false;
+         if (end   && orderDate > end)   return false;
+         return true;
+       }
+       default:
+         return true;
+     }
+   });
  };
 
  const filteredOrders = getFilteredOrders();
- const totalRevenue = filteredOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+ // Revenue only counts non-cancelled, non-rejected, non-refunded orders
+ const EXCLUDED_STATUSES = ["cancelled", "rejected", "refunded"];
+ const revenueOrders = filteredOrders.filter(o => !EXCLUDED_STATUSES.includes(o.status || ""));
+ const totalRevenue = revenueOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
  const completedOrders = filteredOrders.filter(o => o.status === "completed");
  const completedRevenue = completedOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+ const cancelledOrders = filteredOrders.filter(o => EXCLUDED_STATUSES.includes(o.status || ""));
  
+ const todayStart = saudiStartOfDay();
+ const todayEnd   = new Date(todayStart.getTime() + 24 * 3600000);
  const todayOrders = orders.filter(o => {
- if (o.status === 'cancelled') return false;
- if (!o.createdAt) return false;
- const orderDate = new Date(o.createdAt);
- if (isNaN(orderDate.getTime())) return false;
- const today = new Date();
- return orderDate.toDateString() === today.toDateString();
+   if (!o.createdAt) return false;
+   const d = new Date(o.createdAt);
+   return !isNaN(d.getTime()) && d >= todayStart && d < todayEnd;
  });
- const todayRevenue = todayOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+ const todayRevenue = todayOrders
+   .filter(o => !["cancelled","rejected","refunded"].includes(o.status || ""))
+   .reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
 
  const employeesWithStats: EmployeeWithStats[] = employees.map(emp => {
  const empId = emp.id?.toString();
@@ -677,250 +743,432 @@ export default function ManagerDashboard() {
  const COLORS = ['hsl(var(--primary))', 'hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))', 'hsl(var(--chart-5))', 'hsl(var(--accent))', 'hsl(var(--secondary))'];
  
  const growthRate = (() => {
- if (dateFilter === "today" || dateFilter === "all") return 0;
- const now = new Date();
- const periodStart = dateFilter === "week" ? new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) :
- dateFilter === "month" ? new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) : null;
- if (!periodStart) return 0;
- 
- const periodOrders = orders.filter(o => {
- if (o.status === 'cancelled') return false;
- if (!o.createdAt) return false;
- const date = new Date(o.createdAt);
- return !isNaN(date.getTime()) && date >= periodStart;
- });
- 
- const prevPeriodEnd = periodStart;
- const prevPeriodStart = dateFilter === "week" ? new Date(periodStart.getTime() - 7 * 24 * 60 * 60 * 1000) :
- new Date(periodStart.getTime() - 30 * 24 * 60 * 60 * 1000);
- const prevPeriodOrders = orders.filter(o => {
- if (o.status === 'cancelled') return false;
- if (!o.createdAt) return false;
- const date = new Date(o.createdAt);
- return !isNaN(date.getTime()) && date >= prevPeriodStart && date < prevPeriodEnd;
- });
- 
- const currentRevenue = periodOrders.reduce((sum, o) => sum + Number(o.totalAmount || 0), 0);
- const previousRevenue = prevPeriodOrders.reduce((sum, o) => sum + Number(o.totalAmount || 0), 0);
- 
- if (previousRevenue === 0) return currentRevenue > 0 ? 100 : 0;
- return Number((((currentRevenue - previousRevenue) / previousRevenue) * 100).toFixed(1));
+   if (dateFilter === "today" || dateFilter === "all" || dateFilter === "custom" || dateFilter === "thisYear") return 0;
+   const now = new Date();
+   let curStart: Date, curEnd: Date, prevStart: Date, prevEnd: Date;
+   if (dateFilter === "week") {
+     curEnd   = now;
+     curStart = new Date(now.getTime() - 7 * 24 * 3600000);
+     prevEnd  = curStart;
+     prevStart = new Date(curStart.getTime() - 7 * 24 * 3600000);
+   } else if (dateFilter === "yesterday") {
+     const ts = saudiStartOfDay();
+     curStart = new Date(ts.getTime() - 24 * 3600000);
+     curEnd   = ts;
+     prevStart = new Date(curStart.getTime() - 24 * 3600000);
+     prevEnd   = curStart;
+   } else if (dateFilter === "thisMonth") {
+     const y = now.getFullYear(), m = now.getMonth();
+     curStart = new Date(y, m, 1);
+     curEnd   = new Date(y, m + 1, 1);
+     prevStart = new Date(y, m - 1, 1);
+     prevEnd   = curStart;
+   } else if (dateFilter === "lastMonth") {
+     const y = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+     const m = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+     curStart = new Date(y, m, 1);
+     curEnd   = new Date(y, m + 1, 1);
+     prevStart = new Date(y, m - 1, 1);
+     prevEnd   = curStart;
+   } else {
+     return 0;
+   }
+   const EXCL = ["cancelled","rejected","refunded"];
+   const rev = (os: typeof orders) => os.filter(o => !EXCL.includes(o.status||"")).reduce((s,o) => s + Number(o.totalAmount||0), 0);
+   const inRange = (start: Date, end: Date) => orders.filter(o => {
+     if (!o.createdAt) return false;
+     const d = new Date(o.createdAt);
+     return !isNaN(d.getTime()) && d >= start && d < end;
+   });
+   const currentRevenue  = rev(inRange(curStart,  curEnd));
+   const previousRevenue = rev(inRange(prevStart!, prevEnd!));
+   if (previousRevenue === 0) return currentRevenue > 0 ? 100 : 0;
+   return Number((((currentRevenue - previousRevenue) / previousRevenue) * 100).toFixed(1));
  })();
 
+ const hourNow = new Date().getHours();
+ const greeting = hourNow < 12 ? tc("صباح الخير", "Good Morning") : hourNow < 17 ? tc("مساء الخير", "Good Afternoon") : tc("مساء النور", "Good Evening");
+ const todayLabel = new Date().toLocaleDateString(tc('ar-SA', 'en-US'), { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
  return (
- <div className="min-h-screen bg-background p-3 sm:p-6 pb-24 sm:pb-6" dir="rtl">
- <div className="max-w-7xl mx-auto">
- <header className="bg-card backdrop-blur-sm rounded-2xl border border-border p-4 sm:p-6 mb-4 sm:mb-6">
- <div className="flex items-center justify-between gap-4 flex-wrap">
- <div className="flex items-center gap-4">
- <div className="w-14 h-14 bg-primary rounded-xl flex items-center justify-center shadow-lg">
- <Coffee className="w-7 h-7 text-primary-foreground" />
- </div>
- <div>
- <h1 className="text-2xl font-bold text-primary">
- لوحة تحكم المدير
- </h1>
- <p className="text-muted-foreground text-sm">مرحباً، {manager.fullName}</p>
- </div>
- </div>
- <div className="flex items-center gap-3 flex-wrap">
- <Button
- variant="outline"
- onClick={handleLogout}
- data-testid="button-logout"
- >
- تسجيل الخروج
- </Button>
- <Button
- variant="outline"
- onClick={() => setLocation("/employee/dashboard")}
- data-testid="button-back"
- >
- <ArrowLeft className="w-4 h-4 ml-2" />
- رجوع
- </Button>
- </div>
- </div>
- </header>
+ <>
+ <div className="flex h-screen overflow-hidden bg-background" style={{ fontFamily: "'Cairo', sans-serif" }}>
 
- <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-3 mb-4 sm:mb-6">
- <Button
- onClick={() => setLocation("/employee/pos")}
- className="h-16 sm:h-20 flex flex-col gap-1 sm:gap-2 rounded-xl"
- data-testid="button-pos"
- >
- <Package className="w-5 h-5 sm:w-6 sm:h-6" />
- <span className="text-xs sm:text-sm">نقاط البيع</span>
- </Button>
- <Button
- onClick={() => setLocation("/manager/statistics")}
- className="h-16 sm:h-20 flex flex-col gap-1 sm:gap-2 rounded-xl bg-accent text-accent-foreground hover:bg-accent/90"
- data-testid="button-statistics"
- >
- <LineChartIcon className="w-5 h-5 sm:w-6 sm:h-6" />
- <span className="text-xs sm:text-sm">إحصائيات دقيقة</span>
- </Button>
- <Button
- onClick={() => setLocation("/manager/inventory")}
- variant="outline"
- className="h-16 sm:h-20 flex flex-col gap-1 sm:gap-2 rounded-xl"
- data-testid="button-inventory"
- >
- <Warehouse className="w-5 h-5 sm:w-6 sm:h-6" />
- <span className="text-xs sm:text-sm">المخزون</span>
- </Button>
- <Button
- onClick={() => setLocation("/manager/attendance")}
- variant="outline"
- className="h-16 sm:h-20 flex flex-col gap-1 sm:gap-2 rounded-xl"
- data-testid="button-attendance"
- >
- <UserCheck className="w-5 h-5 sm:w-6 sm:h-6" />
- <span className="text-xs sm:text-sm">الحضور</span>
- </Button>
- <Button
- onClick={handleExportData}
- variant="outline"
- className="h-16 sm:h-20 flex flex-col gap-1 sm:gap-2 rounded-xl"
- data-testid="button-export"
- >
- <Download className="w-5 h-5 sm:w-6 sm:h-6" />
- <span className="text-xs sm:text-sm">تصدير Excel</span>
- </Button>
- <Select value={dateFilter} onValueChange={(value: any) => setDateFilter(value)}>
- <SelectTrigger className="h-16 sm:h-20 flex flex-col gap-1 sm:gap-2 bg-card border-border rounded-xl">
- <Calendar className="w-6 h-6" />
- <span className="text-sm">
- {dateFilter === "today" ? "اليوم" : dateFilter === "week" ? "أسبوع" : dateFilter === "month" ? "شهر" : "الكل"}
- </span>
- </SelectTrigger>
- <SelectContent className="bg-card border-border">
- <SelectItem value="today">اليوم</SelectItem>
- <SelectItem value="week">آخر أسبوع</SelectItem>
- <SelectItem value="month">آخر شهر</SelectItem>
- <SelectItem value="all">كل الفترة</SelectItem>
- </SelectContent>
- </Select>
- {isAdmin && (
-   <Button
-     variant="destructive"
-     onClick={() => {
-       if (confirm('تحذير: هذا سيحذف جميع الطلبات والعملاء! هل تريد المتابعة؟')) {
-         clearAllDataMutation.mutate();
-       }
-     }}
-     disabled={clearAllDataMutation.isPending}
-     className="h-20 flex flex-col gap-2 rounded-xl"
-     data-testid="button-clear-all-data"
-   >
-     <Trash2 className="w-6 h-6" />
-     <span className="text-xs">{clearAllDataMutation.isPending ? 'جاري...' : 'تنظيف'}</span>
-   </Button>
- )}
- </div>
+   {/* ─── SIDEBAR ─── */}
+   <ManagerSidebar
+     manager={manager}
+     onLogout={handleLogout}
+     mobileOpen={mobileMenuOpen}
+     onMobileClose={() => setMobileMenuOpen(false)}
+     role={manager?.role}
+   />
 
- <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
- <Card className="rounded-xl overflow-hidden">
- <div className="h-1 bg-primary" />
- <CardHeader className="pb-2 pt-4">
- <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
- <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center">
- <Users className="w-4 h-4 text-primary" />
- </div>
- إجمالي العملاء
- </CardTitle>
- </CardHeader>
- <CardContent>
- <div className="text-4xl font-bold text-foreground">{customers.length}</div>
- <p className="text-xs text-muted-foreground mt-1">عميل مسجل في النظام</p>
- </CardContent>
- </Card>
+   {/* ─── MAIN CONTENT ─── */}
+   <div className="flex-1 flex flex-col overflow-hidden min-w-0">
 
- <Card className="rounded-xl overflow-hidden">
- <div className="h-1 bg-accent" />
- <CardHeader className="pb-2 pt-4">
- <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
- <div className="w-8 h-8 bg-accent/10 rounded-lg flex items-center justify-center">
- <ShoppingBag className="w-4 h-4 text-accent" />
- </div>
- الطلبات
- </CardTitle>
- </CardHeader>
- <CardContent>
- <div className="text-4xl font-bold text-foreground">{filteredOrders.length}</div>
- <div className="flex items-center gap-2 mt-1">
- <Badge variant="secondary">{completedOrders.length} مكتمل</Badge>
- <span className="text-xs text-muted-foreground">
- {dateFilter === "today" ? "اليوم" : dateFilter === "week" ? "الأسبوع" : dateFilter === "month" ? "الشهر" : "الكل"}
- </span>
- </div>
- </CardContent>
- </Card>
+     {/* TOP HEADER */}
+     <header className="flex-shrink-0 bg-background border-b border-border px-4 lg:px-6 py-3 flex items-center justify-between gap-3">
+       <div className="flex items-center gap-3">
+         <button
+           className="lg:hidden w-9 h-9 flex items-center justify-center rounded-xl bg-muted text-muted-foreground hover:text-foreground"
+           onClick={() => setMobileMenuOpen(true)}
+         >
+           <Menu className="w-5 h-5" />
+         </button>
+         <div className="hidden sm:block">
+           <div className="flex items-center gap-2">
+             <div className="text-foreground font-bold text-sm">{greeting}، <span className="text-[#2D9B6E]">{manager.fullName}</span></div>
+             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium border ${
+               manager.role === 'admin' ? 'bg-purple-500/15 text-purple-400 border-purple-500/30' :
+               manager.role === 'owner' ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' :
+               manager.role === 'branch_manager' ? 'bg-blue-500/15 text-blue-400 border-blue-500/30' :
+               'bg-[#2D9B6E]/15 text-[#2D9B6E] border-[#2D9B6E]/30'
+             }`}>
+               {manager.role === 'admin' ? 'مدير عام' : manager.role === 'owner' ? 'مالك' : manager.role === 'branch_manager' ? 'مدير فرع' : 'مدير'}
+             </span>
+           </div>
+           <div className="text-muted-foreground text-xs">{todayLabel}</div>
+         </div>
+       </div>
+       <div className="flex items-center gap-2">
+         {systemStatus && (
+           <div data-testid="system-status-badge" className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium border bg-emerald-500/10 text-emerald-400 border-emerald-500/25">
+             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+             {tc("النظام يعمل", "Online")}
+             {systemStatus.pendingOrders > 0 && (
+               <span className="mr-1 px-1.5 rounded-full bg-amber-500/20 text-amber-400 text-[9px]">
+                 {systemStatus.pendingOrders} {tc("معلقة", "pending")}
+               </span>
+             )}
+           </div>
+         )}
+         {/* ── Date filter ── */}
+         <div className="flex items-center gap-1.5 flex-wrap justify-end">
+           <Select value={dateFilter} onValueChange={(value: DateFilterType) => {
+             setDateFilter(value);
+             setShowCustomRange(value === "custom");
+           }}>
+             <SelectTrigger className="h-8 w-36 text-xs bg-muted/50 border-border text-foreground/70" data-testid="select-date-filter">
+               <Calendar className="w-3 h-3 ml-1 shrink-0" />
+               <SelectValue />
+             </SelectTrigger>
+             <SelectContent className="bg-card border-border">
+               <SelectItem value="today"     className="text-xs">اليوم</SelectItem>
+               <SelectItem value="yesterday" className="text-xs">أمس</SelectItem>
+               <SelectItem value="week"      className="text-xs">آخر 7 أيام</SelectItem>
+               <SelectItem value="thisMonth" className="text-xs">هذا الشهر</SelectItem>
+               <SelectItem value="lastMonth" className="text-xs">الشهر الماضي</SelectItem>
+               <SelectItem value="thisYear"  className="text-xs">هذا العام</SelectItem>
+               <SelectItem value="all"       className="text-xs">كل الفترات</SelectItem>
+               <SelectItem value="custom"    className="text-xs">نطاق مخصص …</SelectItem>
+             </SelectContent>
+           </Select>
+           {showCustomRange && (
+             <div className="flex items-center gap-1 bg-muted/50 border border-border rounded-lg px-2 py-1">
+               <input
+                 type="date"
+                 value={customStart}
+                 onChange={e => setCustomStart(e.target.value)}
+                 className="text-[11px] bg-transparent text-foreground outline-none w-28"
+                 data-testid="input-custom-start"
+               />
+               <span className="text-muted-foreground text-[10px] mx-0.5">—</span>
+               <input
+                 type="date"
+                 value={customEnd}
+                 onChange={e => setCustomEnd(e.target.value)}
+                 className="text-[11px] bg-transparent text-foreground outline-none w-28"
+                 data-testid="input-custom-end"
+               />
+             </div>
+           )}
+         </div>
+         {import.meta.env.DEV && (
+           <Button variant="outline" size="sm" onClick={() => setDemoManagerOpen(true)} className="h-8 text-xs border-border bg-muted/50 text-muted-foreground hover:text-foreground hidden sm:flex">
+             <FlaskConical className="w-3 h-3 ml-1" />
+             تجريبي
+           </Button>
+         )}
+         <Button variant="outline" size="sm" onClick={handleExportData} className="h-8 text-xs border-border bg-muted/50 text-muted-foreground hover:text-foreground">
+           <Download className="w-3 h-3 ml-1" />
+           Excel
+         </Button>
+         <Button variant="ghost" size="icon" onClick={handleLogout} className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10" title="تسجيل الخروج" data-testid="button-logout">
+           <LogOut className="w-4 h-4" />
+         </Button>
+       </div>
+     </header>
 
- <Card className="rounded-xl overflow-hidden">
- <div className="h-1 bg-primary" />
- <CardHeader className="pb-2 pt-4">
- <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
- <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center">
- <DollarSign className="w-4 h-4 text-primary" />
- </div>
- إجمالي المبيعات
- </CardTitle>
- </CardHeader>
- <CardContent>
- <div className="text-4xl font-bold text-primary">{totalRevenue.toFixed(2)}</div>
- <div className="flex items-center gap-2 mt-1">
- <span className="text-xs text-muted-foreground"><SarIcon /></span>
- {growthRate !== 0 && (
- <Badge variant={growthRate > 0 ? "default" : "destructive"}>
- {growthRate > 0 ? <TrendingUp className="w-3 h-3 ml-1" /> : <TrendingDown className="w-3 h-3 ml-1" />}
- {growthRate > 0 ? '+' : ''}{growthRate}%
- </Badge>
- )}
- </div>
- </CardContent>
- </Card>
+     {/* SCROLLABLE CONTENT */}
+     <main className="flex-1 overflow-y-auto pb-20 lg:pb-6">
+       <div className="p-4 lg:p-6 space-y-6 max-w-[1400px] mx-auto">
 
- <Card className="rounded-xl overflow-hidden">
- <div className="h-1 bg-secondary" />
- <CardHeader className="pb-2 pt-4">
- <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
- <div className="w-8 h-8 bg-secondary/10 rounded-lg flex items-center justify-center">
- <Activity className="w-4 h-4 text-secondary-foreground" />
- </div>
- متوسط الطلب
- </CardTitle>
- </CardHeader>
- <CardContent>
- <div className="text-4xl font-bold text-foreground">
- {filteredOrders.length > 0 ? (totalRevenue / filteredOrders.length).toFixed(2) : '0.00'}
- </div>
- <p className="text-xs text-muted-foreground mt-1">ريال سعودي لكل طلب</p>
- </CardContent>
- </Card>
- </div>
+         {/* ── KPI CARDS (clean white design) ── */}
+         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
+           {[
+             {
+               label: 'إجمالي المبيعات',
+               value: totalRevenue.toLocaleString('ar-SA', { maximumFractionDigits: 0 }),
+               sub: <><SarIcon /> <span>ريال سعودي</span>{growthRate !== 0 && (
+                 <span className={`mr-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${growthRate > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                   {growthRate > 0 ? '↑' : '↓'} {Math.abs(growthRate)}%
+                 </span>
+               )}{cancelledOrders.length > 0 && (
+                 <span className="mr-1 text-[10px] text-rose-500/70" title="لا تشمل الملغية والمرفوضة">
+                   ({cancelledOrders.length} ملغي)
+                 </span>
+               )}</>,
+               icon: DollarSign,
+               iconBg: 'bg-emerald-50',
+               iconColor: 'text-emerald-600',
+               valueColor: 'text-emerald-700',
+             },
+             {
+               label: 'الطلبات',
+               value: filteredOrders.length.toLocaleString('ar-SA'),
+               sub: <><span className="text-emerald-600">{completedOrders.length} مكتمل</span><span className="text-muted-foreground mx-1">·</span><span className="text-amber-600">{filteredOrders.filter(o => !["completed","cancelled","rejected","refunded"].includes(o.status||"")).length} جاري</span>{cancelledOrders.length > 0 && <><span className="text-muted-foreground mx-1">·</span><span className="text-rose-500">{cancelledOrders.length} ملغي</span></>}</>,
+               icon: ShoppingBag,
+               iconBg: 'bg-blue-50',
+               iconColor: 'text-blue-600',
+               valueColor: 'text-foreground',
+             },
+             {
+               label: 'العملاء',
+               value: customers.length.toLocaleString('ar-SA'),
+               sub: <span className="text-muted-foreground">عميل مسجل</span>,
+               icon: Users,
+               iconBg: 'bg-violet-50',
+               iconColor: 'text-violet-600',
+               valueColor: 'text-foreground',
+             },
+             {
+               label: 'متوسط الطلب',
+               value: filteredOrders.length > 0 ? (totalRevenue / filteredOrders.length).toFixed(1) : '0',
+               sub: <><SarIcon /> <span>ريال / طلب</span></>,
+               icon: Target,
+               iconBg: 'bg-amber-50',
+               iconColor: 'text-amber-600',
+               valueColor: 'text-foreground',
+             },
+           ].map(k => (
+             <div key={k.label} className="bg-card border border-border rounded-2xl p-4 lg:p-5 hover:shadow-sm transition-shadow" data-testid={`kpi-${k.label}`}>
+               <div className="flex items-start justify-between mb-3">
+                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${k.iconBg}`}>
+                   <k.icon className={`w-5 h-5 ${k.iconColor}`} />
+                 </div>
+               </div>
+               <div className="text-muted-foreground text-xs mb-1">{k.label}</div>
+               <div className={`text-2xl lg:text-3xl font-bold leading-tight ${k.valueColor}`}>{k.value}</div>
+               <div className="text-xs mt-2 flex items-center gap-1 text-muted-foreground flex-wrap">{k.sub}</div>
+             </div>
+           ))}
+         </div>
 
- <Tabs defaultValue="orders" className="space-y-4">
- <div className="-mx-3 sm:mx-0 overflow-x-auto scrollbar-hide">
- <TabsList className="inline-flex w-max min-w-full sm:grid sm:w-full sm:grid-cols-8 h-12 sm:h-14 px-3 sm:px-0 gap-1">
- <TabsTrigger value="orders" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">الطلبات</TabsTrigger>
- <TabsTrigger value="analytics" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">التحليلات</TabsTrigger>
- <TabsTrigger value="top-items" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">الأكثر مبيعاً</TabsTrigger>
- <TabsTrigger value="employees" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">أداء الموظفين</TabsTrigger>
- <TabsTrigger value="branches" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">الفروع</TabsTrigger>
- <TabsTrigger value="coupons" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">الكوبونات</TabsTrigger>
- <TabsTrigger value="delivery" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">التوصيل</TabsTrigger>
- <TabsTrigger value="erp" className="rounded-lg whitespace-nowrap text-xs sm:text-sm">المحاسبة</TabsTrigger>
- </TabsList>
- </div>
+         {/* ── TODAY MINI STATS (pill row) ── */}
+         <div className="bg-card border border-border rounded-2xl p-1 flex items-stretch divide-x divide-border rtl:divide-x-reverse">
+           {[
+             { label: 'طلبات اليوم',         value: todayOrders.length.toString(),       color: 'text-emerald-600' },
+             { label: 'مبيعات اليوم (ر.س)', value: todayRevenue.toFixed(0),              color: 'text-blue-600'    },
+             { label: 'الموظفون',             value: employees.length.toString(),          color: 'text-amber-600'   },
+           ].map(s => (
+             <div key={s.label} className="flex-1 px-3 py-3 text-center">
+               <div className={`font-bold text-xl ${s.color}`}>{s.value}</div>
+               <div className="text-muted-foreground text-[11px] mt-0.5">{s.label}</div>
+             </div>
+           ))}
+         </div>
+
+         {/* ── 🧪 المختبر التقني — موحَّد (Phase 5-9) ── */}
+         <details className="group bg-card border border-border rounded-2xl mb-3" data-testid="lab-section">
+           <summary className="cursor-pointer list-none flex items-center gap-3 p-4 hover:bg-muted/30 transition-colors rounded-2xl">
+             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500/15 to-cyan-500/15 border border-violet-500/20 flex items-center justify-center shrink-0">
+               <FlaskConical className="w-5 h-5 text-violet-500" />
+             </div>
+             <div className="text-right flex-1 min-w-0">
+               <div className="text-foreground font-bold text-sm">🧪 {tc("المختبر التقني", "Tech Lab")}</div>
+               <div className="text-muted-foreground text-xs mt-0.5">{tc("أدوات المطور · جودة الكود · الأداء · الذكاء الاصطناعي · التكامل · الموثوقية", "Dev Tools · Code Quality · Performance · AI · Integration · Reliability")}</div>
+             </div>
+             <ChevronDown className="w-4 h-4 text-muted-foreground group-open:rotate-180 transition-transform" />
+           </summary>
+           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 p-3 pt-0">
+             {[
+               { id: "code-quality", label: tc("جودة الكود","Code Quality"),   icon: Code2,    path: "/manager/code-quality", cls: "border-violet-500/20 bg-violet-500/5 hover:bg-violet-500/10 hover:border-violet-500/40",     iconCls: "text-violet-500"  },
+               { id: "performance",  label: tc("الأداء","Performance"),       icon: Gauge,    path: "/manager/performance",  cls: "border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/10 hover:border-amber-500/40",         iconCls: "text-amber-500"   },
+               { id: "ecosystem",    label: tc("التكامل","Integrations"),     icon: Plug,     path: "/manager/ecosystem",    cls: "border-cyan-500/20 bg-cyan-500/5 hover:bg-cyan-500/10 hover:border-cyan-500/40",             iconCls: "text-cyan-500"    },
+               { id: "ai-automation",label: tc("AI أتمتة","AI Automation"),   icon: Brain,    path: "/manager/ai-automation",cls: "border-fuchsia-500/20 bg-fuchsia-500/5 hover:bg-fuchsia-500/10 hover:border-fuchsia-500/40", iconCls: "text-fuchsia-500" },
+               { id: "reliability",  label: tc("الموثوقية","Reliability"),    icon: Sparkles, path: "/manager/reliability",  cls: "border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/10 hover:border-emerald-500/40", iconCls: "text-emerald-500" },
+             ].map(({ id, label, icon: Icon, path, cls, iconCls }) => (
+               <button
+                 key={id}
+                 onClick={() => setLocation(path)}
+                 data-testid={`link-lab-${id}`}
+                 className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-all ${cls}`}
+               >
+                 <Icon className={`w-5 h-5 ${iconCls}`} />
+                 <span className="text-[11px] font-medium text-foreground text-center leading-tight">{label}</span>
+               </button>
+             ))}
+           </div>
+         </details>
+
+         {/* ── AI BANNER (clean) ── */}
+         <button
+           onClick={() => setLocation("/manager/ai")}
+           className="w-full group bg-card border border-border rounded-2xl p-4 flex items-center gap-4 hover:border-violet-300 hover:bg-violet-50/30 transition-all"
+           data-testid="link-ai-center"
+         >
+           <div className="w-12 h-12 rounded-xl bg-violet-50 flex items-center justify-center shrink-0">
+             <Brain className="w-6 h-6 text-violet-600" />
+           </div>
+           <div className="text-right flex-1 min-w-0">
+             <div className="flex items-center gap-2 flex-wrap">
+               <div className="text-foreground font-bold text-sm">{tc("مركز الذكاء الاصطناعي", "AI Center")}</div>
+               <span className="text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full font-medium">{tc("جديد", "New")}</span>
+             </div>
+             <div className="text-muted-foreground text-xs mt-0.5">{tc("تحليل المبيعات · رؤى ذكية · مساعد محادثة", "Sales Analysis · Smart Insights · Chat Assistant")}</div>
+           </div>
+           <Sparkles className="w-5 h-5 text-violet-500 group-hover:scale-110 transition-transform" />
+         </button>
+
+         {/* ── CHARTS ── */}
+         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+           {/* Revenue Chart */}
+           <div className="lg:col-span-2 bg-card border border-border rounded-2xl p-4">
+             <div className="flex items-center justify-between mb-4">
+               <div>
+                 <div className="text-foreground font-bold text-sm">📈 المبيعات اليومية</div>
+                 <div className="text-muted-foreground text-xs">الاتجاه خلال الفترة المحددة</div>
+               </div>
+               <div className="w-8 h-8 rounded-lg bg-[#2D9B6E]/10 flex items-center justify-center">
+                 <TrendingUp className="w-4 h-4 text-[#2D9B6E]" />
+               </div>
+             </div>
+             <div className="h-[220px]">
+               <ResponsiveContainer width="100%" height="100%">
+                 <AreaChart data={dailyRevenueData}>
+                   <defs>
+                     <linearGradient id="mgRevGrad" x1="0" y1="0" x2="0" y2="1">
+                       <stop offset="5%" stopColor="#2D9B6E" stopOpacity={0.3} />
+                       <stop offset="95%" stopColor="#2D9B6E" stopOpacity={0} />
+                     </linearGradient>
+                   </defs>
+                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                   <XAxis dataKey="date" tick={{ fill: '#555', fontSize: 10 }} axisLine={false} tickLine={false} />
+                   <YAxis tick={{ fill: '#555', fontSize: 10 }} axisLine={false} tickLine={false} />
+                   <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '12px', fontSize: 12 }} />
+                   <Area type="monotone" dataKey="revenue" stroke="#2D9B6E" strokeWidth={2} fill="url(#mgRevGrad)" dot={false} />
+                 </AreaChart>
+               </ResponsiveContainer>
+             </div>
+           </div>
+
+           {/* Payment Methods */}
+           <div className="bg-card border border-border rounded-2xl p-4">
+             <div className="flex items-center justify-between mb-4">
+               <div>
+                 <div className="text-foreground font-bold text-sm">💳 طرق الدفع</div>
+                 <div className="text-muted-foreground text-xs">توزيع المعاملات</div>
+               </div>
+             </div>
+             <div className="h-[180px]">
+               <ResponsiveContainer width="100%" height="100%">
+                 <PieChart>
+                   <Pie data={paymentMethodsData} cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={4} dataKey="value">
+                     {paymentMethodsData.map((_, i) => (
+                       <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                     ))}
+                   </Pie>
+                   <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '12px', fontSize: 11 }} />
+                   <Legend wrapperStyle={{ fontSize: 10, color: '#888' }} />
+                 </PieChart>
+               </ResponsiveContainer>
+             </div>
+           </div>
+         </div>
+
+         {/* ── TOP ITEMS ── */}
+         {topItemsData.length > 0 && (
+           <div className="bg-card border border-border rounded-2xl p-4">
+             <div className="flex items-center justify-between mb-4">
+               <div className="text-foreground font-bold text-sm">الأكثر مبيعاً</div>
+               <Button variant="ghost" size="sm" onClick={() => setLocation("/manager/analytics")} className="text-[#2D9B6E] hover:text-[#2D9B6E] text-xs h-7">
+                 التفاصيل ←
+               </Button>
+             </div>
+             <div className="h-[180px]">
+               <ResponsiveContainer width="100%" height="100%">
+                 <RechartsBar data={topItemsData.slice(0, 5)} layout="vertical" barSize={12}>
+                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
+                   <XAxis type="number" tick={{ fill: '#555', fontSize: 10 }} axisLine={false} tickLine={false} />
+                   <YAxis dataKey="name" type="category" tick={{ fill: '#aaa', fontSize: 10 }} axisLine={false} tickLine={false} width={80} />
+                   <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '12px', fontSize: 11 }} />
+                   <Bar dataKey="revenue" name={tc("المبيعات","Sales")} radius={[0, 6, 6, 0]}>
+                     {topItemsData.slice(0, 5).map((_, i) => (
+                       <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                     ))}
+                   </Bar>
+                 </RechartsBar>
+               </ResponsiveContainer>
+             </div>
+           </div>
+         )}
+
+         {/* ── QUICK ACTIONS GRID ── */}
+         <div className="bg-card border border-border rounded-2xl p-4">
+           <div className="text-foreground font-bold text-sm mb-4">⚡ {tc("وصول سريع","Quick Access")}</div>
+           <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-2">
+             {[
+               { label: tc("نقطة البيع","POS"),           icon: "🛒", path: "/employee/pos",               color: "#2D9B6E" },
+               { label: tc("الطلبات","Orders"),           icon: "📋", path: "/employee/orders",             color: "#3b82f6" },
+               { label: tc("المخزون","Inventory"),        icon: "📦", path: "/manager/inventory",           color: "#f59e0b" },
+               { label: tc("المحاسبة","Accounting"),      icon: "💰", path: "/manager/accounting",          color: "#8b5cf6" },
+               { label: tc("الموظفون","Employees"),       icon: "👥", path: "/admin/employees",             color: "#ec4899" },
+               { label: tc("التوصيل","Delivery"),         icon: "🚚", path: "/manager/delivery",            color: "#06b6d4" },
+               { label: tc("الولاء","Loyalty"),           icon: "🎁", path: "/manager/loyalty",             color: "#f43f5e" },
+               { label: tc("التقارير","Reports"),         icon: "📊", path: "/manager/unified-reports",     color: "#14b8a6" },
+               { label: tc("الرواتب","Payroll"),          icon: "💸", path: "/manager/payroll",             color: "#7c3aed" },
+               { label: tc("العروض","Promotions"),        icon: "🏷️", path: "/manager/promotions",          color: "#f97316" },
+               { label: tc("الوصفات","Recipes"),          icon: "🧪", path: "/manager/inventory/recipes",   color: "#84cc16" },
+               { label: "ZATCA",                          icon: "🧾", path: "/manager/zatca",               color: "#a855f7" },
+               { label: tc("الحضور","Attendance"),        icon: "⏰", path: "/manager/attendance",          color: "#e879f9" },
+               { label: tc("الكيوسك","Kiosk"),            icon: "🖥️", path: "/kiosk",                      color: "#22c55e" },
+               { label: tc("الدعم","Support"),            icon: "🎧", path: "/manager/support",             color: "#64748b" },
+               { label: tc("الإعدادات","Settings"),       icon: "⚙️", path: "/admin/settings",             color: "#94a3b8" },
+             ].map(item => (
+               <button
+                 key={item.path}
+                 onClick={() => setLocation(item.path)}
+                 className="flex flex-col items-center gap-1.5 p-2.5 rounded-xl bg-muted/50 hover:bg-muted border border-border hover:border-border transition-all group"
+               >
+                 <span className="text-xl group-hover:scale-110 transition-transform">{item.icon}</span>
+                 <span className="text-[10px] text-muted-foreground group-hover:text-foreground/70 text-center leading-tight">{item.label}</span>
+               </button>
+             ))}
+           </div>
+         </div>
+
+         {/* ── TABS (DETAILED SECTIONS) ── */}
+         <div className="bg-card border border-border rounded-2xl overflow-hidden">
+         <Tabs defaultValue="orders" className="w-full">
+           <div className="border-b border-border overflow-x-auto">
+             <TabsList className="h-12 bg-transparent rounded-none px-2 gap-1 flex-nowrap min-w-max">
+               <TabsTrigger value="orders" className="data-[state=active]:bg-muted data-[state=active]:text-[#2D9B6E] text-muted-foreground text-xs rounded-lg px-3 h-8">📋 الطلبات</TabsTrigger>
+               <TabsTrigger value="employees" className="data-[state=active]:bg-muted data-[state=active]:text-blue-400 text-muted-foreground text-xs rounded-lg px-3 h-8">👥 الموظفون</TabsTrigger>
+               <TabsTrigger value="branches" className="data-[state=active]:bg-muted data-[state=active]:text-amber-400 text-muted-foreground text-xs rounded-lg px-3 h-8">🏢 الفروع</TabsTrigger>
+               <TabsTrigger value="coupons" className="data-[state=active]:bg-muted data-[state=active]:text-pink-400 text-muted-foreground text-xs rounded-lg px-3 h-8">🎟️ الكوبونات</TabsTrigger>
+               <TabsTrigger value="delivery" className="data-[state=active]:bg-muted data-[state=active]:text-cyan-400 text-muted-foreground text-xs rounded-lg px-3 h-8">🚚 التوصيل</TabsTrigger>
+               <TabsTrigger value="erp" className="data-[state=active]:bg-muted data-[state=active]:text-purple-400 text-muted-foreground text-xs rounded-lg px-3 h-8">📚 ERP</TabsTrigger>
+             </TabsList>
+           </div>
+
 
  <TabsContent value="orders" className="space-y-4">
  <Card>
  <CardHeader>
  <div className="flex items-center justify-between flex-wrap gap-3">
  <div>
- <CardTitle>سجل الطلبات</CardTitle>
- <CardDescription>آخر {filteredOrders.length} طلب مسجل في النظام</CardDescription>
+ <CardTitle>{tc("سجل الطلبات", "Orders Log")}</CardTitle>
+ <CardDescription>{tc(`آخر ${filteredOrders.length} طلب`, `Last ${filteredOrders.length} orders`)}</CardDescription>
  </div>
  <div className="flex items-center gap-2">
  {selectedOrderIds.size > 0 && (
@@ -933,7 +1181,7 @@ export default function ManagerDashboard() {
  className="gap-2"
  >
  <Trash2 className="w-4 h-4" />
- حذف المحدد ({selectedOrderIds.size})
+ {tc("حذف المحدد", "Delete selected")} ({selectedOrderIds.size})
  </Button>
  )}
  <Button
@@ -953,7 +1201,7 @@ export default function ManagerDashboard() {
  checked={filteredOrders.length > 0 && selectedOrderIds.size === filteredOrders.length}
  className="pointer-events-none"
  />
- {selectedOrderIds.size === filteredOrders.length && filteredOrders.length > 0 ? 'إلغاء الكل' : 'تحديد الكل'}
+ {selectedOrderIds.size === filteredOrders.length && filteredOrders.length > 0 ? tc('إلغاء الكل', 'Deselect all') : tc('تحديد الكل', 'Select all')}
  </Button>
  </div>
  </div>
@@ -961,7 +1209,7 @@ export default function ManagerDashboard() {
  <CardContent>
  <div className="space-y-3">
  {filteredOrders.length === 0 ? (
- <EmptyState title="لا يوجد طلبات" description="لم يتم العثور على طلبات في هذه الفترة" />
+ <EmptyState title={tc("لا يوجد طلبات", "No orders")} description={tc("لم يتم العثور على طلبات في هذه الفترة", "No orders found in this period")} />
  ) : (
  <>
  {filteredOrders.slice(0, ordersDisplayLimit).map((order) => {
@@ -997,11 +1245,11 @@ export default function ManagerDashboard() {
  <Receipt className="w-5 h-5 text-primary" />
  </div>
  <div>
- <p className="font-bold text-foreground">طلب {order.orderNumber}</p>
+ <p className="font-bold text-foreground">{tc("طلب", "Order")} {order.orderNumber}</p>
  <div className="flex items-center gap-2 text-xs text-muted-foreground">
  <span>{order.createdAt ? new Date(order.createdAt).toLocaleString('ar-SA') : ''}</span>
  <span>•</span>
- <span>{order.customerInfo?.name || employee?.fullName || 'عميل'}</span>
+ <span>{order.customerInfo?.name || employee?.fullName || tc('عميل', 'Customer')}</span>
  </div>
  </div>
  </div>
@@ -1026,7 +1274,7 @@ export default function ManagerDashboard() {
  onClick={() => setOrdersDisplayLimit(prev => prev + 20)}
  data-testid="button-show-more-orders"
  >
- عرض المزيد ({filteredOrders.length - ordersDisplayLimit} طلب متبقٍ)
+ {tc("عرض المزيد", "Show more")} ({filteredOrders.length - ordersDisplayLimit} {tc("طلب متبقٍ", "remaining")})
  </Button>
  )}
  </>
@@ -1036,101 +1284,13 @@ export default function ManagerDashboard() {
  </Card>
  </TabsContent>
 
- <TabsContent value="analytics" className="space-y-4">
- <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
-   <Button variant="outline" onClick={() => setLocation("/manager/analytics")} className="flex flex-col h-16 gap-1" data-testid="btn-advanced-analytics">
-     <BarChart3 className="w-5 h-5 text-cyan-500" /><span className="text-xs">تحليلات متقدمة</span>
-   </Button>
-   <Button variant="outline" onClick={() => setLocation("/manager/gift-cards")} className="flex flex-col h-16 gap-1" data-testid="btn-gift-cards">
-     <Gift className="w-5 h-5 text-pink-500" /><span className="text-xs">بطاقات الهدايا</span>
-   </Button>
-   <Button variant="outline" onClick={() => setLocation("/manager/payroll")} className="flex flex-col h-16 gap-1" data-testid="btn-payroll">
-     <Banknote className="w-5 h-5 text-green-500" /><span className="text-xs">كشف الرواتب</span>
-   </Button>
-   <Button variant="outline" onClick={() => setLocation("/manager/reviews")} className="flex flex-col h-16 gap-1" data-testid="btn-reviews">
-     <Star className="w-5 h-5 text-amber-500" /><span className="text-xs">تقييمات العملاء</span>
-   </Button>
- </div>
- <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
- <Card>
- <CardHeader>
- <CardTitle>إجمالي المبيعات اليومية</CardTitle>
- </CardHeader>
- <CardContent className="h-[300px]">
- <ResponsiveContainer width="100%" height="100%">
- <AreaChart data={dailyRevenueData}>
- <defs>
- <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
- <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3}/>
- <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
- </linearGradient>
- </defs>
- <CartesianGrid strokeDasharray="3 3" vertical={false} />
- <XAxis dataKey="date" />
- <YAxis />
- <Tooltip />
- <Area type="monotone" dataKey="revenue" name="المبيعات" stroke="hsl(var(--primary))" fillOpacity={1} fill="url(#colorRevenue)" />
- </AreaChart>
- </ResponsiveContainer>
- </CardContent>
- </Card>
 
- <Card>
- <CardHeader>
- <CardTitle>توزيع طرق الدفع</CardTitle>
- </CardHeader>
- <CardContent className="h-[300px]">
- <ResponsiveContainer width="100%" height="100%">
- <PieChart>
- <Pie
- data={paymentMethodsData}
- cx="50%"
- cy="50%"
- innerRadius={60}
- outerRadius={80}
- paddingAngle={5}
- dataKey="value"
- >
- {paymentMethodsData.map((_, index) => (
- <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
- ))}
- </Pie>
- <Tooltip />
- <Legend />
- </PieChart>
- </ResponsiveContainer>
- </CardContent>
- </Card>
- </div>
- </TabsContent>
-
- <TabsContent value="top-items" className="space-y-4">
- <Card>
- <CardHeader>
- <CardTitle>المنتجات الأكثر مبيعاً</CardTitle>
- <CardDescription>ترتيب المنتجات حسب عدد المبيعات</CardDescription>
- </CardHeader>
- <CardContent>
- <div className="h-[400px]">
- <ResponsiveContainer width="100%" height="100%">
- <RechartsBar data={topItemsData} layout="vertical" margin={{ left: 40 }}>
- <CartesianGrid strokeDasharray="3 3" horizontal={false} />
- <XAxis type="number" />
- <YAxis dataKey="name" type="category" width={100} />
- <Tooltip />
- <Bar dataKey="count" name="عدد المبيعات" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
- </RechartsBar>
- </ResponsiveContainer>
- </div>
- </CardContent>
- </Card>
- </TabsContent>
 
  <TabsContent value="employees" className="space-y-4">
  <Card>
  <CardHeader>
- <CardTitle>أداء الموظفين</CardTitle>
- <CardDescription>مبيعات الموظفين وعدد الطلبات لكل موظف</CardDescription>
+ <CardTitle>{tc("أداء الموظفين", "Staff Performance")}</CardTitle>
+ <CardDescription>{tc("مبيعات الموظفين وعدد الطلبات لكل موظف", "Staff sales and order counts per employee")}</CardDescription>
  </CardHeader>
  <CardContent>
  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1144,16 +1304,16 @@ export default function ManagerDashboard() {
  </div>
  <div>
  <p className="font-bold">{emp.fullName}</p>
- <Badge variant="outline" className="text-[10px]">{emp.role === 'admin' ? 'مدير عام' : emp.role === 'manager' ? 'مدير' : 'موظف'}</Badge>
+ <Badge variant="outline" className="text-[10px]">{emp.role === 'admin' ? tc('مدير عام', 'Admin') : emp.role === 'manager' ? tc('مدير', 'Manager') : tc('موظف', 'Staff')}</Badge>
  </div>
  </div>
  <div className="space-y-2">
  <div className="flex justify-between text-sm">
- <span className="text-muted-foreground">عدد الطلبات:</span>
+ <span className="text-muted-foreground">{tc("عدد الطلبات:", "Orders:")}</span>
  <span className="font-bold">{emp.orderCount || 0}</span>
  </div>
  <div className="flex justify-between text-sm">
- <span className="text-muted-foreground">إجمالي المبيعات:</span>
+ <span className="text-muted-foreground">{tc("إجمالي المبيعات:", "Total Sales:")}</span>
  <span className="font-bold text-primary">{(emp.totalSales || 0).toFixed(2)} <SarIcon /></span>
  </div>
  </div>
@@ -1170,9 +1330,9 @@ export default function ManagerDashboard() {
  <CardHeader>
  <div className="flex justify-between items-center gap-4 flex-wrap">
  <div>
- <CardTitle className="text-primary">الفروع</CardTitle>
+ <CardTitle className="text-primary">{tc("الفروع", "Branches")}</CardTitle>
  <CardDescription>
- إدارة فروع المقهى
+ {tc("إدارة فروع المقهى", "Manage cafe branches")}
  </CardDescription>
  </div>
  {isAdmin && (
@@ -1183,26 +1343,26 @@ export default function ManagerDashboard() {
  className="bg-accent hover:bg-accent"
  >
  <Plus className="w-4 h-4 ml-2" />
- إضافة فرع
+ {tc("إضافة فرع", "Add Branch")}
  </Button>
  <Dialog open={isAddBranchOpen} onOpenChange={setIsAddBranchOpen}>
- <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto bg-[#708f87]">
+ <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto bg-card">
  <DialogHeader>
- <DialogTitle className="text-primary text-xl">إضافة فرع جديد</DialogTitle>
+ <DialogTitle className="text-primary text-xl">{tc("إضافة فرع جديد", "Add New Branch")}</DialogTitle>
  </DialogHeader>
  <div className="grid gap-4 py-4">
  <div className="grid gap-2">
- <Label htmlFor="nameAr">اسم الفرع (عربي) *</Label>
+ <Label htmlFor="nameAr">{tc("اسم الفرع (عربي) *", "Branch Name (Arabic) *")}</Label>
  <Input
  id="nameAr"
  value={branchForm.nameAr}
  onChange={(e) => setBranchForm({ ...branchForm, nameAr: e.target.value })}
- placeholder="مثال: فرع الرياض"
+ placeholder={tc("مثال: فرع الرياض", "e.g. Riyadh Branch")}
  data-testid="input-branch-name-ar"
  />
  </div>
  <div className="grid gap-2">
- <Label htmlFor="nameEn">اسم الفرع (إنجليزي)</Label>
+ <Label htmlFor="nameEn">{tc("اسم الفرع (إنجليزي)", "Branch Name (English)")}</Label>
  <Input
  id="nameEn"
  value={branchForm.nameEn}
@@ -1211,39 +1371,39 @@ export default function ManagerDashboard() {
  />
  </div>
  <div className="grid gap-2">
- <Label htmlFor="address">العنوان *</Label>
+ <Label htmlFor="address">{tc("العنوان *", "Address *")}</Label>
  <Input
  id="address"
  value={branchForm.address}
  onChange={(e) => setBranchForm({ ...branchForm, address: e.target.value })}
- placeholder="مثال: شارع الملك فهد"
+ placeholder={tc("مثال: شارع الملك فهد", "e.g. King Fahd St")}
  data-testid="input-branch-address"
  />
  </div>
  <div className="grid gap-2">
- <Label htmlFor="city">المدينة*</Label>
+ <Label htmlFor="city">{tc("المدينة*", "City *")}</Label>
  <Input
  id="city"
  value={branchForm.city}
  onChange={(e) => setBranchForm({ ...branchForm, city: e.target.value })}
- placeholder="مثال: الرياض"
+ placeholder={tc("مثال: الرياض", "e.g. Riyadh")}
  data-testid="input-branch-city"
  />
  </div>
  <div className="grid gap-2">
- <Label htmlFor="phone">رقم الهاتف *</Label>
+ <Label htmlFor="phone">{tc("رقم الهاتف *", "Phone *")}</Label>
  <Input
  id="phone"
  value={branchForm.phone}
  onChange={(e) => setBranchForm({ ...branchForm, phone: e.target.value })}
- placeholder="مثال: 0501234567"
+ placeholder={tc("مثال: 0501234567", "e.g. 0501234567")}
  data-testid="input-branch-phone"
  />
  </div>
  <div className="space-y-4 border border-border rounded-lg p-4 bg-muted">
  <Label className="text-primary font-semibold flex items-center gap-2">
  <UserCheck className="w-4 h-4" />
- تعيين مدير الفرع
+ {tc("تعيين مدير الفرع", "Assign Branch Manager")}
  </Label>
  
  <div className="flex gap-4">
@@ -1256,7 +1416,7 @@ export default function ManagerDashboard() {
  className="w-4 h-4 accent-primary"
  data-testid="radio-existing-manager"
  />
- <span className="text-foreground">تعيين مدير موجود</span>
+ <span className="text-foreground">{tc("تعيين مدير موجود", "Assign existing manager")}</span>
  </label>
  <label className="flex items-center gap-2 cursor-pointer">
  <input
@@ -1267,20 +1427,20 @@ export default function ManagerDashboard() {
  className="w-4 h-4 accent-primary"
  data-testid="radio-new-manager"
  />
- <span className="text-foreground">إنشاء مدير جديد</span>
+ <span className="text-foreground">{tc("إنشاء مدير جديد", "Create new manager")}</span>
  </label>
  </div>
  
  {managerAssignmentType === "existing" ? (
  <div className="grid gap-2">
- <Label>اختر المدير</Label>
+ <Label>{tc("اختر المدير", "Select manager")}</Label>
  <Select value={selectedManagerId} onValueChange={setSelectedManagerId}>
  <SelectTrigger data-testid="select-existing-manager">
- <SelectValue placeholder="اختر مديراً موجوداً" />
+ <SelectValue placeholder={tc("اختر مديراً موجوداً", "Select an existing manager")} />
  </SelectTrigger>
  <SelectContent>
  {availableManagers.length === 0 ? (
- <SelectItem value="none" disabled>لا يوجد مديرون متاحون</SelectItem>
+ <SelectItem value="none" disabled>{tc("لا يوجد مديرون متاحون", "No managers available")}</SelectItem>
  ) : (
  availableManagers.map((emp) => (
  <SelectItem key={emp.id} value={emp.id || ""}>
@@ -1291,38 +1451,38 @@ export default function ManagerDashboard() {
  </SelectContent>
  </Select>
  {availableManagers.length === 0 && (
- <p className="text-xs text-muted-foreground">لا يوجد مديرون متاحون. يمكنك إنشاء مدير جديد.</p>
+ <p className="text-xs text-muted-foreground">{tc("لا يوجد مديرون متاحون. يمكنك إنشاء مدير جديد.", "No managers available. You can create a new manager.")}</p>
  )}
  </div>
  ) : (
  <div className="grid gap-3">
  <div className="grid gap-1.5">
- <Label htmlFor="mgr-name">الاسم الكامل *</Label>
+ <Label htmlFor="mgr-name">{tc("الاسم الكامل *", "Full Name *")}</Label>
  <Input
  id="mgr-name"
  value={newManagerForm.fullName}
  onChange={(e) => setNewManagerForm({ ...newManagerForm, fullName: e.target.value })}
- placeholder="الاسم الكامل للمدير"
+ placeholder={tc("الاسم الكامل للمدير", "Manager's full name")}
  data-testid="input-new-manager-name"
  />
  </div>
  <div className="grid gap-1.5">
- <Label htmlFor="mgr-user">اسم المستخدم *</Label>
+ <Label htmlFor="mgr-user">{tc("اسم المستخدم *", "Username *")}</Label>
  <Input
  id="mgr-user"
  value={newManagerForm.username}
  onChange={(e) => setNewManagerForm({ ...newManagerForm, username: e.target.value })}
- placeholder="اسم المستخدم للدخول"
+ placeholder={tc("اسم المستخدم للدخول", "Login username")}
  data-testid="input-new-manager-username"
  />
  </div>
  <div className="grid gap-1.5">
- <Label htmlFor="mgr-phone">رقم الجوال *</Label>
+ <Label htmlFor="mgr-phone">{tc("رقم الجوال *", "Phone *")}</Label>
  <Input
  id="mgr-phone"
  value={newManagerForm.phone}
  onChange={(e) => setNewManagerForm({ ...newManagerForm, phone: e.target.value })}
- placeholder="مثال: 05XXXXXXXX"
+ placeholder={tc("مثال: 05XXXXXXXX", "e.g. 05XXXXXXXX")}
  data-testid="input-new-manager-phone"
  />
  </div>
@@ -1332,11 +1492,11 @@ export default function ManagerDashboard() {
  
  <div className="grid gap-4">
  <div className="grid gap-2 relative">
- <Label>اسم الفرع - ابحث عن الموقع</Label>
+ <Label>{tc("اسم الفرع - ابحث عن الموقع", "Branch Location - Search")}</Label>
  <div className="relative">
  <Input
  type="text"
- placeholder="ابحث عن الفرع... (مثال: الرياض، الدمام)"
+ placeholder={tc("ابحث عن الفرع... (مثال: الرياض، الدمام)", "Search location... (e.g. Riyadh)")}
  value={branchSearchQuery}
  onChange={(e) => handleBranchSearchChange(e.target.value)}
  onFocus={() => branchSearchQuery && setShowBranchResults(true)}
@@ -1369,14 +1529,14 @@ export default function ManagerDashboard() {
 
  {showBranchResults && branchSearchResults.length === 0 && branchSearchQuery && !isSearchingBranch && (
  <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-card border border-border rounded-md shadow-lg z-50 p-3">
- <p className="text-sm text-muted-foreground text-right">لم يتم العثور على نتائج</p>
+ <p className="text-sm text-muted-foreground text-right">{tc("لم يتم العثور على نتائج", "No results found")}</p>
  </div>
  )}
  </div>
  </div>
 
  <div className="grid gap-2">
- <Label>موقع الفرع على الخريطة</Label>
+ <Label>{tc("موقع الفرع على الخريطة", "Branch Location on Map")}</Label>
  <div className="h-[250px] rounded-lg overflow-hidden border border-border">
  <BranchLocationPicker
  initialLat={branchForm.latitude}
@@ -1385,8 +1545,8 @@ export default function ManagerDashboard() {
  />
  </div>
  <div className="flex gap-4 text-xs text-muted-foreground">
- <span>خط العرض: 24.713600</span>
- <span>خط الطول: 46.675300</span>
+ <span>{tc("خط العرض", "Lat")}: 24.713600</span>
+ <span>{tc("خط الطول", "Lng")}: 46.675300</span>
  </div>
  </div>
  </div>
@@ -1397,7 +1557,7 @@ export default function ManagerDashboard() {
  className="w-full h-12 text-lg"
  data-testid="button-save-branch"
  >
- {createBranchMutation.isPending ? "جاري الحفظ..." : "حفظ الفرع"}
+ {createBranchMutation.isPending ? tc("جاري الحفظ...", "Saving...") : tc("حفظ الفرع", "Save Branch")}
  </Button>
  </div>
  </DialogContent>
@@ -1407,22 +1567,22 @@ export default function ManagerDashboard() {
  <Dialog open={isEditBranchOpen} onOpenChange={setIsEditBranchOpen}>
  <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
  <DialogHeader>
- <DialogTitle className="text-2xl font-bold">تعديل الفرع</DialogTitle>
+ <DialogTitle className="text-2xl font-bold">{tc("تعديل الفرع", "Edit Branch")}</DialogTitle>
  </DialogHeader>
  <div className="grid gap-4 py-4">
  <div className="grid grid-cols-2 gap-4">
  <div className="grid gap-1.5">
- <Label htmlFor="edit-name-ar">اسم الفرع بالعربية *</Label>
+ <Label htmlFor="edit-name-ar">{tc("اسم الفرع بالعربية *", "Branch Name (Arabic) *")}</Label>
  <Input
  id="edit-name-ar"
  value={branchForm.nameAr}
  onChange={(e) => setBranchForm({ ...branchForm, nameAr: e.target.value })}
- placeholder="مثال: فرع الرياض"
+ placeholder={tc("مثال: فرع الرياض", "e.g. Riyadh Branch")}
  data-testid="input-edit-name-ar"
  />
  </div>
  <div className="grid gap-1.5">
- <Label htmlFor="edit-name-en">اسم الفرع بالإنجليزية</Label>
+ <Label htmlFor="edit-name-en">{tc("اسم الفرع بالإنجليزية", "Branch Name (English)")}</Label>
  <Input
  id="edit-name-en"
  value={branchForm.nameEn}
@@ -1434,19 +1594,19 @@ export default function ManagerDashboard() {
  </div>
 
  <div className="grid gap-1.5">
- <Label htmlFor="edit-address">العنوان *</Label>
+ <Label htmlFor="edit-address">{tc("العنوان *", "Address *")}</Label>
  <Input
  id="edit-address"
  value={branchForm.address}
  onChange={(e) => setBranchForm({ ...branchForm, address: e.target.value })}
- placeholder="العنوان الكامل"
+ placeholder={tc("العنوان الكامل", "Full address")}
  data-testid="input-edit-address"
  />
  </div>
 
  <div className="grid grid-cols-2 gap-4">
  <div className="grid gap-1.5">
- <Label htmlFor="edit-phone">رقم الجوال *</Label>
+ <Label htmlFor="edit-phone">{tc("رقم الجوال *", "Phone *")}</Label>
  <Input
  id="edit-phone"
  value={branchForm.phone}
@@ -1456,35 +1616,35 @@ export default function ManagerDashboard() {
  />
  </div>
  <div className="grid gap-1.5">
- <Label htmlFor="edit-city">المدينة *</Label>
+ <Label htmlFor="edit-city">{tc("المدينة *", "City *")}</Label>
  <Input
  id="edit-city"
  value={branchForm.city}
  onChange={(e) => setBranchForm({ ...branchForm, city: e.target.value })}
- placeholder="المدينة"
+ placeholder={tc("المدينة", "City")}
  data-testid="input-edit-city"
  />
  </div>
  </div>
 
  <div className="grid gap-1.5">
- <Label htmlFor="edit-manager-name">اسم المدير</Label>
+ <Label htmlFor="edit-manager-name">{tc("اسم المدير", "Manager Name")}</Label>
  <Input
  id="edit-manager-name"
  value={branchForm.managerName}
  onChange={(e) => setBranchForm({ ...branchForm, managerName: e.target.value })}
- placeholder="اسم مدير الفرع"
+ placeholder={tc("اسم مدير الفرع", "Branch manager name")}
  data-testid="input-edit-manager-name"
  />
  </div>
 
  <div className="grid gap-4">
  <div className="grid gap-2 relative">
- <Label>اسم الفرع - ابحث عن الموقع</Label>
+ <Label>{tc("اسم الفرع - ابحث عن الموقع", "Branch Location - Search")}</Label>
  <div className="relative">
  <Input
  type="text"
- placeholder="ابحث عن الفرع... (مثال: الرياض، الدمام)"
+ placeholder={tc("ابحث عن الفرع... (مثال: الرياض، الدمام)", "Search location... (e.g. Riyadh)")}
  value={branchSearchQuery}
  onChange={(e) => handleBranchSearchChange(e.target.value)}
  onFocus={() => branchSearchQuery && setShowBranchResults(true)}
@@ -1517,14 +1677,14 @@ export default function ManagerDashboard() {
 
  {showBranchResults && branchSearchResults.length === 0 && branchSearchQuery && !isSearchingBranch && (
  <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-card border border-border rounded-md shadow-lg z-50 p-3">
- <p className="text-sm text-muted-foreground text-right">لم يتم العثور على نتائج</p>
+ <p className="text-sm text-muted-foreground text-right">{tc("لم يتم العثور على نتائج", "No results found")}</p>
  </div>
  )}
  </div>
  </div>
 
  <div className="grid gap-2">
- <Label>موقع الفرع على الخريطة</Label>
+ <Label>{tc("موقع الفرع على الخريطة", "Branch Location on Map")}</Label>
  <div className="h-[250px] rounded-lg overflow-hidden border border-border">
  <BranchLocationPicker
  initialLat={branchForm.latitude}
@@ -1533,8 +1693,8 @@ export default function ManagerDashboard() {
  />
  </div>
  <div className="flex gap-4 text-xs text-muted-foreground">
- <span>خط العرض: {branchForm.latitude.toFixed(6)}</span>
- <span>خط الطول: {branchForm.longitude.toFixed(6)}</span>
+ <span>{tc("خط العرض", "Lat")}: {branchForm.latitude.toFixed(6)}</span>
+ <span>{tc("خط الطول", "Lng")}: {branchForm.longitude.toFixed(6)}</span>
  </div>
  </div>
  </div>
@@ -1545,7 +1705,7 @@ export default function ManagerDashboard() {
  className="w-full h-12 text-lg"
  data-testid="button-save-edit-branch"
  >
- {updateBranchMutation.isPending ? "جاري التحديث..." : "تحديث الفرع"}
+ {updateBranchMutation.isPending ? tc("جاري التحديث...", "Updating...") : tc("تحديث الفرع", "Update Branch")}
  </Button>
  </div>
  </DialogContent>
@@ -1558,7 +1718,7 @@ export default function ManagerDashboard() {
  <CardContent>
  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
  {branches.length === 0 ? (
- <EmptyState title="لا يوجد فروع" description="لم يتم العثور على فروع مسجلة" />
+ <EmptyState title={tc("لا يوجد فروع", "No branches")} description={tc("لم يتم العثور على فروع مسجلة", "No registered branches found")} />
  ) : (
  branches.map((branch) => (
  <Card key={branch.id} className="border-border/50 hover:border-primary/50 transition-colors">
@@ -1574,13 +1734,13 @@ export default function ManagerDashboard() {
  </div>
  </div>
  <Badge variant={branch.isActive === 1 || branch.isActive === true ? "default" : "secondary"}>
- {branch.isActive === 1 || branch.isActive === true ? "نشط" : "غير نشط"}
+ {branch.isActive === 1 || branch.isActive === true ? tc("نشط", "Active") : tc("غير نشط", "Inactive")}
  </Badge>
  </div>
  <div className="space-y-2 text-sm text-muted-foreground">
  <div className="flex items-center gap-2">
  <Users className="w-4 h-4" />
- <span>{branch.managerName || 'لا يوجد مدير'}</span>
+ <span>{branch.managerName || tc('لا يوجد مدير', 'No manager')}</span>
  </div>
  <div className="flex items-center gap-2">
  <Activity className="w-4 h-4" />
@@ -1602,14 +1762,14 @@ export default function ManagerDashboard() {
  data-testid="button-edit-branch"
  >
  <Edit2 className="w-4 h-4 ml-2" />
- تعديل
+ {tc("تعديل", "Edit")}
  </Button>
  <Button 
  variant="outline" 
  size="sm" 
  className="flex-1"
  onClick={() => {
- if (confirm('هل أنت متأكد من حذف هذا الفرع؟')) {
+ if (confirm(tc('هل أنت متأكد من حذف هذا الفرع؟', 'Are you sure you want to delete this branch?'))) {
  deleteBranchMutation.mutate(branch.id);
  }
  }}
@@ -1617,7 +1777,7 @@ export default function ManagerDashboard() {
  data-testid="button-delete-branch"
  >
  <Trash2 className="w-4 h-4 ml-2" />
- حذف
+ {tc("حذف", "Delete")}
  </Button>
  </div>
  )}
@@ -1635,8 +1795,8 @@ export default function ManagerDashboard() {
  <CardHeader>
  <div className="flex items-center justify-between">
  <div>
- <CardTitle>إدارة أكواد الخصم</CardTitle>
- <CardDescription>إنشاء وإدارة أكواد الخصم للعملاء</CardDescription>
+ <CardTitle>{tc("إدارة أكواد الخصم", "Coupon Management")}</CardTitle>
+ <CardDescription>{tc("إنشاء وإدارة أكواد الخصم للعملاء", "Create and manage discount codes for customers")}</CardDescription>
  </div>
  </div>
  </CardHeader>
@@ -1651,8 +1811,8 @@ export default function ManagerDashboard() {
  <CardHeader>
  <div className="flex items-center justify-between">
  <div>
- <CardTitle>إدارة التوصيل</CardTitle>
- <CardDescription>إدارة مناديب التوصيل ومناطق الخدمة والربط مع المنصات الخارجية</CardDescription>
+ <CardTitle>{tc("إدارة التوصيل", "Delivery Management")}</CardTitle>
+ <CardDescription>{tc("إدارة مناديب التوصيل ومناطق الخدمة والربط مع المنصات الخارجية", "Manage delivery drivers, service areas and third-party integrations")}</CardDescription>
  </div>
  </div>
  </CardHeader>
@@ -1667,12 +1827,12 @@ export default function ManagerDashboard() {
  <CardHeader>
  <div className="flex items-center justify-between">
  <div>
- <CardTitle>نظام المحاسبة والفواتير</CardTitle>
- <CardDescription>إدارة الحسابات والفواتير الضريبية ومتابعة الأرباح</CardDescription>
+ <CardTitle>{tc("نظام المحاسبة والفواتير", "Accounting & Invoices")}</CardTitle>
+ <CardDescription>{tc("إدارة الحسابات والفواتير الضريبية ومتابعة الأرباح", "Manage accounts, tax invoices and profit tracking")}</CardDescription>
  </div>
  <Button onClick={() => setLocation('/erp/accounting')} data-testid="button-open-erp">
  <ExternalLink className="w-4 h-4 ml-2" />
- فتح نظام المحاسبة
+ {tc("فتح نظام المحاسبة", "Open Accounting")}
  </Button>
  </div>
  </CardHeader>
@@ -1684,7 +1844,7 @@ export default function ManagerDashboard() {
  <TrendingUp className="w-6 h-6 text-green-600" />
  </div>
  <div>
- <p className="text-sm text-muted-foreground">إجمالي الإيرادات</p>
+ <p className="text-sm text-muted-foreground">{tc("إجمالي الإيرادات", "Total Revenue")}</p>
  <p className="text-2xl font-bold text-green-600">{totalRevenue.toFixed(2)} <SarIcon /></p>
  </div>
  </CardContent>
@@ -1695,7 +1855,7 @@ export default function ManagerDashboard() {
  <Receipt className="w-6 h-6 text-blue-600" />
  </div>
  <div>
- <p className="text-sm text-muted-foreground">عدد الطلبات</p>
+ <p className="text-sm text-muted-foreground">{tc("عدد الطلبات", "Total Orders")}</p>
  <p className="text-2xl font-bold text-blue-600">{filteredOrders.length}</p>
  </div>
  </CardContent>
@@ -1706,27 +1866,33 @@ export default function ManagerDashboard() {
  <DollarSign className="w-6 h-6 text-purple-600" />
  </div>
  <div>
- <p className="text-sm text-muted-foreground">متوسط الطلب</p>
+ <p className="text-sm text-muted-foreground">{tc("متوسط الطلب", "Avg. Order")}</p>
  <p className="text-2xl font-bold text-purple-600">{filteredOrders.length > 0 ? (totalRevenue / filteredOrders.length).toFixed(2) : '0.00'} <SarIcon /></p>
  </div>
  </CardContent>
  </Card>
  </div>
  <div className="mt-4 p-4 bg-muted/30 rounded-lg">
- <p className="text-sm text-muted-foreground mb-2">للوصول إلى نظام المحاسبة الكامل مع:</p>
+ <p className="text-sm text-muted-foreground mb-2">{tc("للوصول إلى نظام المحاسبة الكامل مع:", "Access the full accounting system with:")}</p>
  <ul className="text-sm text-muted-foreground list-disc list-inside space-y-1">
- <li>دليل الحسابات</li>
- <li>قيود اليومية</li>
- <li>ميزان المراجعة</li>
- <li>قائمة الدخل والميزانية العمومية</li>
- <li>الفواتير الضريبية المتوافقة مع ZATCA</li>
+ <li>{tc("دليل الحسابات", "Chart of Accounts")}</li>
+ <li>{tc("قيود اليومية", "Journal Entries")}</li>
+ <li>{tc("ميزان المراجعة", "Trial Balance")}</li>
+ <li>{tc("قائمة الدخل والميزانية العمومية", "Income Statement & Balance Sheet")}</li>
+ <li>{tc("الفواتير الضريبية المتوافقة مع ZATCA", "ZATCA-compliant Tax Invoices")}</li>
  </ul>
  </div>
  </CardContent>
  </Card>
  </TabsContent>
  </Tabs>
+         </div>
+       </div>
+     </main>
+   </div>
  </div>
- </div>
+ <MobileBottomNav manager={manager} />
+ {import.meta.env.DEV && <DemoDataManager open={demoManagerOpen} onOpenChange={setDemoManagerOpen} />}
+ </>
  );
 }

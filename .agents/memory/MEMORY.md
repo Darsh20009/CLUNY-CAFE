@@ -1,0 +1,1 @@
+- [Reference migration](reference-migration.md) — migrating from reference ZIP (Black Rose) to CLUNY: brand.ts is single source of truth; mass sed for brand strings; @assets alias = attached_assets/ dir.

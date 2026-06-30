@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslate } from "@/lib/useTranslate";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -36,6 +37,7 @@ interface StockOrganizationStats {
 }
 
 export default function StockOrganizationDashboard() {
+  const tc = useTranslate();
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
 
   const { data: stats, isLoading } = useQuery<StockOrganizationStats>({
@@ -45,7 +47,7 @@ export default function StockOrganizationDashboard() {
   if (isLoading) {
     return (
       <div className="container mx-auto p-6">
-        <div className="text-center">جاري التحميل...</div>
+        <div className="text-center">{tc("جاري التحميل...", "Loading...")}</div>
       </div>
     );
   }
@@ -53,8 +55,8 @@ export default function StockOrganizationDashboard() {
   return (
     <div className="container mx-auto p-6 space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">تنظيم المخزون عبر الفروع</h1>
-        <p className="text-gray-500 mt-2">مراقبة شاملة للمخزون والتوزيع في جميع الفروع</p>
+        <h1 className="text-3xl font-bold">{tc("تنظيم المخزون عبر الفروع", "Inventory Organization Across Branches")}</h1>
+        <p className="text-gray-500 mt-2">{tc("مراقبة شاملة للمخزون والتوزيع في جميع الفروع", "Comprehensive inventory monitoring and distribution across all branches")}</p>
       </div>
 
       {/* Key Metrics */}
@@ -63,7 +65,7 @@ export default function StockOrganizationDashboard() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">عدد الفروع</p>
+                <p className="text-sm text-gray-600">{tc("عدد الفروع", "Number of Branches")}</p>
                 <p className="text-2xl font-bold">{stats?.totalBranches || 0}</p>
               </div>
               <Warehouse className="w-8 h-8 text-blue-500 opacity-20" />
@@ -75,7 +77,7 @@ export default function StockOrganizationDashboard() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">عدد المنتجات</p>
+                <p className="text-sm text-gray-600">{tc("عدد المنتجات", "Number of Products")}</p>
                 <p className="text-2xl font-bold">{stats?.totalSKUs || 0}</p>
               </div>
               <Package className="w-8 h-8 text-green-500 opacity-20" />
@@ -87,7 +89,7 @@ export default function StockOrganizationDashboard() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">قيمة المخزون</p>
+                <p className="text-sm text-gray-600">{tc("قيمة المخزون", "Inventory Value")}</p>
                 <p className="text-2xl font-bold">{stats?.totalInventoryValue ? `${Math.round(stats.totalInventoryValue)}` : '0'}</p>
               </div>
               <TrendingUp className="w-8 h-8 text-purple-500 opacity-20" />
@@ -99,7 +101,7 @@ export default function StockOrganizationDashboard() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">مخزون ناقص</p>
+                <p className="text-sm text-gray-600">{tc("مخزون ناقص", "Low Stock")}</p>
                 <p className="text-2xl font-bold text-red-600">{stats?.lowStockItems || 0}</p>
               </div>
               <AlertTriangle className="w-8 h-8 text-red-500 opacity-20" />
@@ -111,7 +113,7 @@ export default function StockOrganizationDashboard() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">تحويلات قيد الانتظار</p>
+                <p className="text-sm text-gray-600">{tc("تحويلات قيد الانتظار", "Pending Transfers")}</p>
                 <p className="text-2xl font-bold text-orange-600">{stats?.pendingTransfers || 0}</p>
               </div>
               <Truck className="w-8 h-8 text-orange-500 opacity-20" />
@@ -123,8 +125,8 @@ export default function StockOrganizationDashboard() {
       {/* Branches Overview */}
       <Tabs defaultValue="overview" className="w-full">
         <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="overview">نظرة عامة</TabsTrigger>
-          <TabsTrigger value="transfers">التحويلات</TabsTrigger>
+          <TabsTrigger value="overview">{tc("نظرة عامة", "Overview")}</TabsTrigger>
+          <TabsTrigger value="transfers">{tc("التحويلات", "Transfers")}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
@@ -145,15 +147,15 @@ export default function StockOrganizationDashboard() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex justify-between items-center">
-                    <span className="text-sm text-gray-600">عدد المنتجات:</span>
+                    <span className="text-sm text-gray-600">{tc("عدد المنتجات:", "Products:")}</span>
                     <span className="font-semibold">{branch.totalItems}</span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-sm text-gray-600">قيمة المخزون:</span>
+                    <span className="text-sm text-gray-600">{tc("قيمة المخزون:", "Inventory Value:")}</span>
                     <span className="font-semibold">{Math.round(branch.totalValue)}</span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-sm text-gray-600">التحويلات الحديثة:</span>
+                    <span className="text-sm text-gray-600">{tc("التحويلات الحديثة:", "Recent Transfers:")}</span>
                     <span className="font-semibold">{branch.recentTransfers}</span>
                   </div>
                 </CardContent>
@@ -165,7 +167,7 @@ export default function StockOrganizationDashboard() {
         <TabsContent value="transfers">
           <Card>
             <CardHeader>
-              <CardTitle>التحويلات الفعلية</CardTitle>
+              <CardTitle>{tc("التحويلات الفعلية", "Actual Transfers")}</CardTitle>
               <CardDescription>
                 لعرض التحويلات الفعلية، اذهب إلى صفحة إدارة التحويلات
               </CardDescription>

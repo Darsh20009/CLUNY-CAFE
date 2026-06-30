@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { PlanGate } from "@/components/plan-gate";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslate, tc } from "@/lib/useTranslate";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -112,25 +114,25 @@ interface ZATCASettings {
 }
 
 const statusConfig: Record<string, { label: string; color: string; icon: any }> = {
-  pending: { label: "قيد الانتظار", color: "bg-background0", icon: Clock },
-  submitted: { label: "تم الإرسال", color: "bg-blue-500", icon: Send },
-  accepted: { label: "مقبولة", color: "bg-green-500", icon: CheckCircle },
-  rejected: { label: "مرفوضة", color: "bg-red-500", icon: XCircle },
-  cancelled: { label: "ملغاة", color: "bg-gray-500", icon: XCircle },
+  pending: { label: tc("قيد الانتظار", "Pending"), color: "bg-primary", icon: Clock },
+  submitted: { label: tc("تم الإرسال", "Submitted"), color: "bg-blue-500", icon: Send },
+  accepted: { label: tc("مقبولة", "Accepted"), color: "bg-green-500", icon: CheckCircle },
+  rejected: { label: tc("مرفوضة", "Rejected"), color: "bg-red-500", icon: XCircle },
+  cancelled: { label: tc("ملغاة", "Cancelled"), color: "bg-gray-500", icon: XCircle },
 };
 
 const invoiceTypeLabels: Record<string, string> = {
-  standard: "فاتورة ضريبية",
-  simplified: "فاتورة مبسطة",
-  debit_note: "إشعار مدين",
-  credit_note: "إشعار دائن",
+  standard: tc("فاتورة ضريبية", "Tax Invoice"),
+  simplified: tc("فاتورة مبسطة", "Simplified Invoice"),
+  debit_note: tc("إشعار مدين", "Debit Note"),
+  credit_note: tc("إشعار دائن", "Credit Note"),
 };
 
 const paymentMethodLabels: Record<string, string> = {
-  cash: "نقدي",
-  pos: "بطاقة",
-  bank_transfer: "تحويل بنكي",
-  mada: "مدى",
+  cash: tc("نقدي", "Cash"),
+  pos: tc("بطاقة", "Card"),
+  bank_transfer: tc("تحويل بنكي", "Bank Transfer"),
+  mada: tc("مدى", "Mada"),
   stc_pay: "STC Pay",
   apple_pay: "Apple Pay",
 };
@@ -138,6 +140,7 @@ const paymentMethodLabels: Record<string, string> = {
 export default function ZATCAInvoicesPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const tc = useTranslate();
   const [activeTab, setActiveTab] = useState("invoices");
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -147,6 +150,12 @@ export default function ZATCAInvoicesPage() {
   const [qrCodeImage, setQrCodeImage] = useState<string>("");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // Controlled settings form state
+  const [settingsForm, setSettingsForm] = useState({
+    tradeNameAr: "", tradeNameEn: "", vatNumber: "",
+    crNumber: "", address: "", city: "", postalCode: "", buildingNumber: "",
+  });
+
   const { data: invoices = [], isLoading: isInvoicesLoading, refetch } = useQuery<TaxInvoice[]>({
     queryKey: ["/api/zatca/invoices"],
   });
@@ -155,16 +164,45 @@ export default function ZATCAInvoicesPage() {
     queryKey: ["/api/zatca/settings"],
   });
 
+  useEffect(() => {
+    if (settings) {
+      setSettingsForm({
+        tradeNameAr: (settings as any).tradeNameAr || "",
+        tradeNameEn: (settings as any).tradeNameEn || "",
+        vatNumber: settings.vatNumber || "",
+        crNumber: settings.crNumber || "",
+        address: (settings as any).address || "",
+        city: (settings as any).city || "",
+        postalCode: (settings as any).postalCode || "",
+        buildingNumber: (settings as any).buildingNumber || "",
+      });
+    }
+  }, [settings]);
+
   const submitInvoiceMutation = useMutation({
     mutationFn: async (invoiceId: string) => {
       return apiRequest("POST", `/api/zatca/submit/${invoiceId}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/zatca/invoices"] });
-      toast({ title: "تم إرسال الفاتورة بنجاح" });
+      toast({ title: tc("تم إرسال الفاتورة بنجاح", "Invoice sent successfully") });
     },
     onError: () => {
-      toast({ title: "فشل إرسال الفاتورة", variant: "destructive" });
+      toast({ title: tc("فشل إرسال الفاتورة", "Invoice send failed"), variant: "destructive" });
+    },
+  });
+
+  const saveSettingsMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("PATCH", "/api/zatca/settings", settingsForm);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/zatca/settings"] });
+      setIsSettingsOpen(false);
+      toast({ title: tc("✓ تم حفظ إعدادات ZATCA", "✓ ZATCA settings saved") });
+    },
+    onError: (e: any) => {
+      toast({ title: tc("فشل في حفظ الإعدادات", "Failed to save settings"), description: e.message, variant: "destructive" });
     },
   });
 
@@ -201,7 +239,8 @@ export default function ZATCAInvoicesPage() {
   const totalVat = invoices.filter(i => i.status === 'accepted').reduce((sum, i) => sum + i.vatAmount, 0);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 via-primary/5 to-yellow-50 dark:from-background dark:via-primary/5 dark:to-background" dir="rtl">
+    <PlanGate feature="zatcaCompliance">
+    <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-background">
       <div className="container mx-auto p-4 md:p-6 max-w-7xl">
         <div className="flex items-center justify-between gap-4 mb-6">
           <Button 
@@ -214,7 +253,7 @@ export default function ZATCAInvoicesPage() {
           </Button>
           <h1 className="text-2xl md:text-3xl font-bold text-accent dark:text-accent flex items-center gap-2">
             <Receipt className="w-8 h-8" />
-            الفوترة الإلكترونية - ZATCA
+            {tc("الفوترة الإلكترونية - ZATCA", "E-Invoicing - ZATCA")}
           </h1>
           <div className="flex gap-2">
             <Button 
@@ -239,7 +278,7 @@ export default function ZATCAInvoicesPage() {
             <CardContent className="flex items-center gap-4 p-4">
               <AlertTriangle className="w-8 h-8 text-accent" />
               <div>
-                <p className="font-medium text-accent dark:text-accent">لم يتم تكوين إعدادات ZATCA</p>
+                <p className="font-medium text-accent dark:text-accent">{tc("لم يتم تكوين إعدادات ZATCA", "ZATCA settings not configured")}</p>
                 <p className="text-sm text-accent">يرجى إعداد بيانات المنشأة والرقم الضريبي قبل إرسال الفواتير</p>
               </div>
               <Button onClick={() => setIsSettingsOpen(true)} className="mr-auto bg-primary hover:bg-primary">
@@ -250,7 +289,7 @@ export default function ZATCAInvoicesPage() {
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <Card className="bg-gradient-to-br from-amber-500 to-amber-600 text-white">
+          <Card className="bg-primary text-primary-foreground">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -295,7 +334,7 @@ export default function ZATCAInvoicesPage() {
                 <div>
                   <p className="text-blue-100 text-sm">إجمالي الضريبة</p>
                   <p className="text-3xl font-bold mt-1">{totalVat.toFixed(2)}</p>
-                  <p className="text-blue-200 text-xs mt-1">ريال سعودي</p>
+                  <p className="text-blue-200 text-xs mt-1 flex items-center gap-1"><SarIcon size={12} className="brightness-0 invert opacity-80" /></p>
                 </div>
                 <Receipt className="w-12 h-12 text-blue-200" />
               </div>
@@ -307,15 +346,15 @@ export default function ZATCAInvoicesPage() {
           <TabsList className="grid w-full grid-cols-3 bg-primary dark:bg-primary/30">
             <TabsTrigger value="invoices" className="flex items-center gap-1">
               <FileText className="w-4 h-4" />
-              الفواتير
+              {tc("الفواتير", "Invoices")}
             </TabsTrigger>
             <TabsTrigger value="compliance" className="flex items-center gap-1">
               <Shield className="w-4 h-4" />
-              الامتثال
+              {tc("الامتثال", "Compliance")}
             </TabsTrigger>
             <TabsTrigger value="reports" className="flex items-center gap-1">
               <FileCheck className="w-4 h-4" />
-              التقارير
+              {tc("التقارير", "Reports")}
             </TabsTrigger>
           </TabsList>
 
@@ -771,39 +810,79 @@ export default function ZATCAInvoicesPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>اسم المنشأة (عربي)</Label>
-                  <Input defaultValue={settings?.sellerName} />
+                  <Input
+                    value={settingsForm.tradeNameAr}
+                    onChange={(e) => setSettingsForm(f => ({ ...f, tradeNameAr: e.target.value }))}
+                    placeholder="CLUNY CAFE"
+                    data-testid="input-trade-name-ar"
+                  />
                 </div>
                 <div>
                   <Label>اسم المنشأة (إنجليزي)</Label>
-                  <Input defaultValue={settings?.sellerNameEn} />
+                  <Input
+                    value={settingsForm.tradeNameEn}
+                    onChange={(e) => setSettingsForm(f => ({ ...f, tradeNameEn: e.target.value }))}
+                    placeholder="CLUNY CAFE"
+                    data-testid="input-trade-name-en"
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>الرقم الضريبي (VAT)</Label>
-                  <Input defaultValue={settings?.vatNumber} placeholder="3XXXXXXXXXX0003" />
+                  <Input
+                    value={settingsForm.vatNumber}
+                    onChange={(e) => setSettingsForm(f => ({ ...f, vatNumber: e.target.value }))}
+                    placeholder="3XXXXXXXXXX0003"
+                    data-testid="input-vat-number"
+                  />
                 </div>
                 <div>
                   <Label>رقم السجل التجاري</Label>
-                  <Input defaultValue={settings?.crNumber} />
+                  <Input
+                    value={settingsForm.crNumber}
+                    onChange={(e) => setSettingsForm(f => ({ ...f, crNumber: e.target.value }))}
+                    placeholder="1234567890"
+                    data-testid="input-cr-number"
+                  />
                 </div>
               </div>
               <div>
                 <Label>العنوان</Label>
-                <Input defaultValue={settings?.address} />
+                <Input
+                  value={settingsForm.address}
+                  onChange={(e) => setSettingsForm(f => ({ ...f, address: e.target.value }))}
+                  placeholder="شارع الملك فهد"
+                  data-testid="input-address"
+                />
               </div>
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <Label>المدينة</Label>
-                  <Input defaultValue={settings?.city} />
+                  <Input
+                    value={settingsForm.city}
+                    onChange={(e) => setSettingsForm(f => ({ ...f, city: e.target.value }))}
+                    placeholder="الرياض"
+                    data-testid="input-city"
+                  />
                 </div>
                 <div>
                   <Label>الرمز البريدي</Label>
-                  <Input defaultValue={settings?.postalCode} />
+                  <Input
+                    value={settingsForm.postalCode}
+                    onChange={(e) => setSettingsForm(f => ({ ...f, postalCode: e.target.value }))}
+                    placeholder="12345"
+                    data-testid="input-postal-code"
+                  />
                 </div>
                 <div>
                   <Label>رقم المبنى</Label>
-                  <Input defaultValue={settings?.buildingNumber} />
+                  <Input
+                    value={settingsForm.buildingNumber}
+                    onChange={(e) => setSettingsForm(f => ({ ...f, buildingNumber: e.target.value }))}
+                    placeholder="1234"
+                    data-testid="input-building-number"
+                  />
                 </div>
               </div>
             </div>
@@ -811,7 +890,13 @@ export default function ZATCAInvoicesPage() {
               <Button variant="outline" onClick={() => setIsSettingsOpen(false)}>
                 إلغاء
               </Button>
-              <Button className="bg-primary hover:bg-primary">
+              <Button
+                className="bg-primary hover:bg-primary gap-2"
+                onClick={() => saveSettingsMutation.mutate()}
+                disabled={saveSettingsMutation.isPending}
+                data-testid="button-save-zatca-settings"
+              >
+                {saveSettingsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 حفظ الإعدادات
               </Button>
             </DialogFooter>
@@ -819,5 +904,6 @@ export default function ZATCAInvoicesPage() {
         </Dialog>
       </div>
     </div>
+    </PlanGate>
   );
 }

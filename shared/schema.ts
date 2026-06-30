@@ -1,5 +1,6 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
 import { z } from "zod";
+import { nanoid } from "nanoid";
 
 export interface ICoffeeItem extends Document {
   id: string;
@@ -31,6 +32,8 @@ export interface ICoffeeItem extends Document {
   branchAvailability?: Array<{
     branchId: string;
     isAvailable: number;
+    price?: number;
+    availableSizes?: Array<{ nameAr: string; price: number }>;
   }>;
   recipeId?: string;
   hasRecipe?: number;
@@ -54,8 +57,62 @@ export interface ICoffeeItem extends Document {
     isRequired?: boolean;
     maxSelectable?: number;
     section?: string;
-    isSingleSelect?: boolean;
+    selectionType?: 'single' | 'multiple';
   }>;
+  addonGroups?: Array<{
+    id: string;
+    nameAr: string;
+    nameEn?: string;
+    required: boolean;
+    selectionType: 'single' | 'multi';
+    minSelect: number;
+    maxSelect: number;
+    options: Array<{
+      id: string;
+      nameAr: string;
+      nameEn?: string;
+      price: number;
+      imageUrl?: string;
+      subGroups?: Array<{
+        id: string;
+        nameAr: string;
+        nameEn?: string;
+        required: boolean;
+        selectionType: 'single' | 'multi';
+        minSelect: number;
+        maxSelect: number;
+        choices: Array<{
+          id: string;
+          nameAr: string;
+          nameEn?: string;
+          price: number;
+        }>;
+      }>;
+    }>;
+  }>;
+  bundledItems?: Array<{
+    sectionTitle: string;
+    selectionType: 'single' | 'multiple';
+    minSelectable: number;
+    maxSelectable: number;
+    items: Array<{
+      productId: string;
+      nameAr: string;
+      nameEn?: string;
+      imageUrl?: string;
+      originalPrice: number;
+      customPrice: number;
+    }>;
+  }>;
+  isReservation?: boolean;
+  reservationPackages?: Array<{
+    packageName: string;
+    description?: string;
+    price: number;
+    duration?: string;
+    maxGuests?: number;
+  }>;
+  salesCount?: number;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -97,17 +154,73 @@ const CoffeeItemSchema = new Schema<ICoffeeItem>({
     isRequired: { type: Boolean, default: false },
     maxSelectable: { type: Number, default: 1 },
     section: { type: String, default: '' },
-    isSingleSelect: { type: Boolean, default: false },
+    selectionType: { type: String, enum: ['single', 'multiple'], default: 'multiple' },
+  }],
+  addonGroups: [{
+    id: { type: String, required: true },
+    nameAr: { type: String, required: true },
+    nameEn: { type: String },
+    required: { type: Boolean, default: false },
+    selectionType: { type: String, enum: ['single', 'multi'], default: 'single' },
+    minSelect: { type: Number, default: 0 },
+    maxSelect: { type: Number, default: 1 },
+    options: [{
+      id: { type: String, required: true },
+      nameAr: { type: String, required: true },
+      nameEn: { type: String },
+      price: { type: Number, default: 0 },
+      imageUrl: { type: String },
+      subGroups: [{
+        id: { type: String, required: true },
+        nameAr: { type: String, required: true },
+        nameEn: { type: String },
+        required: { type: Boolean, default: false },
+        selectionType: { type: String, enum: ['single', 'multi'], default: 'single' },
+        minSelect: { type: Number, default: 0 },
+        maxSelect: { type: Number, default: 1 },
+        choices: [{
+          id: { type: String, required: true },
+          nameAr: { type: String, required: true },
+          nameEn: { type: String },
+          price: { type: Number, default: 0 },
+        }],
+      }],
+    }],
+  }],
+  bundledItems: [{
+    sectionTitle: { type: String, required: true },
+    selectionType: { type: String, enum: ['single', 'multiple'], default: 'single' },
+    minSelectable: { type: Number, default: 0 },
+    maxSelectable: { type: Number, default: 1 },
+    items: [{
+      productId: { type: String, required: true },
+      nameAr: { type: String, required: true },
+      nameEn: { type: String },
+      imageUrl: { type: String },
+      originalPrice: { type: Number, required: true, default: 0 },
+      customPrice: { type: Number, required: true, default: 0 },
+    }],
+  }],
+  isReservation: { type: Boolean, default: false },
+  reservationPackages: [{
+    packageName: { type: String, required: true },
+    description: { type: String },
+    price: { type: Number, required: true, default: 0 },
+    duration: { type: String },
+    maxGuests: { type: Number },
   }],
   recipeId: { type: String },
   costOfGoods: { type: Number, default: 0 },
   profitMargin: { type: Number, default: 0 },
   branchAvailability: [{
     branchId: { type: String },
-    isAvailable: { type: Number, default: 1 }
+    isAvailable: { type: Number, default: 1 },
+    price: { type: Number },
+    availableSizes: [{ nameAr: { type: String }, price: { type: Number } }],
   }],
   hasRecipe: { type: Number, default: 0 },
   requiresRecipe: { type: Number, default: 1 },
+  salesCount: { type: Number, default: 0 },
   createdByEmployeeId: { type: String },
   createdByBranchId: { type: String },
   publishedBranches: [{ type: String }],
@@ -156,7 +269,7 @@ export interface IProductAddon extends Document {
   plateNumber?: string;
   saveCarInfo?: number;
   menuCategory?: string; // Optional: limits this addon to a specific menu category (empty = all categories)
-  isSingleSelect?: boolean; // If true, only one addon in this category can be selected at a time
+  selectionType?: 'single' | 'multiple'; // 'single' = radio (only one per group), 'multiple' = checkbox (default)
   createdAt: Date;
 }
 
@@ -180,7 +293,7 @@ const ProductAddonSchema = new Schema<IProductAddon>({
   inventoryRawItemId: { type: String },
   linkedRawItemId: { type: String },
   menuCategory: { type: String, default: '' }, // Optional: limits addon to a specific menu category
-  isSingleSelect: { type: Boolean, default: false }, // If true, only one addon per category can be selected
+  selectionType: { type: String, enum: ['single', 'multiple'], default: 'multiple' },
   createdAt: { type: Date, default: Date.now },
 }, { timestamps: false });
 
@@ -619,7 +732,16 @@ export const CafeModel = mongoose.model<ICafe>("Cafe", CafeSchema);
 // --- NEW OPERATING SYSTEM CORE MODELS ---
 
 // 1. Business Configuration (Extended Cafe)
-export type PaymentGatewayProvider = 'none' | 'neoleap' | 'geidea';
+export type PaymentGatewayProvider = 'none' | 'neoleap' | 'geidea' | 'paymob';
+
+export interface ICustomPaymentMethod {
+  id: string;
+  nameAr: string;
+  nameEn: string;
+  icon: string;
+  enabledForCustomer: boolean;
+  enabledForPos: boolean;
+}
 
 export interface IPaymentGatewayConfig {
   provider: PaymentGatewayProvider;
@@ -640,6 +762,21 @@ export interface IPaymentGatewayConfig {
     configured?: boolean;
     publicKeyPrefix?: string;
   };
+  paymob?: {
+    secretKey?: string;
+    publicKey?: string;
+    hmacSecret?: string;
+    apiKey?: string;
+    integrationId?: string;
+    iframeId?: string;
+    walletIntegrationId?: string;
+    applePayIntegrationId?: string;
+    baseUrl?: string;
+    callbackUrl?: string;
+  };
+  bankIban?: string;
+  bankName?: string;
+  bankAccountHolder?: string;
   cashEnabled: boolean;
   cashMaxDistance?: number;
   storeLocation?: { lat?: number; lng?: number };
@@ -647,6 +784,7 @@ export interface IPaymentGatewayConfig {
   qahwaCardEnabled: boolean;
   bankTransferEnabled: boolean;
   stcPayEnabled: boolean;
+  customPaymentMethods?: ICustomPaymentMethod[];
 }
 
 export interface ISocialLinks {
@@ -680,6 +818,7 @@ export interface IBusinessConfig extends Document {
   vatPercentage: number;
   currency: string;
   timezone: string;
+  country?: string;
   isEmergencyClosed: boolean;
   isMaintenanceMode?: boolean;
   maintenanceReason?: string;
@@ -699,17 +838,20 @@ export interface IBusinessConfig extends Document {
   offersConfig?: Record<string, any>;
   menuLayout?: 'classic' | 'cards' | 'list';
   cashierLayout?: 'classic' | 'pos' | 'split';
-  serviceFee?: {
-    enabled?: boolean;
-    amount?: number;
-    reducedAmount?: number;
-    reducedThreshold?: number;
+  orderMethodsConfig?: {
+    enableDineIn?: boolean;
+    enableCarPickup?: boolean;
+    enableDelivery?: boolean;
+    enableScheduledPickup?: boolean;
+    enableTakeaway?: boolean;
   };
-  prepTimeConfig?: {
-    basePrepMinutes?: number;
-    extraMinutesPerItem?: number;
-    extraItemThreshold?: number;
-  };
+  serviceFeeEnabled?: boolean;
+  serviceFeeAmount?: number;
+  serviceFeeLowOrderThreshold?: number;
+  serviceFeeLowOrderAmount?: number;
+  prepBaseMinutes?: number;
+  prepExtraMinutesPerItem?: number;
+  prepFreeItemCount?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -717,7 +859,7 @@ export interface IBusinessConfig extends Document {
 export type BusinessConfig = IBusinessConfig;
 
 const PaymentGatewayConfigSchema = new Schema({
-  provider: { type: String, enum: ['none', 'neoleap', 'geidea'], default: 'none' },
+  provider: { type: String, enum: ['none', 'neoleap', 'geidea', 'paymob'], default: 'none' },
   enabledMethods: [{ type: String }],
   neoleap: {
     clientId: { type: String },
@@ -743,6 +885,14 @@ const PaymentGatewayConfigSchema = new Schema({
   qahwaCardEnabled: { type: Boolean, default: true },
   bankTransferEnabled: { type: Boolean, default: false },
   stcPayEnabled: { type: Boolean, default: false },
+  customPaymentMethods: [{
+    id: { type: String },
+    nameAr: { type: String },
+    nameEn: { type: String },
+    icon: { type: String, default: '💳' },
+    enabledForCustomer: { type: Boolean, default: true },
+    enabledForPos: { type: Boolean, default: true },
+  }],
 }, { _id: false });
 
 const BusinessConfigSchema = new Schema<IBusinessConfig>({
@@ -756,6 +906,7 @@ const BusinessConfigSchema = new Schema<IBusinessConfig>({
   vatPercentage: { type: Number, default: 15 },
   currency: { type: String, default: 'SAR' },
   timezone: { type: String, default: 'Asia/Riyadh' },
+  country: { type: String, default: 'SA' },
   isMaintenanceMode: { type: Boolean, default: false },
   maintenanceReason: { type: String, default: 'maintenance' },
   isEmergencyClosed: { type: Boolean, default: false },
@@ -804,14 +955,23 @@ const BusinessConfigSchema = new Schema<IBusinessConfig>({
   offersConfig: { type: Schema.Types.Mixed, default: () => ({}) },
   menuLayout: { type: String, enum: ['classic', 'cards', 'list'], default: 'classic' },
   cashierLayout: { type: String, enum: ['classic', 'pos', 'split'], default: 'classic' },
-  serviceFee: {
+  orderMethodsConfig: {
     type: Schema.Types.Mixed,
-    default: () => ({ enabled: true, amount: 0.70, reducedAmount: 0.35, reducedThreshold: 5 })
+    default: () => ({
+      enableDineIn: true,
+      enableCarPickup: true,
+      enableDelivery: false,
+      enableScheduledPickup: true,
+      enableTakeaway: true,
+    })
   },
-  prepTimeConfig: {
-    type: Schema.Types.Mixed,
-    default: () => ({ basePrepMinutes: 10, extraMinutesPerItem: 3, extraItemThreshold: 2 })
-  },
+  serviceFeeEnabled: { type: Boolean, default: true },
+  serviceFeeAmount: { type: Number, default: 0.70 },
+  serviceFeeLowOrderThreshold: { type: Number, default: 5.00 },
+  serviceFeeLowOrderAmount: { type: Number, default: 0.35 },
+  prepBaseMinutes: { type: Number, default: 10 },
+  prepExtraMinutesPerItem: { type: Number, default: 3 },
+  prepFreeItemCount: { type: Number, default: 2 },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
@@ -1049,7 +1209,11 @@ export interface IBranch extends Document {
     footerText?: string;
     showVat: boolean;
   };
-  lateThresholdMinutes?: number; // عتبة التأخير بالدقائق
+  lateThresholdMinutes?: number;
+  allowOnlineOrders?: boolean;
+  allowCarOrders?: boolean;
+  isOnline?: boolean;
+  allowTableOrders?: boolean;  // هل يقبل طلبات الطاولات؟
   carType?: string;
   carColor?: string;
   plateNumber?: string;
@@ -1080,7 +1244,11 @@ const BranchSchema = new Schema<IBranch>({
   managerName: { type: String },
   managerId: { type: String },
   isMaintenanceMode: { type: Boolean, default: false },
-  lateThresholdMinutes: { type: Number, default: 15 }, // الافتراضي 15 دقيقة
+  lateThresholdMinutes: { type: Number, default: 15 },
+  allowOnlineOrders: { type: Boolean, default: true },
+  allowCarOrders: { type: Boolean, default: true },
+  allowTableOrders: { type: Boolean, default: true },
+  isOnline: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now },
 }, { timestamps: false });
 
@@ -1149,6 +1317,14 @@ export interface IOrder extends Document {
   customerNotes?: string;
   cancellationReason?: string;
   cancelledBy?: 'customer' | 'cashier';
+  isProductReservation?: boolean;
+  productReservationDate?: string;
+  productReservationFromTime?: string;
+  productReservationToTime?: string;
+  productReservationStatus?: 'pending_payment' | 'pending_confirmation' | 'confirmed' | 'rejected' | 'cancelled' | 'completed';
+  productReservationPackageName?: string;
+  productReservationNotes?: string;
+  preparationAlertSent?: boolean;
   carPickup?: {
     carType?: string;
     carColor?: string;
@@ -1163,7 +1339,9 @@ export interface IOrder extends Document {
   discountPercentage?: number;
   isOpenTab?: boolean;
   dineIn?: boolean;
-  deliveryType?: 'pickup' | 'delivery' | 'dine-in';
+  deliveryType?: 'pickup' | 'delivery' | 'dine-in' | 'curbside' | 'car_pickup' | 'car-pickup';
+  customerArrived?: boolean;
+  customerArrivedAt?: string;
   deliveryAddress?: {
     fullAddress?: string;
     lat: number;
@@ -1202,7 +1380,13 @@ export interface IOrder extends Document {
   subtotal?: number;
   tax?: number;
   channel?: 'online' | 'web' | 'pos' | 'app' | 'whatsapp' | string;
+  giftCardCode?: string;
+  giftCardAmountUsed?: number;
+  giftCardRemainingBalance?: number;
   notes?: string;
+  refundedAmount?: number;
+  refundedAt?: Date;
+  isFullyRefunded?: boolean;
   statusHistory?: Array<{
     status: string;
     timestamp: Date;
@@ -1233,6 +1417,8 @@ const OrderSchema = new Schema<IOrder>({
   preparationHoldUntil: { type: String },
   dineIn: { type: Boolean, default: false },
   carPickup: { type: Boolean, default: false },
+  customerArrived: { type: Boolean, default: false },
+  customerArrivedAt: { type: String },
   carInfo: {
     carType: { type: String },
     carColor: { type: String },
@@ -1245,9 +1431,10 @@ const OrderSchema = new Schema<IOrder>({
   items: { type: Schema.Types.Mixed, required: true },
   totalAmount: { type: Number, required: true },
   dailyNumber: { type: Number },
-  paymentMethod: { type: String, enum: ["cash", "pos", "apple_pay", "pos-network", "alinma", "rajhi", "ur", "barq", "qahwa-card", "stc-pay", "mada", "geidea", "neoleap", "neoleap-apple-pay", "bank_card", "paymob-card", "paymob-wallet", "loyalty-card", "loyalty_points", "coupon", "split"], required: true },
+  paymentMethod: { type: String, enum: ["cash", "pos", "apple_pay", "pos-network", "alinma", "rajhi", "ur", "barq", "qahwa-card", "stc-pay", "mada", "geidea", "neoleap", "neoleap-apple-pay", "bank_card", "paymob-card", "paymob-wallet", "paymob-apple-pay", "loyalty-card", "split", "card", "network", "credit_card", "bank_transfer", "other"], required: true },
   paymentDetails: { type: String },
   paymentReceiptUrl: { type: String },
+  paymentStatus: { type: String, enum: ['pending', 'paid', 'failed', 'refunded'], default: 'pending' },
   isOpenTab: { type: Boolean, default: false },
   status: { type: String, default: "pending", required: true },
   channel: { type: String, default: "online" },
@@ -1259,31 +1446,43 @@ const OrderSchema = new Schema<IOrder>({
     notes: { type: String }
   }],
   pointsAwarded: { type: Boolean, default: false },
+  giftCardCode: { type: String },
+  giftCardAmountUsed: { type: Number },
+  giftCardRemainingBalance: { type: Number },
+  refundedAmount: { type: Number, default: 0 },
+  refundedAt: { type: Date },
+  isFullyRefunded: { type: Boolean, default: false },
+  isProductReservation: { type: Boolean, default: false },
+  productReservationDate: { type: String },
+  productReservationFromTime: { type: String },
+  productReservationToTime: { type: String },
+  productReservationStatus: { type: String, enum: ['pending_payment', 'pending_confirmation', 'confirmed', 'rejected', 'cancelled', 'completed'], default: 'pending_payment' },
+  productReservationPackageName: { type: String },
+  productReservationNotes: { type: String },
+  preparationAlertSent: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
 
+// Core compound indexes for high-throughput queries
+OrderSchema.index({ tenantId: 1, branchId: 1, status: 1, createdAt: -1 }); // live orders with branch + sort
+OrderSchema.index({ tenantId: 1, status: 1, createdAt: -1 });              // live orders no-branch + sort
+OrderSchema.index({ tenantId: 1, branchId: 1, createdAt: -1, status: 1 }); // today filter with branch
+OrderSchema.index({ tenantId: 1, createdAt: -1, status: 1 });              // today filter no-branch
+// Existing indexes retained
 OrderSchema.index({ tenantId: 1, branchId: 1, status: 1 });
 OrderSchema.index({ tenantId: 1, createdAt: -1 });
 OrderSchema.index({ status: 1, createdAt: -1 });
 OrderSchema.index({ orderNumber: 1, tenantId: 1 });
-OrderSchema.index({ id: 1 }, { unique: true, sparse: true });
-OrderSchema.index({ employeeId: 1, createdAt: -1 });
 OrderSchema.index({ customerId: 1, createdAt: -1 });
+OrderSchema.index({ customerPhone: 1, tenantId: 1 });
+OrderSchema.index({ tenantId: 1, branchId: 1, createdAt: -1 });
+OrderSchema.index({ tenantId: 1, paymentStatus: 1, createdAt: -1 });
 OrderSchema.index({ tableId: 1, status: 1 });
-OrderSchema.index({ tenantId: 1, status: 1, createdAt: -1 });
-OrderSchema.index({ tenantId: 1, dailyNumber: -1 });
+OrderSchema.index({ tenantId: 1, orderType: 1, createdAt: -1 });
+OrderSchema.index({ tenantId: 1, assignedDriverId: 1, status: 1 });
 
 export const OrderModel = mongoose.model<IOrder>("Order", OrderSchema);
-
-// Atomic order counter per tenant — prevents race conditions and freeze on wrap-around
-const OrderCounterSchema = new Schema({
-  tenantId: { type: String, required: true, unique: true },
-  seq: { type: Number, default: 0 },
-});
-export const OrderCounterModel =
-  mongoose.models["OrderCounter"] ||
-  mongoose.model("OrderCounter", OrderCounterSchema);
 
 export interface IOrderItemCustomization {
   selectedAddons: Array<{
@@ -1361,6 +1560,7 @@ export interface ICartItem extends Document {
   selectedSize?: string;
   selectedAddons?: string[];
   selectedItemAddons?: Array<{ nameAr: string; nameEn?: string; price: number }>;
+  selectedReservationPackage?: { packageName: string; description?: string; price: number; duration?: string; maxGuests?: number; } | null;
   carType?: string;
   carColor?: string;
   plateNumber?: string;
@@ -1376,6 +1576,11 @@ const CartItemSchema = new Schema<ICartItem>({
   selectedSize: { type: String },
   selectedAddons: [{ type: String }],
   selectedItemAddons: [{ type: mongoose.Schema.Types.Mixed }],
+  selectedReservationPackage: { type: mongoose.Schema.Types.Mixed, default: null },
+  carType: { type: String },
+  carColor: { type: String },
+  plateNumber: { type: String },
+  saveCarInfo: { type: Number },
   createdAt: { type: Date, default: Date.now },
 });
 
@@ -1413,6 +1618,7 @@ export interface ILoyaltyCard extends Document {
 }
 
 const LoyaltyCardSchema = new Schema<ILoyaltyCard>({
+  id: { type: String, index: true },
   customerId: { type: String, required: true },
   customerName: { type: String },
   phoneNumber: { type: String, required: true },
@@ -1548,6 +1754,7 @@ export interface ILoyaltyReward extends Document {
 }
 
 const LoyaltyRewardSchema = new Schema<ILoyaltyReward>({
+  id: { type: String, index: true },
   nameAr: { type: String, required: true },
   nameEn: { type: String },
   description: { type: String, required: true },
@@ -1582,6 +1789,7 @@ export interface IIngredient extends Document {
 }
 
 const IngredientSchema = new Schema<IIngredient>({
+  id: { type: String, index: true },
   nameAr: { type: String, required: true },
   nameEn: { type: String },
   isAvailable: { type: Number, default: 1, required: true },
@@ -1823,8 +2031,8 @@ const TaxInvoiceSchema = new Schema<ITaxInvoice>({
   uuid: { type: String, required: true, unique: true },
   orderId: { type: String, required: true },
 
-  sellerName: { type: String, required: true, default: 'CLUNY CAFE' },
-  sellerNameEn: { type: String, default: 'CLUNY CAFE' },
+  sellerName: { type: String, required: true, default: 'BLACK ROSE CAFE' },
+  sellerNameEn: { type: String, default: 'BLACK ROSE CAFE' },
   sellerVatNumber: { type: String, required: true, default: '311234567890003' },
   sellerCrNumber: { type: String },
   sellerAddress: { type: String, required: true, default: 'الرياض، المملكة العربية السعودية' },
@@ -1853,7 +2061,7 @@ const TaxInvoiceSchema = new Schema<ITaxInvoice>({
   taxAmount: { type: Number, required: true },
   totalAmount: { type: Number, required: true },
 
-  paymentMethod: { type: String, enum: ["cash", "pos", "apple_pay", "pos-network", "alinma", "rajhi", "ur", "barq", "qahwa-card", "stc-pay", "mada", "geidea", "neoleap", "neoleap-apple-pay", "bank_card", "paymob-card", "paymob-wallet", "loyalty-card", "loyalty_points", "coupon", "split"], required: true },
+  paymentMethod: { type: String, enum: ["cash", "pos", "apple_pay", "pos-network", "alinma", "rajhi", "ur", "barq", "qahwa-card", "stc-pay", "mada", "geidea", "neoleap", "neoleap-apple-pay", "bank_card", "paymob-card", "paymob-wallet", "paymob-apple-pay", "loyalty-card", "split", "card", "network", "credit_card", "bank_transfer", "other"], required: true },
   paymentMeans: { type: String },
 
   invoiceCounter: { type: Number, required: true },
@@ -1915,7 +2123,7 @@ const RevenueSchema = new Schema<IRevenue>({
   grossAmount: { type: Number, required: true },
   vatAmount: { type: Number, required: true },
   netAmount: { type: Number, required: true },
-  paymentMethod: { type: String, enum: ["cash", "pos", "apple_pay", "pos-network", "alinma", "rajhi", "ur", "barq", "qahwa-card", "stc-pay", "mada", "geidea", "neoleap", "neoleap-apple-pay", "bank_card", "paymob-card", "paymob-wallet", "loyalty-card", "loyalty_points", "coupon", "split"], required: true },
+  paymentMethod: { type: String, enum: ["cash", "pos", "apple_pay", "pos-network", "alinma", "rajhi", "ur", "barq", "qahwa-card", "stc-pay", "mada", "geidea", "neoleap", "neoleap-apple-pay", "bank_card", "paymob-card", "paymob-wallet", "paymob-apple-pay", "loyalty-card", "split", "card", "network", "credit_card", "bank_transfer", "other"], required: true },
   employeeId: { type: String },
   notes: { type: String },
   createdAt: { type: Date, default: Date.now },
@@ -1954,7 +2162,7 @@ export interface IExpense extends Document {
 }
 
 const ExpenseSchema = new Schema<IExpense>({
-  branchId: { type: String, required: true },
+  branchId: { type: String },
   date: { type: Date, required: true },
   category: { type: String, enum: ['inventory', 'salaries', 'rent', 'utilities', 'marketing', 'maintenance', 'supplies', 'other'], required: true },
   subcategory: { type: String },
@@ -2238,13 +2446,17 @@ export interface IAttendance extends Document {
   carColor?: string;
   plateNumber?: string;
   saveCarInfo?: number;
+  checkInMethod?: 'face' | 'qr' | 'manual' | 'app';
+  deviceFingerprint?: string;
+  isRemote?: boolean;
+  antifraudFlags?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
 
 const AttendanceSchema = new Schema<IAttendance>({
   employeeId: { type: String, required: true },
-  branchId: { type: String, required: true },
+  branchId: { type: String },
   checkInTime: { type: Date, required: true },
   checkOutTime: { type: Date },
   checkInLocation: {
@@ -2255,7 +2467,7 @@ const AttendanceSchema = new Schema<IAttendance>({
     lat: { type: Number },
     lng: { type: Number }
   },
-  checkInPhoto: { type: String, required: true },
+  checkInPhoto: { type: String },
   checkOutPhoto: { type: String },
   status: { type: String, enum: ['checked_in', 'checked_out', 'late', 'absent'], default: 'checked_in', required: true },
   shiftDate: { type: Date, required: true },
@@ -2266,14 +2478,54 @@ const AttendanceSchema = new Schema<IAttendance>({
   distanceFromBranch: { type: Number, default: 0 },
   checkOutIsAtBranch: { type: Number },
   checkOutDistanceFromBranch: { type: Number },
+  checkInMethod: { type: String, enum: ['face', 'qr', 'manual', 'app'], default: 'manual' },
+  deviceFingerprint: { type: String },
+  isRemote: { type: Boolean, default: false },
+  antifraudFlags: [{ type: String }],
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
 
 AttendanceSchema.index({ employeeId: 1, shiftDate: 1 });
 AttendanceSchema.index({ branchId: 1, shiftDate: 1 });
+AttendanceSchema.index({ tenantId: 1, shiftDate: 1 });
+AttendanceSchema.index({ tenantId: 1, employeeId: 1, shiftDate: 1 });
+AttendanceSchema.index({ tenantId: 1, branchId: 1, shiftDate: 1 });
 
 export const AttendanceModel = mongoose.model<IAttendance>("Attendance", AttendanceSchema);
+
+// ───────────────────────────────────────────────────────────
+// Live Location Tracking
+// ───────────────────────────────────────────────────────────
+export interface ILocationTrack extends Document {
+  attendanceId: string;
+  employeeId: string;
+  branchId: string;
+  lat: number;
+  lng: number;
+  accuracy?: number;
+  isInsideBranch: boolean;
+  distanceFromBranch: number;
+  timestamp: Date;
+}
+
+const LocationTrackSchema = new Schema<ILocationTrack>({
+  attendanceId: { type: String, required: true },
+  employeeId: { type: String, required: true },
+  branchId: { type: String, required: true },
+  lat: { type: Number, required: true },
+  lng: { type: Number, required: true },
+  accuracy: { type: Number },
+  isInsideBranch: { type: Boolean, default: true },
+  distanceFromBranch: { type: Number, default: 0 },
+  timestamp: { type: Date, default: Date.now },
+});
+
+LocationTrackSchema.index({ attendanceId: 1, timestamp: 1 });
+LocationTrackSchema.index({ employeeId: 1, timestamp: -1 });
+LocationTrackSchema.index({ branchId: 1, timestamp: -1 });
+
+export const LocationTrackModel = mongoose.model<ILocationTrack>("LocationTrack", LocationTrackSchema);
 
 export const insertCoffeeItemSchema = z.object({
   id: z.string(),
@@ -2309,9 +2561,72 @@ export const insertCoffeeItemSchema = z.object({
     category: z.string().optional(),
     imageUrl: z.string().optional(),
     section: z.string().optional(),
-    isSingleSelect: z.boolean().optional(),
+    selectionType: z.enum(['single', 'multiple']).optional(),
   })).optional(),
   isGiftable: z.boolean().optional(),
+  imageUrls: z.array(z.string()).optional(),
+  bundledItems: z.array(z.object({
+    sectionTitle: z.string(),
+    selectionType: z.enum(['single', 'multiple']).optional(),
+    minSelectable: z.number().optional(),
+    maxSelectable: z.number().optional(),
+    items: z.array(z.object({
+      productId: z.string(),
+      nameAr: z.string(),
+      nameEn: z.string().optional(),
+      imageUrl: z.string().optional(),
+      originalPrice: z.number(),
+      customPrice: z.number(),
+    })).optional(),
+  })).optional(),
+  isReservation: z.boolean().optional(),
+  reservationPackages: z.array(z.object({
+    packageName: z.string(),
+    description: z.string().optional(),
+    price: z.number(),
+    duration: z.string().optional(),
+    maxGuests: z.number().optional(),
+  })).optional(),
+  addonGroups: z.array(z.object({
+    id: z.string(),
+    nameAr: z.string(),
+    nameEn: z.string().optional(),
+    required: z.boolean().optional(),
+    selectionType: z.enum(['single', 'multi']).optional(),
+    minSelect: z.number().optional(),
+    maxSelect: z.number().optional(),
+    options: z.array(z.object({
+      id: z.string(),
+      nameAr: z.string(),
+      nameEn: z.string().optional(),
+      price: z.number(),
+      imageUrl: z.string().optional(),
+      subGroups: z.array(z.object({
+        id: z.string(),
+        nameAr: z.string(),
+        nameEn: z.string().optional(),
+        required: z.boolean().optional(),
+        selectionType: z.enum(['single', 'multi']).optional(),
+        minSelect: z.number().optional(),
+        maxSelect: z.number().optional(),
+        choices: z.array(z.object({
+          id: z.string(),
+          nameAr: z.string(),
+          nameEn: z.string().optional(),
+          price: z.number(),
+        })).optional(),
+      })).optional(),
+    })).optional(),
+  })).optional(),
+  branchAvailability: z.array(z.object({
+    branchId: z.string(),
+    isAvailable: z.number().optional(),
+    price: z.number().optional(),
+    availableSizes: z.array(z.object({ nameAr: z.string(), price: z.number() })).optional(),
+  })).optional(),
+  hasRecipe: z.number().optional(),
+  requiresRecipe: z.number().optional(),
+  menuType: z.enum(['drinks', 'food']).optional(),
 });
 
 export const insertEmployeeSchema = z.object({
@@ -2349,6 +2664,7 @@ export interface IEmployee extends Document {
   id: string;
   tenantId?: string;
   username: string;
+  email?: string;
   password?: string;
   fullName: string;
   role: string;
@@ -2360,12 +2676,19 @@ export interface IEmployee extends Document {
   shiftStartTime?: string;
   shiftEndTime?: string;
   workDays?: string[];
+  salary?: number;
   commissionPercentage?: number;
   deviceBalance?: number;
   isActivated: number;
   isActive: number;
   branchId?: string;
   employmentNumber?: string;
+  faceDescriptors?: number[][];
+  facePhotos?: string[];
+  faceEnrolledAt?: Date;
+  kioskQrSecret?: string;
+  lastRestoreKey?: string | null;
+  restoreKeyIssuedAt?: Date | null;
   vehicleType?: string;
   vehiclePlateNumber?: string;
   vehicleColor?: string;
@@ -2390,6 +2713,7 @@ const EmployeeSchema = new Schema<IEmployee>({
   id: { type: String, required: true, unique: true },
   tenantId: { type: String },
   username: { type: String, required: true, unique: true },
+  email: { type: String, sparse: true },
   password: { type: String },
   fullName: { type: String, required: true },
   role: { type: String, required: true },
@@ -2401,6 +2725,7 @@ const EmployeeSchema = new Schema<IEmployee>({
   shiftStartTime: { type: String },
   shiftEndTime: { type: String },
   workDays: [{ type: String }],
+  salary: { type: Number, default: 0 },
   commissionPercentage: { type: Number },
   deviceBalance: { type: Number, default: 0 },
   isActivated: { type: Number, default: 0 },
@@ -2419,9 +2744,19 @@ const EmployeeSchema = new Schema<IEmployee>({
   },
   permissions: [{ type: String }],
   allowedPages: [{ type: String }],
+  faceDescriptors: [[{ type: Number }]],
+  facePhotos: [{ type: String }],
+  faceEnrolledAt: { type: Date },
+  kioskQrSecret: { type: String },
+  lastRestoreKey:       { type: String, default: null },
+  restoreKeyIssuedAt:   { type: Date,   default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
+
+EmployeeSchema.index({ tenantId: 1, role: 1 });
+EmployeeSchema.index({ tenantId: 1, branchId: 1, isActive: 1 });
+EmployeeSchema.index({ tenantId: 1, isActive: 1 });
 
 export const EmployeeModel = mongoose.model<IEmployee>("Employee", EmployeeSchema);
 
@@ -2587,7 +2922,7 @@ export const insertOrderSchema = z.object({
   carType: z.string().optional(),
   carColor: z.string().optional(),
   carPlate: z.string().optional(),
-  deliveryType: z.enum(['pickup', 'delivery', 'dine-in', 'curbside']).optional(),
+  deliveryType: z.enum(['pickup', 'delivery', 'dine-in', 'curbside', 'car_pickup', 'car-pickup']).optional(),
   deliveryAddress: z.object({
     fullAddress: z.string().optional(),
     lat: z.number(),
@@ -2681,6 +3016,9 @@ export const insertDiscountCodeSchema = z.object({
 export const insertLoyaltyCardSchema = z.object({
   customerName: z.string().optional(),
   phoneNumber: z.string(),
+  cardNumber: z.string().optional(),
+  qrToken: z.string().optional(),
+  customerId: z.string().optional(),
 });
 
 export const insertCardCodeSchema = z.object({
@@ -2926,6 +3264,7 @@ export interface IRawItem extends Document {
 }
 
 const RawItemSchema = new Schema<IRawItem>({
+  id: { type: String },
   code: { type: String, required: true, unique: true },
   nameAr: { type: String, required: true },
   nameEn: { type: String },
@@ -2944,6 +3283,12 @@ const RawItemSchema = new Schema<IRawItem>({
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
+
+// Indexes for frequent inventory queries (code is already unique via schema field definition)
+RawItemSchema.index({ tenantId: 1 });
+RawItemSchema.index({ tenantId: 1, isActive: 1 });
+RawItemSchema.index({ tenantId: 1, category: 1 });
+RawItemSchema.index({ tenantId: 1, supplierId: 1 });
 
 export const RawItemModel = mongoose.model<IRawItem>("RawItem", RawItemSchema);
 
@@ -2970,6 +3315,7 @@ export interface ISupplier extends Document {
 }
 
 const SupplierSchema = new Schema<ISupplier>({
+  id: { type: String, index: true },
   code: { type: String, required: true, unique: true },
   nameAr: { type: String, required: true },
   nameEn: { type: String },
@@ -3040,6 +3386,7 @@ export interface IStockTransfer extends Document {
 }
 
 const StockTransferSchema = new Schema<IStockTransfer>({
+  id: { type: String, index: true },
   transferNumber: { type: String, required: true, unique: true },
   fromBranchId: { type: String, required: true },
   toBranchId: { type: String, required: true },
@@ -3097,6 +3444,7 @@ export interface IPurchaseInvoice extends Document {
 }
 
 const PurchaseInvoiceSchema = new Schema<IPurchaseInvoice>({
+  id: { type: String, index: true },
   invoiceNumber: { type: String, required: true, unique: true },
   supplierId: { type: String, required: true },
   branchId: { type: String, required: true },
@@ -3144,6 +3492,7 @@ export interface IRecipeItem extends Document {
 }
 
 const RecipeItemSchema = new Schema<IRecipeItem>({
+  id: { type: String, index: true },
   coffeeItemId: { type: String, required: true },
   rawItemId: { type: String, required: true },
   quantity: { type: Number, required: true },
@@ -3225,6 +3574,7 @@ export interface IStockAlert extends Document {
 }
 
 const StockAlertSchema = new Schema<IStockAlert>({
+  id: { type: String, index: true },
   branchId: { type: String, required: true },
   rawItemId: { type: String, required: true },
   alertType: { type: String, enum: ['low_stock', 'out_of_stock', 'expiring_soon', 'expired'], required: true },
@@ -3570,7 +3920,6 @@ export const insertProductAddonSchema = z.object({
   inventoryRawItemId: z.string().optional(),
   linkedRawItemId: z.string().optional(),
   menuCategory: z.string().optional(),
-  isSingleSelect: z.boolean().optional(),
 });
 
 export type ProductAddon = IProductAddon;
@@ -4336,7 +4685,7 @@ export interface IExpenseErp extends Document {
   branchId: string;
   expenseNumber: string;
   expenseDate: Date;
-  category: 'inventory' | 'salaries' | 'rent' | 'utilities' | 'marketing' | 'maintenance' | 'supplies' | 'other';
+  category: 'inventory' | 'salaries' | 'salary' | 'rent' | 'utilities' | 'marketing' | 'maintenance' | 'supplies' | 'other' | 'operating';
   subcategory?: string;
   description: string;
   amount: number;
@@ -4379,7 +4728,7 @@ const ExpenseErpSchema = new Schema<IExpenseErp>({
   branchId: { type: String, required: true },
   expenseNumber: { type: String, required: true },
   expenseDate: { type: Date, required: true },
-  category: { type: String, enum: ['inventory', 'salaries', 'rent', 'utilities', 'marketing', 'maintenance', 'supplies', 'other'], required: true },
+  category: { type: String, enum: ['inventory', 'salaries', 'salary', 'rent', 'utilities', 'marketing', 'maintenance', 'supplies', 'other', 'operating'], required: true },
   subcategory: { type: String },
   description: { type: String, required: true },
   amount: { type: Number, required: true },
@@ -4727,7 +5076,7 @@ export const insertExpenseErpSchema = z.object({
   tenantId: z.string(),
   branchId: z.string(),
   expenseDate: z.date(),
-  category: z.enum(['inventory', 'salaries', 'rent', 'utilities', 'marketing', 'maintenance', 'supplies', 'other']),
+  category: z.enum(['inventory', 'salaries', 'salary', 'rent', 'utilities', 'marketing', 'maintenance', 'supplies', 'other', 'operating']),
   subcategory: z.string().optional(),
   description: z.string(),
   amount: z.number(),
@@ -5083,6 +5432,7 @@ export interface IDeliveryOrder extends Document {
   carColor?: string;
   plateNumber?: string;
   saveCarInfo?: number;
+  totalAmount?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -5138,6 +5488,7 @@ const DeliveryOrderSchema = new Schema<IDeliveryOrder>({
   customerFeedback: { type: String },
   proofOfDelivery: { type: String },
   signatureUrl: { type: String },
+  totalAmount: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
@@ -5288,3 +5639,908 @@ GiftCardSchema.index({ tenantId: 1 });
 GiftCardSchema.index({ status: 1 });
 
 export const GiftCardModel = mongoose.models['GiftCard'] || mongoose.model<IGiftCard>("GiftCard", GiftCardSchema);
+
+// ==================== CASHIER SHIFT MANAGEMENT ====================
+
+export interface ICashierShift extends Document {
+  id: string;
+  shiftNumber: string;
+  employeeId: string;
+  employeeName: string;
+  branchId: string;
+  branchName?: string;
+  status: 'open' | 'closed';
+  openedAt: Date;
+  closedAt?: Date;
+  openingCash: number;
+  closingCash?: number;
+  expectedCash?: number;
+  cashDifference?: number;
+  totalSales: number;
+  totalOrders: number;
+  totalCashSales: number;
+  totalCardSales: number;
+  totalDigitalSales: number;
+  totalRefunds: number;
+  totalDiscounts: number;
+  totalCancelledOrders: number;
+  totalVAT: number;
+  netRevenue: number;
+  paymentBreakdown: {
+    cash: number;
+    card: number;
+    loyalty: number;
+  };
+  orderTypeBreakdown: {
+    dine_in: number;
+    takeaway: number;
+    car_pickup: number;
+    delivery: number;
+    online: number;
+  };
+  cashMovements: Array<{
+    type: 'cash_in' | 'cash_out' | 'paid_in' | 'paid_out';
+    amount: number;
+    reason: string;
+    timestamp: Date;
+    performedBy?: string;
+  }>;
+  orderIds: string[];
+  notes?: string;
+  closingNotes?: string;
+  tenantId: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const CashierShiftSchema = new Schema<ICashierShift>({
+  shiftNumber: { type: String, required: true },
+  employeeId: { type: String, required: true },
+  employeeName: { type: String, required: true },
+  branchId: { type: String, default: 'main' },
+  branchName: { type: String, default: '' },
+  status: { type: String, enum: ['open', 'closed'], default: 'open' },
+  openedAt: { type: Date, default: Date.now },
+  closedAt: { type: Date },
+  openingCash: { type: Number, required: true, default: 0 },
+  closingCash: { type: Number },
+  expectedCash: { type: Number, default: 0 },
+  cashDifference: { type: Number, default: 0 },
+  totalSales: { type: Number, default: 0 },
+  totalOrders: { type: Number, default: 0 },
+  totalCashSales: { type: Number, default: 0 },
+  totalCardSales: { type: Number, default: 0 },
+  totalDigitalSales: { type: Number, default: 0 },
+  totalRefunds: { type: Number, default: 0 },
+  totalDiscounts: { type: Number, default: 0 },
+  totalCancelledOrders: { type: Number, default: 0 },
+  totalVAT: { type: Number, default: 0 },
+  netRevenue: { type: Number, default: 0 },
+  paymentBreakdown: {
+    cash: { type: Number, default: 0 },
+    card: { type: Number, default: 0 },
+    loyalty: { type: Number, default: 0 },
+  },
+  orderTypeBreakdown: {
+    dine_in: { type: Number, default: 0 },
+    takeaway: { type: Number, default: 0 },
+    car_pickup: { type: Number, default: 0 },
+    delivery: { type: Number, default: 0 },
+    online: { type: Number, default: 0 },
+  },
+  cashMovements: [{
+    type: { type: String, enum: ['cash_in', 'cash_out', 'paid_in', 'paid_out'] },
+    amount: { type: Number },
+    reason: { type: String },
+    timestamp: { type: Date, default: Date.now },
+    performedBy: { type: String },
+  }],
+  orderIds: [{ type: String }],
+  notes: { type: String },
+  closingNotes: { type: String },
+  tenantId: { type: String, default: 'default' },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+});
+
+CashierShiftSchema.index({ employeeId: 1, status: 1 });
+CashierShiftSchema.index({ branchId: 1, status: 1 });
+CashierShiftSchema.index({ openedAt: -1 });
+CashierShiftSchema.index({ tenantId: 1 });
+
+export const CashierShiftModel = mongoose.models['CashierShift'] || mongoose.model<ICashierShift>("CashierShift", CashierShiftSchema);
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Payroll Snapshot — frozen monthly payroll record
+// ──────────────────────────────────────────────────────────────────────────────
+export interface IPayrollSnapshot extends Document {
+  id: string;
+  tenantId: string;
+  branchId?: string;
+  year: number;
+  month: number; // 1-12
+  status: 'frozen' | 'approved';
+  employees: Array<{
+    employeeId: string;
+    name: string;
+    role: string;
+    baseSalary: number;
+    presentDays: number;
+    absentDays: number;
+    explicitAbsentDays: number;
+    implicitAbsentDays: number;
+    lateDays: number;
+    totalLateMinutes: number;
+    shiftHours: number;
+    totalWorkingDays: number;
+    deductions: number;
+    lateDeductions: number;
+    netSalary: number;
+    attendanceRate: number;
+  }>;
+  totals: {
+    totalBaseSalary: number;
+    totalDeductions: number;
+    totalNetSalary: number;
+    employeeCount: number;
+  };
+  frozenAt: Date;
+  frozenBy: string;
+  approvedAt?: Date;
+  approvedBy?: string;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const PayrollSnapshotSchema = new Schema<IPayrollSnapshot>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, required: true },
+  branchId: { type: String },
+  year: { type: Number, required: true },
+  month: { type: Number, required: true, min: 1, max: 12 },
+  status: { type: String, enum: ['frozen', 'approved'], default: 'frozen', required: true },
+  employees: [{
+    employeeId: { type: String, required: true },
+    name: { type: String },
+    role: { type: String },
+    baseSalary: { type: Number, default: 0 },
+    presentDays: { type: Number, default: 0 },
+    absentDays: { type: Number, default: 0 },
+    explicitAbsentDays: { type: Number, default: 0 },
+    implicitAbsentDays: { type: Number, default: 0 },
+    lateDays: { type: Number, default: 0 },
+    totalLateMinutes: { type: Number, default: 0 },
+    shiftHours: { type: Number, default: 8 },
+    totalWorkingDays: { type: Number, default: 0 },
+    deductions: { type: Number, default: 0 },
+    lateDeductions: { type: Number, default: 0 },
+    netSalary: { type: Number, default: 0 },
+    attendanceRate: { type: Number, default: 0 },
+  }],
+  totals: {
+    totalBaseSalary: { type: Number, default: 0 },
+    totalDeductions: { type: Number, default: 0 },
+    totalNetSalary: { type: Number, default: 0 },
+    employeeCount: { type: Number, default: 0 },
+  },
+  frozenAt: { type: Date, required: true },
+  frozenBy: { type: String, required: true },
+  approvedAt: { type: Date },
+  approvedBy: { type: String },
+  notes: { type: String },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+});
+
+PayrollSnapshotSchema.index({ tenantId: 1, year: 1, month: 1 }, { unique: true });
+PayrollSnapshotSchema.index({ tenantId: 1, status: 1 });
+
+export const PayrollSnapshotModel = mongoose.models['PayrollSnapshot'] || mongoose.model<IPayrollSnapshot>("PayrollSnapshot", PayrollSnapshotSchema);
+
+// ─── Refund / Return Orders ─────────────────────────────────────────────────
+export interface IRefundOrder extends Document {
+  id: string;
+  tenantId: string;
+  originalOrderId?: string;
+  originalOrderNumber?: string | number;
+  branchId?: string;
+  employeeId?: string;
+  employeeName?: string;
+  items: Array<{
+    coffeeItemId: string;
+    nameAr: string;
+    nameEn?: string;
+    quantity: number;
+    unitPrice: number;
+    subtotal: number;
+  }>;
+  refundAmount: number;
+  paymentMethod: 'cash' | 'card' | 'split';
+  cashAmount?: number;
+  cardAmount?: number;
+  reason: string;
+  notes?: string;
+  status: 'completed' | 'cancelled';
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const RefundOrderSchema = new Schema<IRefundOrder>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, required: true },
+  originalOrderId: { type: String },
+  originalOrderNumber: { type: Schema.Types.Mixed },
+  branchId: { type: String },
+  employeeId: { type: String },
+  employeeName: { type: String },
+  items: [{
+    coffeeItemId: { type: String },
+    nameAr: { type: String, required: true },
+    nameEn: { type: String },
+    quantity: { type: Number, required: true, default: 1 },
+    unitPrice: { type: Number, required: true, default: 0 },
+    subtotal: { type: Number, required: true, default: 0 },
+  }],
+  refundAmount: { type: Number, required: true },
+  paymentMethod: { type: String, enum: ['cash', 'card', 'split'], required: true },
+  cashAmount: { type: Number, default: 0 },
+  cardAmount: { type: Number, default: 0 },
+  reason: { type: String, required: true },
+  notes: { type: String },
+  status: { type: String, enum: ['completed', 'cancelled'], default: 'completed' },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+});
+
+RefundOrderSchema.index({ tenantId: 1, createdAt: -1 });
+RefundOrderSchema.index({ tenantId: 1, branchId: 1, createdAt: -1 });
+RefundOrderSchema.index({ originalOrderId: 1 });
+
+export const RefundOrderModel = mongoose.models['RefundOrder'] || mongoose.model<IRefundOrder>('RefundOrder', RefundOrderSchema);
+
+export const insertRefundOrderSchema = z.object({
+  id: z.string().optional(),
+  tenantId: z.string().optional(),
+  originalOrderId: z.string().optional(),
+  originalOrderNumber: z.union([z.string(), z.number()]).optional(),
+  branchId: z.string().optional(),
+  employeeId: z.string().optional(),
+  employeeName: z.string().optional(),
+  items: z.array(z.object({
+    coffeeItemId: z.string(),
+    nameAr: z.string(),
+    nameEn: z.string().optional(),
+    quantity: z.number(),
+    unitPrice: z.number(),
+    subtotal: z.number(),
+  })),
+  refundAmount: z.number(),
+  paymentMethod: z.enum(['cash', 'card', 'split']),
+  cashAmount: z.number().optional(),
+  cardAmount: z.number().optional(),
+  reason: z.string(),
+  notes: z.string().optional(),
+  status: z.enum(['completed', 'cancelled']).optional(),
+});
+
+// ─── AUDIT LOG ─────────────────────────────────────────────────────────────
+export interface IAuditLog extends Document {
+  id: string;
+  tenantId: string;
+  branchId?: string;
+  action: string;
+  entityType: string;
+  entityId?: string;
+  entityLabel?: string;
+  actorType: 'employee' | 'manager' | 'admin' | 'system' | 'customer';
+  actorId?: string;
+  actorName?: string;
+  actorRole?: string;
+  ipAddress?: string;
+  details?: Record<string, any>;
+  before?: any;
+  after?: any;
+  createdAt: Date;
+}
+
+const AuditLogSchema = new Schema<IAuditLog>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, required: true, index: true },
+  branchId: { type: String },
+  action: { type: String, required: true },
+  entityType: { type: String, required: true },
+  entityId: { type: String },
+  entityLabel: { type: String },
+  actorType: { type: String, enum: ['employee', 'manager', 'admin', 'system', 'customer'], default: 'system' },
+  actorId: { type: String },
+  actorName: { type: String },
+  actorRole: { type: String },
+  ipAddress: { type: String },
+  details: { type: Schema.Types.Mixed },
+  before: { type: Schema.Types.Mixed },
+  after: { type: Schema.Types.Mixed },
+  createdAt: { type: Date, default: Date.now },
+});
+
+AuditLogSchema.index({ tenantId: 1, createdAt: -1 });
+AuditLogSchema.index({ tenantId: 1, action: 1 });
+AuditLogSchema.index({ tenantId: 1, entityType: 1 });
+AuditLogSchema.index({ tenantId: 1, actorId: 1 });
+
+export const AuditLogModel = mongoose.models['AuditLog'] || mongoose.model<IAuditLog>('AuditLog', AuditLogSchema);
+
+// ─── Wastage Log ──────────────────────────────────────────────────────────────
+export interface IWastage extends Document {
+  id: string;
+  tenantId?: string;
+  branchId?: string;
+  rawItemId: string;
+  rawItemName: string;
+  rawItemCode?: string;
+  quantity: number;
+  unit: string;
+  reason: 'expired' | 'damaged' | 'spoiled' | 'over_portion' | 'accident' | 'other';
+  reasonNote?: string;
+  unitCost: number;
+  totalCost: number;
+  recordedBy: string;
+  recordedAt: Date;
+}
+
+const WastageSchema = new Schema<IWastage>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, index: true },
+  branchId: { type: String },
+  rawItemId: { type: String, required: true },
+  rawItemName: { type: String, required: true },
+  rawItemCode: { type: String },
+  quantity: { type: Number, required: true },
+  unit: { type: String, required: true },
+  reason: { type: String, enum: ['expired','damaged','spoiled','over_portion','accident','other'], required: true },
+  reasonNote: { type: String },
+  unitCost: { type: Number, default: 0 },
+  totalCost: { type: Number, default: 0 },
+  recordedBy: { type: String, default: 'manager' },
+  recordedAt: { type: Date, default: Date.now },
+});
+WastageSchema.index({ tenantId: 1, recordedAt: -1 });
+WastageSchema.index({ tenantId: 1, rawItemId: 1 });
+export const WastageModel = mongoose.models['Wastage'] || mongoose.model<IWastage>('Wastage', WastageSchema);
+
+// ─── Stocktake Session ────────────────────────────────────────────────────────
+export interface IStocktakeItem {
+  rawItemId: string;
+  rawItemName: string;
+  unit: string;
+  expectedQty: number;
+  actualQty: number;
+  difference: number;
+  adjustmentReason: string;
+  unitCost: number;
+  adjustmentValue: number;
+}
+export interface IStocktakeSession extends Document {
+  id: string;
+  tenantId: string;
+  branchId: string;
+  branchName: string;
+  status: 'draft' | 'submitted' | 'approved' | 'rejected';
+  items: IStocktakeItem[];
+  notes: string;
+  createdBy: string;
+  submittedBy: string;
+  approvedBy: string;
+  rejectionReason: string;
+  createdAt: Date;
+  submittedAt?: Date;
+  approvedAt?: Date;
+  totalAdjustmentValue: number;
+}
+const StocktakeSessionSchema = new Schema<IStocktakeSession>({
+  id: { type: String, default: () => nanoid(12) },
+  tenantId: { type: String, default: 'demo-tenant' },
+  branchId: String,
+  branchName: String,
+  status: { type: String, default: 'draft', enum: ['draft', 'submitted', 'approved', 'rejected'] },
+  items: [{
+    rawItemId: String, rawItemName: String, unit: String,
+    expectedQty: Number, actualQty: Number, difference: Number,
+    adjustmentReason: String, unitCost: Number, adjustmentValue: Number,
+  }],
+  notes: String,
+  createdBy: String,
+  submittedBy: String,
+  approvedBy: String,
+  rejectionReason: String,
+  submittedAt: Date,
+  approvedAt: Date,
+  totalAdjustmentValue: Number,
+}, { timestamps: true });
+StocktakeSessionSchema.index({ tenantId: 1, createdAt: -1 });
+StocktakeSessionSchema.index({ tenantId: 1, branchId: 1, status: 1 });
+export const StocktakeSessionModel = mongoose.models['StocktakeSession'] || mongoose.model<IStocktakeSession>('StocktakeSession', StocktakeSessionSchema);
+
+// ─── Production Batch ─────────────────────────────────────────────────────────
+export interface IProductionIngredient {
+  rawItemId: string;
+  rawItemName: string;
+  quantityUsed: number;
+  unit: string;
+  unitCost: number;
+  totalCost: number;
+}
+
+export interface IProduction extends Document {
+  id: string;
+  tenantId?: string;
+  branchId?: string;
+  batchNumber: string;
+  productName: string;
+  quantity: number;
+  unit: string;
+  ingredients: IProductionIngredient[];
+  totalCost: number;
+  status: 'planned' | 'in_progress' | 'completed' | 'cancelled';
+  plannedDate: Date;
+  completedDate?: Date;
+  notes?: string;
+  producedBy: string;
+}
+
+const ProductionSchema = new Schema<IProduction>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, index: true },
+  branchId: { type: String },
+  batchNumber: { type: String, required: true },
+  productName: { type: String, required: true },
+  quantity: { type: Number, required: true },
+  unit: { type: String, required: true },
+  ingredients: [{ rawItemId: String, rawItemName: String, quantityUsed: Number, unit: String, unitCost: Number, totalCost: Number }],
+  totalCost: { type: Number, default: 0 },
+  status: { type: String, enum: ['planned','in_progress','completed','cancelled'], default: 'planned' },
+  plannedDate: { type: Date, required: true },
+  completedDate: { type: Date },
+  notes: { type: String },
+  producedBy: { type: String, default: 'manager' },
+});
+ProductionSchema.index({ tenantId: 1, plannedDate: -1 });
+ProductionSchema.index({ tenantId: 1, status: 1 });
+export const ProductionModel = mongoose.models['Production'] || mongoose.model<IProduction>('Production', ProductionSchema);
+
+// ─── Employee Tasks ───────────────────────────────────────────────────────────
+export interface IEmployeeTask extends Document {
+  id: string;
+  tenantId?: string;
+  branchId?: string;
+  title: string;
+  description?: string;
+  assignedTo: string;        // employeeId
+  assignedBy: string;
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  dueDate?: Date;
+  completedAt?: Date;
+  category?: 'cleaning' | 'inventory' | 'service' | 'maintenance' | 'training' | 'other';
+  notes?: string;
+  createdAt: Date;
+}
+
+const EmployeeTaskSchema = new Schema<IEmployeeTask>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, index: true },
+  branchId: { type: String },
+  title: { type: String, required: true },
+  description: { type: String },
+  assignedTo: { type: String, required: true, index: true },
+  assignedBy: { type: String, required: true },
+  priority: { type: String, enum: ['low','normal','high','urgent'], default: 'normal' },
+  status: { type: String, enum: ['pending','in_progress','completed','cancelled'], default: 'pending', index: true },
+  dueDate: { type: Date },
+  completedAt: { type: Date },
+  category: { type: String, enum: ['cleaning','inventory','service','maintenance','training','other'], default: 'other' },
+  notes: { type: String },
+  createdAt: { type: Date, default: Date.now },
+});
+EmployeeTaskSchema.index({ tenantId: 1, status: 1, dueDate: 1 });
+export const EmployeeTaskModel = mongoose.models['EmployeeTask'] || mongoose.model<IEmployeeTask>('EmployeeTask', EmployeeTaskSchema);
+
+// ─── Employee Violations ──────────────────────────────────────────────────────
+export interface IEmployeeViolation extends Document {
+  id: string;
+  tenantId?: string;
+  branchId?: string;
+  employeeId: string;
+  employeeName: string;
+  type: 'tardiness' | 'absence' | 'misconduct' | 'cash_shortage' | 'customer_complaint' | 'policy_breach' | 'other';
+  severity: 'minor' | 'moderate' | 'major' | 'critical';
+  description: string;
+  penaltyAmount?: number;       // SAR deduction from salary
+  penaltyPoints?: number;       // performance points deducted
+  reportedBy: string;
+  status: 'recorded' | 'acknowledged' | 'resolved' | 'disputed';
+  resolutionNote?: string;
+  occurredAt: Date;
+  createdAt: Date;
+}
+
+const EmployeeViolationSchema = new Schema<IEmployeeViolation>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, index: true },
+  branchId: { type: String },
+  employeeId: { type: String, required: true, index: true },
+  employeeName: { type: String, required: true },
+  type: { type: String, enum: ['tardiness','absence','misconduct','cash_shortage','customer_complaint','policy_breach','other'], required: true },
+  severity: { type: String, enum: ['minor','moderate','major','critical'], default: 'minor' },
+  description: { type: String, required: true },
+  penaltyAmount: { type: Number, default: 0 },
+  penaltyPoints: { type: Number, default: 0 },
+  reportedBy: { type: String, default: 'manager' },
+  status: { type: String, enum: ['recorded','acknowledged','resolved','disputed'], default: 'recorded' },
+  resolutionNote: { type: String },
+  occurredAt: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now },
+});
+EmployeeViolationSchema.index({ tenantId: 1, employeeId: 1, occurredAt: -1 });
+export const EmployeeViolationModel = mongoose.models['EmployeeViolation'] || mongoose.model<IEmployeeViolation>('EmployeeViolation', EmployeeViolationSchema);
+
+// ─── Employee Breaks (during shift) ──────────────────────────────────────────
+export interface IEmployeeBreak extends Document {
+  id: string;
+  tenantId?: string;
+  attendanceId?: string;
+  employeeId: string;
+  employeeName: string;
+  branchId?: string;
+  type: 'meal' | 'rest' | 'prayer' | 'other';
+  startedAt: Date;
+  endedAt?: Date;
+  durationMinutes?: number;
+  notes?: string;
+}
+
+const EmployeeBreakSchema = new Schema<IEmployeeBreak>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, index: true },
+  attendanceId: { type: String },
+  employeeId: { type: String, required: true, index: true },
+  employeeName: { type: String, required: true },
+  branchId: { type: String },
+  type: { type: String, enum: ['meal','rest','prayer','other'], default: 'rest' },
+  startedAt: { type: Date, default: Date.now },
+  endedAt: { type: Date },
+  durationMinutes: { type: Number },
+  notes: { type: String },
+});
+EmployeeBreakSchema.index({ tenantId: 1, employeeId: 1, startedAt: -1 });
+export const EmployeeBreakModel = mongoose.models['EmployeeBreak'] || mongoose.model<IEmployeeBreak>('EmployeeBreak', EmployeeBreakSchema);
+
+// ════════════════════════════════════════════════════════════════════════════
+//  RELIABILITY SYSTEM (Phase 5) — Crash Recovery, Queue, Monitoring
+// ════════════════════════════════════════════════════════════════════════════
+
+// ─── CRASH RECOVERY: Saved POS Sessions ──────────────────────────────────
+export interface ICrashSession extends Document {
+  id: string;
+  tenantId: string;
+  branchId?: string;
+  ownerId: string;          // employee id
+  ownerName?: string;
+  deviceId?: string;
+  page: string;             // pos / cashier / kiosk / kitchen
+  sessionData: any;         // cart, customer info, payment state, etc
+  recovered: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+const CrashSessionSchema = new Schema<ICrashSession>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, required: true, index: true },
+  branchId: String,
+  ownerId: { type: String, required: true, index: true },
+  ownerName: String,
+  deviceId: String,
+  page: { type: String, required: true },
+  sessionData: Schema.Types.Mixed,
+  recovered: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+});
+CrashSessionSchema.index({ tenantId: 1, ownerId: 1, recovered: 1, updatedAt: -1 });
+export const CrashSessionModel = mongoose.models['CrashSession'] || mongoose.model<ICrashSession>('CrashSession', CrashSessionSchema);
+
+// ─── QUEUE JOBS (Print, Sync, Notification, Kitchen) ────────────────────
+export interface IQueueJob extends Document {
+  id: string;
+  tenantId: string;
+  branchId?: string;
+  type: 'print' | 'sync' | 'notification' | 'kitchen' | 'webhook';
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'retrying';
+  priority: number;        // 1=high,5=low
+  payload: any;
+  attempts: number;
+  maxAttempts: number;
+  lastError?: string;
+  deviceId?: string;
+  targetEntity?: string;   // orderId, printerId etc.
+  durationMs?: number;
+  createdAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
+}
+const QueueJobSchema = new Schema<IQueueJob>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, required: true, index: true },
+  branchId: String,
+  type: { type: String, required: true, enum: ['print', 'sync', 'notification', 'kitchen', 'webhook'], index: true },
+  status: { type: String, default: 'pending', enum: ['pending', 'processing', 'completed', 'failed', 'retrying'], index: true },
+  priority: { type: Number, default: 3 },
+  payload: Schema.Types.Mixed,
+  attempts: { type: Number, default: 0 },
+  maxAttempts: { type: Number, default: 3 },
+  lastError: String,
+  deviceId: String,
+  targetEntity: String,
+  durationMs: Number,
+  createdAt: { type: Date, default: Date.now, index: true },
+  startedAt: Date,
+  completedAt: Date,
+});
+QueueJobSchema.index({ tenantId: 1, type: 1, status: 1, createdAt: -1 });
+export const QueueJobModel = mongoose.models['QueueJob'] || mongoose.model<IQueueJob>('QueueJob', QueueJobSchema);
+
+// ─── API METRICS (Performance & Error monitoring) ───────────────────────
+export interface IApiMetric extends Document {
+  id: string;
+  tenantId?: string;
+  method: string;
+  path: string;             // route template
+  statusCode: number;
+  durationMs: number;
+  isError: boolean;
+  errorMessage?: string;
+  userId?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  deviceId?: string;
+  createdAt: Date;
+}
+const ApiMetricSchema = new Schema<IApiMetric>({
+  id: { type: String, required: true, unique: true },
+  tenantId: String,
+  method: { type: String, required: true },
+  path: { type: String, required: true, index: true },
+  statusCode: { type: Number, required: true },
+  durationMs: { type: Number, required: true },
+  isError: { type: Boolean, default: false, index: true },
+  errorMessage: String,
+  userId: String,
+  ipAddress: String,
+  userAgent: String,
+  deviceId: String,
+  createdAt: { type: Date, default: Date.now },
+});
+ApiMetricSchema.index({ path: 1, createdAt: -1 });
+ApiMetricSchema.index({ isError: 1, createdAt: -1 });
+// TTL: auto-delete metrics older than 7 days. Also serves as the ascending createdAt index.
+ApiMetricSchema.index({ createdAt: 1 }, { expireAfterSeconds: 7 * 24 * 60 * 60 });
+export const ApiMetricModel = mongoose.models['ApiMetric'] || mongoose.model<IApiMetric>('ApiMetric', ApiMetricSchema);
+
+// ════════════════ PHASE 7 — ECOSYSTEM (Open APIs, Webhooks, Integrations) ════════════════
+
+export interface IApiKey extends Document {
+  id: string;
+  tenantId?: string;
+  name: string;
+  keyHash: string;       // sha256 hash of the secret
+  keyPrefix: string;     // first 12 chars shown to user
+  scopes: string[];      // e.g. ["orders:read","menu:read","inventory:write","webhooks:manage"]
+  environment: 'live' | 'test';
+  rateLimit: number;     // requests per minute
+  isActive: boolean;
+  lastUsedAt?: Date;
+  expiresAt?: Date;
+  createdBy?: string;
+  createdAt: Date;
+}
+const ApiKeySchema = new Schema<IApiKey>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, index: true },
+  name: { type: String, required: true },
+  keyHash: { type: String, required: true, unique: true, index: true },
+  keyPrefix: { type: String, required: true },
+  scopes: [{ type: String }],
+  environment: { type: String, enum: ['live', 'test'], default: 'live' },
+  rateLimit: { type: Number, default: 100 },
+  isActive: { type: Boolean, default: true },
+  lastUsedAt: Date,
+  expiresAt: Date,
+  createdBy: String,
+  createdAt: { type: Date, default: Date.now, index: true },
+});
+export const ApiKeyModel = mongoose.models['ApiKey'] || mongoose.model<IApiKey>('ApiKey', ApiKeySchema);
+
+export interface IWebhook extends Document {
+  id: string;
+  tenantId?: string;
+  name: string;
+  url: string;
+  secret: string;        // shared secret for HMAC signing
+  events: string[];      // e.g. ["order.created","order.completed","inventory.low_stock"]
+  isActive: boolean;
+  failureCount: number;
+  lastTriggeredAt?: Date;
+  lastError?: string;
+  createdAt: Date;
+}
+const WebhookSchema = new Schema<IWebhook>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, index: true },
+  name: { type: String, required: true },
+  url: { type: String, required: true },
+  secret: { type: String, required: true },
+  events: [{ type: String }],
+  isActive: { type: Boolean, default: true },
+  failureCount: { type: Number, default: 0 },
+  lastTriggeredAt: Date,
+  lastError: String,
+  createdAt: { type: Date, default: Date.now },
+});
+export const WebhookModel = mongoose.models['Webhook'] || mongoose.model<IWebhook>('Webhook', WebhookSchema);
+
+export interface IWebhookDelivery extends Document {
+  id: string;
+  webhookId: string;
+  tenantId?: string;
+  event: string;
+  payload: any;
+  url: string;
+  statusCode?: number;
+  responseBody?: string;
+  durationMs?: number;
+  success: boolean;
+  attemptNumber: number;
+  errorMessage?: string;
+  createdAt: Date;
+}
+const WebhookDeliverySchema = new Schema<IWebhookDelivery>({
+  id: { type: String, required: true, unique: true },
+  webhookId: { type: String, required: true, index: true },
+  tenantId: { type: String, index: true },
+  event: { type: String, required: true, index: true },
+  payload: { type: Schema.Types.Mixed },
+  url: { type: String, required: true },
+  statusCode: Number,
+  responseBody: String,
+  durationMs: Number,
+  success: { type: Boolean, default: false, index: true },
+  attemptNumber: { type: Number, default: 1 },
+  errorMessage: String,
+  createdAt: { type: Date, default: Date.now },
+});
+// TTL: auto-delete webhook delivery logs older than 30 days. Also serves as the ascending createdAt index.
+WebhookDeliverySchema.index({ createdAt: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 });
+export const WebhookDeliveryModel = mongoose.models['WebhookDelivery'] || mongoose.model<IWebhookDelivery>('WebhookDelivery', WebhookDeliverySchema);
+
+export interface IEcosystemIntegration extends Document {
+  id: string;
+  tenantId?: string;
+  type: 'shopify' | 'tiktok_shop' | 'whatsapp' | 'zoho' | 'qoyod' | 'daftra' | 'sap' | 'oracle_netsuite' | 'payment_device' | 'foodics' | 'jahez' | 'hungerstation' | 'mrsool' | 'salla' | 'zid' | 'generic_webhook';
+  name: string;
+  category: 'erp' | 'accounting' | 'delivery' | 'loyalty' | 'messaging' | 'ecommerce' | 'pos' | 'payment_device';
+  config: Record<string, any>;  // API keys, store URL, phone IDs, etc.
+  status: 'connected' | 'disconnected' | 'error' | 'pending';
+  lastSyncAt?: Date;
+  lastError?: string;
+  syncStats?: { ordersIn?: number; ordersOut?: number; productsOut?: number; lastSync?: Date };
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+const EcosystemIntegrationSchema = new Schema<IEcosystemIntegration>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, index: true },
+  type: { type: String, required: true },
+  name: { type: String, required: true },
+  category: { type: String, required: true },
+  config: { type: Schema.Types.Mixed, default: {} },
+  status: { type: String, enum: ['connected', 'disconnected', 'error', 'pending'], default: 'pending' },
+  lastSyncAt: Date,
+  lastError: String,
+  syncStats: { type: Schema.Types.Mixed },
+  isActive: { type: Boolean, default: true },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+});
+export const EcosystemIntegrationModel = mongoose.models['EcosystemIntegration'] || mongoose.model<IEcosystemIntegration>('EcosystemIntegration', EcosystemIntegrationSchema);
+
+// ─── Automation Rules ──────────────────────────────────────────────────────────
+export interface IAutomationRule extends Document {
+  id: string;
+  tenantId?: string;
+  name: string;
+  trigger: string;
+  conditions: { field: string; operator: string; value: string }[];
+  actions: { id: string; type: string; label: string; config: Record<string, any> }[];
+  isActive: boolean;
+  runCount: number;
+  lastRunAt?: Date;
+  lastError?: string;
+  createdAt: Date;
+}
+const AutomationRuleSchema = new Schema<IAutomationRule>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, index: true },
+  name: { type: String, required: true },
+  trigger: { type: String, required: true },
+  conditions: [{ field: String, operator: String, value: String }],
+  actions: [{ id: String, type: String, label: String, config: Schema.Types.Mixed }],
+  isActive: { type: Boolean, default: true },
+  runCount: { type: Number, default: 0 },
+  lastRunAt: Date,
+  lastError: String,
+  createdAt: { type: Date, default: Date.now },
+});
+export const AutomationRuleModel = mongoose.models['AutomationRule'] || mongoose.model<IAutomationRule>('AutomationRule', AutomationRuleSchema);
+
+// ─── Event Log ─────────────────────────────────────────────────────────────────
+export interface IEventLog extends Document {
+  id: string;
+  tenantId?: string;
+  event: string;
+  data: Record<string, any>;
+  webhooksRan: number;
+  automationsRan: number;
+  createdAt: Date;
+}
+const EventLogSchema = new Schema<IEventLog>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, index: true },
+  event: { type: String, required: true },
+  data: { type: Schema.Types.Mixed, default: {} },
+  webhooksRan: { type: Number, default: 0 },
+  automationsRan: { type: Number, default: 0 },
+  createdAt: { type: Date, default: Date.now, index: true },
+});
+export const EventLogModel = mongoose.models['EventLog'] || mongoose.model<IEventLog>('EventLog', EventLogSchema);
+
+// ─── Payment Log ────────────────────────────────────────────────────────────────
+export interface IPaymentLog extends Document {
+  id: string;
+  tenantId?: string;
+  event: 'init' | 'verify' | 'callback' | 'webhook' | 'failed';
+  provider: string;
+  amount?: number;
+  currency?: string;
+  status: 'pending' | 'success' | 'failed' | 'unknown';
+  sessionId?: string;
+  externalId?: string;
+  orderId?: string;
+  orderNumber?: string;
+  customerPhone?: string;
+  customerEmail?: string;
+  errorMessage?: string;
+  rawData?: Record<string, any>;
+  ipAddress?: string;
+  createdAt: Date;
+}
+const PaymentLogSchema = new Schema<IPaymentLog>({
+  id: { type: String, required: true, unique: true },
+  tenantId: { type: String, index: true },
+  event: { type: String, required: true },
+  provider: { type: String, required: true, default: 'unknown' },
+  amount: Number,
+  currency: { type: String, default: 'SAR' },
+  status: { type: String, default: 'pending' },
+  sessionId: String,
+  externalId: String,
+  orderId: String,
+  orderNumber: String,
+  customerPhone: String,
+  customerEmail: String,
+  errorMessage: String,
+  rawData: { type: Schema.Types.Mixed },
+  ipAddress: String,
+  createdAt: { type: Date, default: Date.now, index: true },
+});
+export const PaymentLogModel = mongoose.models['PaymentLog'] || mongoose.model<IPaymentLog>('PaymentLog', PaymentLogSchema);

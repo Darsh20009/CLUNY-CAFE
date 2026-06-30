@@ -29,7 +29,7 @@ const getCoffeeImage = (coffeeId: string): string => {
  "coffee-dessert-cup": "/attached_assets/Screenshot 2025-10-05 012338_1759666320915.png"
  };
  
- return imageMap[coffeeId] || "/images/default-coffee.png";
+ return imageMap[coffeeId] || "/images/brand-logo.png";
 };
 
 // Coffee categories configuration

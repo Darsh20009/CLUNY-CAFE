@@ -1,44 +1,39 @@
 import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import SarIcon from "@/components/sar-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import {
-  Gift, QrCode, ChevronRight, TrendingUp,
-  ArrowDownRight, ArrowUpRight, Clock, SendHorizonal, Loader2
-} from "lucide-react";
+import { ChevronRight, ArrowLeftRight, Star, Wallet } from "lucide-react";
+import ClunyCard from "@/components/ClunyCard";
 import { useCustomer } from "@/contexts/CustomerContext";
 import { useLocation } from "wouter";
 import { CustomerLayout } from "@/components/layouts/CustomerLayout";
 import QRCodeLib from "qrcode";
-import LoyaltyCardComponent from "@/components/loyalty-card";
+import { useTranslate } from "@/lib/useTranslate";
+import { useTranslation } from "react-i18next";
+import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-
-function isAppleDevice() {
-  return /iPad|iPhone|iPod|Mac/.test(navigator.userAgent);
-}
+import clunyLogo from "@assets/cluny-logo-customer.png";
+import { isCapacitorNative, getServerUrl } from "@/lib/server-url";
 
 export default function MyCardPage() {
   const { customer } = useCustomer();
   const [, setLocation] = useLocation();
+  const qc = useQueryClient();
   const { toast } = useToast();
   const [qrCodeUrl, setQrCodeUrl] = useState<string>("");
-  const [showQr, setShowQr] = useState(false);
+  const [addingToWallet, setAddingToWallet] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
   const [transferPhone, setTransferPhone] = useState("");
   const [transferPoints, setTransferPoints] = useState("");
-  const [walletLoading, setWalletLoading] = useState(false);
-  const [appleDevice] = useState(() => isAppleDevice());
+  const [transferPin, setTransferPin] = useState("");
+  const tc = useTranslate();
+  const { i18n } = useTranslation();
+  const dir = i18n.language === "en" ? "ltr" : "rtl";
 
   const { data: loyaltyCards = [], isLoading: loadingCards } = useQuery<any[]>({
     queryKey: ["/api/customer/loyalty-cards"],
-    enabled: !!customer,
-  });
-
-  const { data: transactions = [], isLoading: loadingTx } = useQuery<any[]>({
-    queryKey: ["/api/customer/loyalty-transactions"],
     enabled: !!customer,
   });
 
@@ -48,386 +43,350 @@ export default function MyCardPage() {
 
   const card = loyaltyCards[0];
   const points = card?.points ?? 0;
-  const pointsValueInSar: number = settings?.pointsValueInSar ?? 0.02;
-  const pointsPerSar: number = settings?.pointsPerSar ?? 50;
-  const minPointsForRedemption: number = settings?.minPointsForRedemption ?? 100;
-  const pointsEarnedPerItem: number = settings?.pointsEarnedPerItem ?? 10;
-  const sarValue = (points * pointsValueInSar).toFixed(2);
+  const pointsValueInSar = settings?.pointsValueInSar ?? 0.02;
+  const sarValueNum = parseFloat((points * pointsValueInSar).toFixed(2));
 
   useEffect(() => {
     const qrData = card?.qrToken || card?.cardNumber;
     if (!qrData) return;
     QRCodeLib.toDataURL(qrData, {
-      width: 220, margin: 2,
-      color: { dark: "#1a3a2a", light: "#ffffff" }
-    }).then(setQrCodeUrl).catch(console.error);
+      width: 260,
+      margin: 2,
+      color: { dark: "#111111", light: "#ffffff" },
+    })
+      .then(setQrCodeUrl)
+      .catch(console.error);
   }, [card?.qrToken, card?.cardNumber]);
 
   const transferMutation = useMutation({
-    mutationFn: async (data: { recipientPhone: string; points: number }) => {
-      const res = await apiRequest("POST", "/api/customer/transfer-points", data);
-      return res.json();
-    },
-    onSuccess: (data) => {
+    mutationFn: async (data: { recipientPhone: string; points: number; pin?: string }) =>
+      apiRequest("POST", "/api/customer/transfer-points", data),
+    onSuccess: () => {
       toast({
-        title: "تم تحويل النقاط",
-        description: `تم تحويل ${transferPoints} نقطة إلى ${data.recipientName || transferPhone} بنجاح`,
+        title: tc("✅ تم التحويل بنجاح", "✅ Transfer successful"),
+        description: tc(`تم تحويل ${transferPoints} نقطة`, `Transferred ${transferPoints} points`),
       });
-      setShowTransfer(false);
+      qc.invalidateQueries({ queryKey: ["/api/customer/loyalty-cards"] });
+      qc.invalidateQueries({ queryKey: ["/api/customer/loyalty-transactions"] });
       setTransferPhone("");
       setTransferPoints("");
-      queryClient.invalidateQueries({ queryKey: ["/api/customer/loyalty-cards"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/customer/loyalty-transactions"] });
+      setTransferPin("");
+      setShowTransfer(false);
     },
     onError: (err: any) => {
-      const msg = err?.message || "فشل في تحويل النقاط";
-      toast({ title: "خطأ", description: msg, variant: "destructive" });
+      const msg = err?.message || tc("فشل التحويل", "Transfer failed");
+      toast({ title: tc("خطأ", "Error"), description: msg, variant: "destructive" });
     },
   });
 
-  const handleAddToWallet = async () => {
-    try {
-      setWalletLoading(true);
-
-      if (!customer?.phone) {
-        throw new Error("يرجى تسجيل الدخول أولاً");
-      }
-
-      const phone = customer.phone.replace(/\D/g, '').slice(-9);
-      const res = await fetch(`/api/customer/apple-wallet-pass?phone=${encodeURIComponent(phone)}`);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error || "فشل إنشاء البطاقة");
-      }
-      const blob = await res.blob();
-      if (blob.size < 100) {
-        throw new Error("البطاقة غير صالحة، يرجى المحاولة مرة أخرى");
-      }
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "cluny-loyalty.pkpass";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast({
-        title: "✅ تمت الإضافة",
-        description: "تم تحميل البطاقة — افتح الملف لإضافتها إلى Apple Wallet",
-      });
-    } catch (err: any) {
-      toast({ title: "خطأ", description: err?.message || "فشل إنشاء بطاقة المحفظة", variant: "destructive" });
-    } finally {
-      setWalletLoading(false);
-    }
-  };
-
   const handleTransfer = () => {
     const pts = parseInt(transferPoints);
-    if (!transferPhone || isNaN(pts) || pts <= 0) {
-      toast({ title: "بيانات ناقصة", description: "أدخل رقم الجوال وعدد النقاط", variant: "destructive" });
+    if (!transferPhone || !pts || pts <= 0) {
+      toast({ title: tc("خطأ", "Error"), description: tc("أدخل رقم الجوال والنقاط", "Enter phone and points"), variant: "destructive" });
       return;
     }
     if (pts > points) {
-      toast({ title: "نقاط غير كافية", description: `رصيدك الحالي ${points} نقطة فقط`, variant: "destructive" });
+      toast({ title: tc("خطأ", "Error"), description: tc("النقاط غير كافية", "Insufficient points"), variant: "destructive" });
       return;
     }
-    if (pts < 1) {
-      toast({ title: "عدد غير صالح", description: "أدخل عدداً موجباً من النقاط", variant: "destructive" });
-      return;
-    }
-    transferMutation.mutate({ recipientPhone: transferPhone, points: pts });
+    transferMutation.mutate({ recipientPhone: transferPhone, points: pts, pin: transferPin || undefined });
   };
 
+  const isIOS =
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+  const handleAddToAppleWallet = async () => {
+    setAddingToWallet(true);
+    try {
+      // On Capacitor (native iOS app): open pass URL in SFSafariViewController.
+      // Safari handles .pkpass natively and shows "Add to Apple Wallet" automatically.
+      if (isCapacitorNative()) {
+        const { Browser } = await import(/* @vite-ignore */ "@capacitor/browser");
+        const passUrl = `${getServerUrl()}/api/wallet/apple-pass`;
+        toast({
+          title: tc("⏳ جارٍ الفتح...", "⏳ Opening…"),
+          description: tc("سيظهر زر 'إضافة إلى Apple Wallet' بعد لحظة", "The 'Add to Apple Wallet' button will appear shortly"),
+        });
+        await Browser.open({ url: passUrl, presentationStyle: "popover", toolbarColor: "#0d0d0d" });
+        return;
+      }
+
+      // On regular iOS Safari: direct navigation is enough — Safari handles .pkpass
+      if (isIOS) {
+        toast({
+          title: tc("⏳ جارٍ التحضير...", "⏳ Preparing…"),
+          description: tc("سيفتح Apple Wallet خلال ثوانٍ", "Opening Apple Wallet shortly…"),
+        });
+        await new Promise((r) => setTimeout(r, 350));
+        window.location.href = "/api/wallet/apple-pass";
+        return;
+      }
+
+      // On Android / desktop: download .pkpass file
+      const resp = await fetch("/api/wallet/apple-pass", { method: "GET", credentials: "include" });
+      const contentType = resp.headers.get("content-type") || "";
+      if (!resp.ok || !contentType.includes("pkpass")) {
+        let errMsg = tc("فشل إنشاء البطاقة", "Failed to generate pass");
+        try { const err = await resp.json(); errMsg = err?.error || errMsg; } catch (_) {}
+        toast({ title: tc("خطأ", "Error"), description: errMsg, variant: "destructive" });
+        return;
+      }
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(new Blob([blob], { type: "application/vnd.apple.pkpass" }));
+      const a = document.createElement("a");
+      a.href = blobUrl; a.download = "cluny-loyalty.pkpass"; a.style.display = "none";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 8000);
+      toast({
+        title: tc("✅ تم التحميل", "✅ Downloaded"),
+        description: tc("افتح ملف .pkpass لإضافته لـ Apple Wallet", "Open .pkpass to add to Apple Wallet"),
+      });
+    } catch (e: any) {
+      toast({
+        title: tc("خطأ", "Error"),
+        description: e?.message || tc("تعذّر الوصول للخادم", "Could not reach server"),
+        variant: "destructive",
+      });
+    } finally {
+      setAddingToWallet(false);
+    }
+  };
+
+  /* ── Not logged in ── */
   if (!customer) {
     return (
       <CustomerLayout>
-        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 p-8" dir="rtl">
-          <Gift className="w-16 h-16 text-primary opacity-40" />
-          <p className="text-lg font-bold text-center">يجب تسجيل الدخول لعرض بطاقة الولاء</p>
-          <Button onClick={() => setLocation("/auth")} data-testid="button-login">تسجيل الدخول</Button>
+        <div className="flex flex-col items-center justify-center min-h-screen gap-5 p-8" style={{ background: "#0a0a0a" }} dir={dir}>
+          <div style={{ width: 72, height: 72, borderRadius: "50%", background: "rgba(200,165,58,0.1)", border: "1px solid rgba(200,165,58,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Star style={{ color: "#C8A53A", width: 32, height: 32 }} />
+          </div>
+          <div className="text-center">
+            <p className="text-white font-bold text-lg mb-1">{tc("بطاقة الولاء", "Loyalty Card")}</p>
+            <p className="text-white/40 text-sm">{tc("سجّل دخولك للوصول إلى بطاقتك", "Log in to access your card")}</p>
+          </div>
+          <Button onClick={() => setLocation("/auth")} data-testid="button-login" style={{ background: "#C8A53A", color: "#111", fontWeight: 700, height: 48, paddingInline: 32 }}>
+            {tc("تسجيل الدخول", "Log In")}
+          </Button>
         </div>
       </CustomerLayout>
     );
   }
 
+  /* ── Loading ── */
   if (loadingCards) {
     return (
       <CustomerLayout>
-        <div className="flex items-center justify-center min-h-[60vh]" dir="rtl">
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm text-muted-foreground">جاري تحميل بطاقتك...</p>
-          </div>
+        <div className="flex items-center justify-center min-h-screen" style={{ background: "#0a0a0a" }}>
+          <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: "#C8A53A", borderTopColor: "transparent" }} />
         </div>
       </CustomerLayout>
     );
   }
 
+  /* ── Main card view ── */
   return (
     <CustomerLayout>
-      <div className="container max-w-lg mx-auto px-4 py-6 pb-28 space-y-5" dir="rtl">
+      <div className="min-h-screen flex flex-col pb-28" style={{ background: "#0a0a0a" }} dir={dir}>
 
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => setLocation("/")} data-testid="button-back">
+        {/* ── Top bar ── */}
+        <div className="flex items-center justify-between px-4 pt-4 pb-2">
+          <Button variant="ghost" size="icon" onClick={() => setLocation("/")} data-testid="button-back" style={{ color: "rgba(255,255,255,0.4)" }}>
             <ChevronRight className="w-5 h-5" />
           </Button>
-          <h1 className="text-2xl font-black text-primary">بطاقة كلوني</h1>
+          <p style={{ color: "rgba(255,255,255,0.35)", fontSize: 13, fontWeight: 600, letterSpacing: "0.08em" }}>
+            {tc("بطاقة الولاء", "Loyalty Card")}
+          </p>
+          <img src={clunyLogo} alt="CLUNY" style={{ width: 36, height: 36, borderRadius: 10, objectFit: "cover" }} />
         </div>
 
-        {card ? (
-          <LoyaltyCardComponent card={card} showActions={true} />
-        ) : (
-          <div className="rounded-2xl bg-muted border-2 border-dashed border-muted-foreground/20 p-8 text-center space-y-2">
-            <Gift className="w-10 h-10 mx-auto text-muted-foreground opacity-30" />
-            <p className="text-sm text-muted-foreground">لا توجد بطاقة مرتبطة بحسابك بعد</p>
-          </div>
-        )}
+        {/* ── Hero: greeting + points ── */}
+        <div className="px-5 pt-4 pb-6">
+          {/* Customer name */}
+          <p style={{ color: "rgba(200,165,58,0.6)", fontSize: 11, fontWeight: 600, letterSpacing: "0.15em", margin: "0 0 4px", textTransform: "uppercase" }}>
+            {tc("مرحباً،", "Welcome,")}
+          </p>
+          <p style={{ color: "#fff", fontSize: 26, fontWeight: 800, margin: "0 0 20px", lineHeight: 1.1 }} data-testid="text-customer-name">
+            {customer?.name || tc("عزيزي العميل", "Valued Customer")}
+          </p>
 
-        {/* Action buttons row */}
-        {card && (
-          <div className="grid grid-cols-2 gap-3">
-            {qrCodeUrl && (
-              <Button
-                variant="outline"
-                className="gap-2"
-                onClick={() => setShowQr(true)}
-                data-testid="button-show-qr"
-              >
-                <QrCode className="w-4 h-4" />
-                رمز QR
-              </Button>
-            )}
-            <Button
-              variant="outline"
-              className="gap-2"
-              onClick={() => setShowTransfer(true)}
-              data-testid="button-transfer-points"
-            >
-              <SendHorizonal className="w-4 h-4" />
-              تحويل النقاط
-            </Button>
-          </div>
-        )}
-
-        {/* Apple Wallet button - shown on all devices for testing, production: appleDevice && card */}
-        {card && (
-          <button
-            onClick={handleAddToWallet}
-            disabled={walletLoading}
-            data-testid="button-add-to-wallet"
-            className="w-full flex items-center justify-center gap-2 rounded-xl overflow-hidden disabled:opacity-60"
-            style={{ background: "none", border: "none", padding: 0, cursor: walletLoading ? "not-allowed" : "pointer" }}
-          >
-            {walletLoading ? (
-              <div className="flex items-center justify-center gap-2 bg-black text-white rounded-xl px-5 py-3 w-full">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="text-sm font-medium">جاري الإنشاء...</span>
-              </div>
-            ) : (
-              <img
-                src="https://apple.com/v/apple-pay/q/images/overview/apple_wallet_badge__fv99ypiqzuau_large.png"
-                alt="Add to Apple Wallet"
-                className="h-12 object-contain"
-                onError={(e) => {
-                  const target = e.currentTarget;
-                  target.style.display = 'none';
-                  const fallback = target.nextElementSibling as HTMLElement;
-                  if (fallback) fallback.style.display = 'flex';
-                }}
-              />
-            )}
-            <div
-              className="hidden items-center justify-center gap-2 bg-black text-white rounded-xl px-5 py-3 w-full"
-            >
-              <svg viewBox="0 0 32 32" className="w-5 h-5 fill-white"><path d="M20.5 10.4c.8-1 1.4-2.4 1.2-3.8-1.2.1-2.7.8-3.6 1.8-.8.9-1.5 2.4-1.3 3.7 1.4.1 2.8-.6 3.7-1.7zm1.2 2.1c-2.1-.1-3.9 1.2-4.9 1.2-1 0-2.6-1.1-4.3-1.1-2.2 0-4.2 1.3-5.4 3.3-2.3 4-.6 10 1.6 13.2 1.1 1.6 2.4 3.3 4.1 3.2 1.6-.1 2.2-1 4.2-1s2.5.9 4.2.9c1.8 0 2.9-1.6 4-3.2 1.2-1.8 1.7-3.6 1.8-3.7-.1 0-3.4-1.3-3.4-5.1 0-3.2 2.6-4.7 2.7-4.8-1.5-2.1-3.8-2.4-4.6-2.9z"/></svg>
-              <span className="text-sm font-semibold">Add to Apple Wallet</span>
+          {/* Points stat cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div style={{ background: "rgba(200,165,58,0.07)", border: "1px solid rgba(200,165,58,0.15)", borderRadius: 16, padding: "14px 16px" }}>
+              <p style={{ color: "rgba(200,165,58,0.55)", fontSize: 10, letterSpacing: "0.2em", margin: "0 0 6px", textTransform: "uppercase" }}>
+                {tc("نقاطي", "My Points")}
+              </p>
+              <p style={{ color: "#C8A53A", fontSize: 30, fontWeight: 900, margin: 0, lineHeight: 1, textShadow: "0 0 20px rgba(200,165,58,0.4)" }} data-testid="text-hero-points">
+                {points.toLocaleString()}
+              </p>
             </div>
-          </button>
-        )}
-
-        {/* Points progress toward min redemption */}
-        {card && points < minPointsForRedemption && (
-          <div className="bg-card rounded-2xl border shadow-sm p-5 space-y-3" data-testid="redemption-progress">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-primary" />
-              <span className="font-bold">التقدم نحو أول استرداد</span>
-            </div>
-            <div className="space-y-2">
-              <div className="w-full bg-muted rounded-full h-3 overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-blue-400 to-blue-600 transition-all"
-                  style={{ width: `${Math.min(100, Math.round((points / minPointsForRedemption) * 100))}%` }}
-                  data-testid="redemption-progress-bar"
-                />
-              </div>
-              <p className="text-xs text-muted-foreground text-center">
-                {points} / {minPointsForRedemption} نقطة — تحتاج {minPointsForRedemption - points} نقطة إضافية للاسترداد
+            <div style={{ background: "rgba(45,155,110,0.07)", border: "1px solid rgba(45,155,110,0.15)", borderRadius: 16, padding: "14px 16px" }}>
+              <p style={{ color: "rgba(45,155,110,0.6)", fontSize: 10, letterSpacing: "0.2em", margin: "0 0 6px", textTransform: "uppercase" }}>
+                {tc("القيمة", "Value")}
+              </p>
+              <p style={{ color: "#fff", fontSize: 22, fontWeight: 800, margin: 0, lineHeight: 1 }}>
+                {sarValueNum.toFixed(2)}
+                <SarIcon size={12} className="opacity-45 invert" />
               </p>
             </div>
           </div>
-        )}
-
-        {/* How to earn */}
-        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-2xl p-4" data-testid="how-to-earn">
-          <div className="flex items-center gap-2 mb-3">
-            <Gift className="w-5 h-5 text-amber-600" />
-            <span className="font-bold text-amber-900 dark:text-amber-200">كيفية كسب النقاط واستخدامها</span>
-          </div>
-          <div className="space-y-2 text-sm text-amber-800 dark:text-amber-300">
-            <p>• {pointsEarnedPerItem} نقطة لكل منتج سعره أكثر من ريال واحد</p>
-            <p>• {pointsPerSar} نقطة = ريال واحد خصم</p>
-            <p>• الحد الأدنى للاسترداد: {minPointsForRedemption} نقطة (= {(minPointsForRedemption * pointsValueInSar).toFixed(2)} ريال)</p>
-            <p>• يمكنك استخدام نقاطك عند الدفع في الكاشير أو الموقع</p>
-          </div>
         </div>
 
-        {/* Transaction History */}
-        <div className="space-y-3" data-testid="transactions-section">
-          <h3 className="font-bold text-lg">آخر العمليات</h3>
-          {loadingTx ? (
-            <div className="text-center py-8 text-muted-foreground text-sm">جاري التحميل...</div>
-          ) : transactions.length === 0 ? (
-            <div className="text-center py-8 space-y-2">
-              <Clock className="w-10 h-10 mx-auto text-muted-foreground opacity-30" />
-              <p className="text-sm text-muted-foreground">لا توجد عمليات سابقة</p>
+        {/* ── The Card ── */}
+        <div className="px-4 mb-7">
+          <ClunyCard
+            phone={customer?.phone}
+            points={points}
+            sarValue={sarValueNum}
+            customerName={customer?.name || card?.customerName}
+          />
+        </div>
+
+        {/* ── QR Code ── */}
+        {qrCodeUrl ? (
+          <div className="flex flex-col items-center mb-6 px-4" data-testid="barcode-section">
+            <div style={{ background: "#fff", borderRadius: 20, padding: 16, boxShadow: "0 10px 50px rgba(0,0,0,0.6)", display: "inline-block" }}>
+              <img src={qrCodeUrl} alt="QR Code" style={{ width: 180, height: 180, display: "block" }} data-testid="img-qr-code" />
             </div>
+            <p style={{ color: "rgba(255,255,255,0.25)", fontSize: 11, marginTop: 10, letterSpacing: "0.1em" }}>
+              {tc("امسح لتسجيل نقاطك", "Scan to collect points")}
+            </p>
+          </div>
+        ) : card ? (
+          <div className="flex justify-center mb-6">
+            <div className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: "#C8A53A", borderTopColor: "transparent" }} />
+          </div>
+        ) : null}
+
+        {/* ── Action Buttons ── */}
+        <div className="px-4 flex flex-col gap-3">
+
+          {/* Wallet section */}
+          {isIOS ? (
+            /* ── Apple Wallet button (iOS only) ── */
+            <button
+              onClick={handleAddToAppleWallet}
+              disabled={addingToWallet}
+              data-testid="button-add-apple-wallet"
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                width: "100%", height: 58, borderRadius: 18,
+                background: addingToWallet
+                  ? "rgba(255,255,255,0.04)"
+                  : "linear-gradient(135deg, #000 0%, #1c1c1e 60%, #111 100%)",
+                color: "#fff",
+                border: "1px solid rgba(255,255,255,0.14)",
+                boxShadow: addingToWallet ? "none" : "0 6px 28px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.07)",
+                cursor: addingToWallet ? "wait" : "pointer",
+                fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif',
+                transition: "all 0.2s ease",
+                opacity: addingToWallet ? 0.6 : 1,
+                fontSize: 16, fontWeight: 500,
+                letterSpacing: "-0.01em",
+              }}
+            >
+              {addingToWallet ? (
+                <div className="w-5 h-5 rounded-full border-2 border-t-transparent animate-spin border-white/50" />
+              ) : (
+                <svg width="20" height="24" viewBox="0 0 814 1000" fill="white" style={{ flexShrink: 0 }}>
+                  <path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76 0-103.7 40.8-165.9 40.8s-105-37.6-155.5-127.4C46 790.7 0 663 0 541.8c0-207.5 135.4-317.3 268.5-317.3 71 0 130.3 46.4 174.1 46.4 42.8 0 109.7-49.2 192.7-49.2 31 0 108.2 2.6 168.1 80.6zM552.5 80.3c34.3-41.7 57.8-97.3 57.8-152.9 0-5.8-.7-11.7-1.3-17.5-55.2 2-120.2 37-158.6 83.5-33.7 39.5-63.7 94.8-63.7 151.1 0 6.4.7 12.9 1.3 14.9 3.2.7 8.4 1.3 13.6 1.3 49.8 0 109.7-33.1 150.9-80.4z" />
+                </svg>
+              )}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.2 }}>
+                {!addingToWallet && (
+                  <span style={{ fontSize: 11, opacity: 0.55, fontWeight: 400, letterSpacing: "0.02em" }}>
+                    {tc("أضف إلى", "Add to")}
+                  </span>
+                )}
+                <span style={{ fontSize: addingToWallet ? 15 : 18, fontWeight: 600 }}>
+                  {addingToWallet ? tc("جارٍ التحضير...", "Preparing…") : "Apple Wallet"}
+                </span>
+              </div>
+            </button>
           ) : (
-            transactions.slice(0, 10).map((tx: any, i: number) => {
-              const isEarn = tx.type === 'earn' || tx.type === 'transfer_in';
-              const isRedeem = tx.type === 'redeem' || tx.type === 'transfer_out';
-              return (
-                <div
-                  key={tx.id || i}
-                  className="flex items-center justify-between bg-card rounded-xl border px-4 py-3"
-                  data-testid={`transaction-${i}`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center ${
-                      isEarn ? "bg-green-100 text-green-600 dark:bg-green-900/30" :
-                      isRedeem ? "bg-red-100 text-red-600 dark:bg-red-900/30" :
-                      "bg-blue-100 text-blue-600 dark:bg-blue-900/30"
-                    }`}>
-                      {isEarn ? <ArrowDownRight className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold">
-                        {tx.descriptionAr || (isEarn ? "كسب نقاط" : isRedeem ? "استرداد نقاط" : "عملية")}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {tx.createdAt ? new Date(tx.createdAt).toLocaleDateString("ar-SA") : ""}
-                      </p>
-                    </div>
-                  </div>
-                  {(tx.points !== undefined && tx.points !== 0) && (
-                    <span className={`font-bold text-sm ${isEarn ? "text-green-600" : "text-red-600"}`}>
-                      {isEarn ? "+" : "-"}{Math.abs(tx.points)}
-                    </span>
+            /* ── Android / non-iOS: download .pkpass note ── */
+            <div style={{
+              background: "rgba(45,155,110,0.06)",
+              border: "1px solid rgba(45,155,110,0.18)",
+              borderRadius: 16, padding: "14px 16px",
+              display: "flex", alignItems: "center", gap: 14,
+            }}>
+              <div style={{
+                width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+                background: "rgba(45,155,110,0.12)",
+                border: "1px solid rgba(45,155,110,0.2)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <Wallet size={20} color="#2D9B6E" />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ color: "#2D9B6E", fontWeight: 700, fontSize: 13, margin: "0 0 2px" }}>
+                  {tc("بطاقة الولاء الرقمية", "Digital Loyalty Card")}
+                </p>
+                <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, margin: 0, lineHeight: 1.5 }}>
+                  {tc(
+                    "استخدم رمز QR أعلاه لتسجيل نقاطك في الفرع مباشرةً",
+                    "Use the QR code above to collect points at any branch"
                   )}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Transfer Points */}
+          {points > 0 && (
+            <div>
+              {!showTransfer ? (
+                <button
+                  onClick={() => setShowTransfer(true)}
+                  data-testid="button-open-transfer"
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    width: "100%", height: 52, borderRadius: 14, background: "none",
+                    border: "1px solid rgba(200,165,58,0.2)", color: "rgba(200,165,58,0.7)",
+                    cursor: "pointer", fontSize: 14, fontWeight: 600,
+                    transition: "all 0.2s",
+                  }}
+                >
+                  <ArrowLeftRight className="w-4 h-4" />
+                  {tc("تحويل نقاط لصديق", "Transfer points to friend")}
+                </button>
+              ) : (
+                <div style={{ background: "rgba(200,165,58,0.05)", border: "1px solid rgba(200,165,58,0.15)", borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
+                  <p style={{ color: "#C8A53A", fontSize: 13, fontWeight: 700, margin: 0, letterSpacing: "0.05em" }}>
+                    {tc("تحويل النقاط", "Transfer Points")}
+                  </p>
+                  <div className="space-y-1">
+                    <Label className="text-white/50 text-xs">{tc("رقم جوال المستلم", "Recipient Phone")}</Label>
+                    <Input placeholder="05xxxxxxxx" value={transferPhone} onChange={(e) => setTransferPhone(e.target.value)} dir="ltr"
+                      className="bg-white/5 border-white/10 text-white placeholder:text-white/20 h-11 rounded-xl" data-testid="input-transfer-phone" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-white/50 text-xs">{tc("عدد النقاط", "Points")}</Label>
+                    <Input type="number" placeholder={tc("أدخل عدد النقاط", "Enter points")} value={transferPoints} onChange={(e) => setTransferPoints(e.target.value)}
+                      min={1} max={points} className="bg-white/5 border-white/10 text-white placeholder:text-white/20 h-11 rounded-xl" data-testid="input-transfer-points" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-white/50 text-xs">{tc("كلمة المرور", "Password")}</Label>
+                    <Input type="password" placeholder={tc("كلمة المرور", "Password")} value={transferPin} onChange={(e) => setTransferPin(e.target.value)}
+                      className="bg-white/5 border-white/10 text-white placeholder:text-white/20 h-11 rounded-xl" data-testid="input-transfer-pin" />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button className="flex-1 h-11 rounded-xl font-bold" style={{ background: "#C8A53A", color: "#111" }}
+                      onClick={handleTransfer} disabled={transferMutation.isPending || !transferPhone || !transferPoints} data-testid="button-confirm-transfer">
+                      {transferMutation.isPending ? tc("جاري...", "Sending...") : tc("تأكيد التحويل", "Confirm")}
+                    </Button>
+                    <Button variant="outline" className="h-11 rounded-xl border-white/10 text-white/50 hover:bg-white/5"
+                      onClick={() => setShowTransfer(false)} data-testid="button-cancel-transfer">
+                      {tc("إلغاء", "Cancel")}
+                    </Button>
+                  </div>
                 </div>
-              );
-            })
+              )}
+            </div>
           )}
         </div>
       </div>
-
-      {/* QR Code Dialog */}
-      <Dialog open={showQr} onOpenChange={setShowQr}>
-        <DialogContent className="max-w-xs text-center" dir="rtl" data-testid="dialog-qr">
-          <DialogHeader>
-            <DialogTitle className="flex items-center justify-center gap-2">
-              <QrCode className="w-5 h-5" />
-              رمز بطاقتك
-            </DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col items-center py-4 gap-4">
-            <p className="text-sm text-muted-foreground">اعرض هذا الرمز للكاشير لكسب النقاط</p>
-            {qrCodeUrl && (
-              <div className="bg-white p-3 rounded-2xl shadow-lg">
-                <img src={qrCodeUrl} alt="QR Code" className="w-48 h-48" data-testid="img-qr" />
-              </div>
-            )}
-            <p className="font-mono text-xs text-muted-foreground" data-testid="text-card-num-qr">
-              {card?.cardNumber || ""}
-            </p>
-          </div>
-          <Button variant="outline" onClick={() => setShowQr(false)} className="w-full" data-testid="button-close-qr">
-            إغلاق
-          </Button>
-        </DialogContent>
-      </Dialog>
-
-      {/* Transfer Points Dialog */}
-      <Dialog open={showTransfer} onOpenChange={setShowTransfer}>
-        <DialogContent className="max-w-sm" dir="rtl" data-testid="dialog-transfer">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <SendHorizonal className="w-5 h-5 text-primary" />
-              تحويل النقاط
-            </DialogTitle>
-            <DialogDescription>
-              حوّل نقاطك إلى حساب عميل آخر في كلوني. رصيدك الحالي: <strong>{points.toLocaleString()} نقطة</strong>
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="transfer-phone">رقم جوال المستلم</Label>
-              <Input
-                id="transfer-phone"
-                type="tel"
-                inputMode="numeric"
-                placeholder="05XXXXXXXX"
-                value={transferPhone}
-                onChange={(e) => setTransferPhone(e.target.value)}
-                dir="ltr"
-                data-testid="input-transfer-phone"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="transfer-pts">عدد النقاط</Label>
-              <Input
-                id="transfer-pts"
-                type="number"
-                min={1}
-                max={points}
-                placeholder={`أقصى ${points}`}
-                value={transferPoints}
-                onChange={(e) => setTransferPoints(e.target.value)}
-                data-testid="input-transfer-points"
-              />
-              {transferPoints && !isNaN(parseInt(transferPoints)) && (
-                <p className="text-xs text-muted-foreground">
-                  = {(parseInt(transferPoints) * pointsValueInSar).toFixed(2)} ريال
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="flex gap-2 pt-1">
-            <Button
-              onClick={handleTransfer}
-              disabled={transferMutation.isPending}
-              className="flex-1 gap-2"
-              data-testid="button-confirm-transfer"
-            >
-              {transferMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <SendHorizonal className="w-4 h-4" />
-              )}
-              تأكيد التحويل
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => { setShowTransfer(false); setTransferPhone(""); setTransferPoints(""); }}
-              data-testid="button-cancel-transfer"
-            >
-              إلغاء
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </CustomerLayout>
   );
 }

@@ -66,7 +66,7 @@ async function seedManagersAndBranches() {
     }
 
     // Create or update owner account (cafe owner with full control)
-    const ownerPassword = await bcrypt.hash("owner123", 10);
+    const ownerPassword = await bcrypt.hash("b2030", 10);
     let owner = await EmployeeModel.findOne({ username: "owner" });
     if (!owner) {
       owner = await EmployeeModel.create({
@@ -81,7 +81,7 @@ async function seedManagersAndBranches() {
         isActivated: 1,
         commissionPercentage: 0,
       });
-      console.log("✅ Created owner account (owner/owner123)");
+      console.log("✅ Created owner account (owner/b2030)");
     } else {
       owner.role = "owner";
       owner.password = ownerPassword;
@@ -92,7 +92,7 @@ async function seedManagersAndBranches() {
     }
 
     // Create or update admin account (oversees all branches)
-    const adminPassword = await bcrypt.hash("admin", 10);
+    const adminPassword = await bcrypt.hash("b2030", 10);
     let admin = await EmployeeModel.findOne({ username: "admin" });
     if (!admin) {
       admin = await EmployeeModel.create({
@@ -107,7 +107,7 @@ async function seedManagersAndBranches() {
         isActivated: 1,
         commissionPercentage: 0,
       });
-      console.log("✅ Created admin account (admin/admin)");
+      console.log("✅ Created admin account (admin/b2030)");
     } else {
       // Update existing admin
       admin.role = "admin";

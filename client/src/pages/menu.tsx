@@ -1,4 +1,9 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { BranchesSection } from "@/components/branches-section";
+import { useBranch } from "@/contexts/BranchContext";
+import BranchSelectorModal from "@/components/branch-selector-modal";
+import { apiUrl } from "@/lib/server-url";
+import { useTranslate } from "@/lib/useTranslate";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCartStore } from "@/lib/cart-store";
 import { Button } from "@/components/ui/button";
@@ -26,23 +31,22 @@ import {
   Tag,
   Gift,
   Languages,
-  X,
-  ClipboardList,
-  ChefHat,
   Package,
-  Bell
+  X,
+  ArrowLeft,
+  CheckCircle
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import banner1 from "@assets/banner-coffee-1.png";
-import banner2 from "@assets/banner-coffee-2.png";
+import banner1 from "@assets/images/banner-1.png";
+import banner2 from "@assets/images/banner-2.png";
 import clunyLogo from "@assets/cluny-logo-customer.png";
 import type { CoffeeItem, IProductAddon, IPromoOffer } from "@shared/schema";
 import { AddToCartModal } from "@/components/add-to-cart-modal";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { ClassicMenuLayout, CardsMenuLayout, ListMenuLayout } from "@/components/menu-layouts";
+import type { AddonPreview } from "@/components/menu-layouts";
 import SarIcon from "@/components/sar-icon";
-import { customerStorage } from "@/lib/customer-storage";
 
 interface MenuCategory {
   id: string;
@@ -55,16 +59,18 @@ interface MenuCategory {
 }
 
 export default function MenuPage() {
-  const { cartItems, addToCart, showCart } = useCartStore();
+  const tc = useTranslate();
+  const { cartItems, addToCart } = useCartStore();
   const { isAuthenticated, customer } = useCustomer();
   const queryClient = useQueryClient();
+  const { selectedBranchId, selectedBranch, setShowBranchSelector } = useBranch();
 
   const customerPhone = (customer as any)?.phone || (customer as any)?.phoneNumber;
 
   const { data: favData } = useQuery<{ favorites: string[] }>({
     queryKey: ['/api/customers/favorites', customerPhone],
     enabled: !!(isAuthenticated && customerPhone),
-    queryFn: () => fetch('/api/customers/favorites?phone=' + encodeURIComponent(customerPhone || '')).then(r => r.json()),
+    queryFn: () => fetch(apiUrl('/api/customers/favorites?phone=' + encodeURIComponent(customerPhone || ''))).then(r => r.json()),
   });
   const favoriteIds = new Set<string>(favData?.favorites || []);
 
@@ -72,9 +78,9 @@ export default function MenuPage() {
     mutationFn: async (itemId: string) => {
       const isFav = favoriteIds.has(itemId);
       if (isFav) {
-        return fetch('/api/customers/favorites/' + itemId + '?phone=' + encodeURIComponent(customerPhone || ''), { method: 'DELETE' }).then(r => r.json());
+        return fetch(apiUrl('/api/customers/favorites/' + itemId + '?phone=' + encodeURIComponent(customerPhone || '')), { method: 'DELETE' }).then(r => r.json());
       } else {
-        return fetch('/api/customers/favorites/' + itemId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: customerPhone }) }).then(r => r.json());
+        return fetch(apiUrl('/api/customers/favorites/' + itemId), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: customerPhone }) }).then(r => r.json());
       }
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['/api/customers/favorites', customerPhone] }),
@@ -82,7 +88,7 @@ export default function MenuPage() {
 
   const handleToggleFavorite = (itemId: string) => {
     if (!isAuthenticated || !customerPhone) {
-      toast({ title: 'يجب تسجيل الدخول لإضافة المفضلة', variant: 'destructive' });
+      toast({ title: tc('يجب تسجيل الدخول لإضافة المفضلة', 'Please log in to add favorites'), variant: 'destructive' });
       return;
     }
     toggleFavoriteMutation.mutate(itemId);
@@ -98,15 +104,10 @@ export default function MenuPage() {
   const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
   const bannerRef = useRef<HTMLDivElement>(null);
 
-  // Active order banner state
-  const [dismissedActiveOrderId, setDismissedActiveOrderId] = useState<string | null>(() =>
-    sessionStorage.getItem("menu-dismissed-active-order")
-  );
-  const [showOrderDetail, setShowOrderDetail] = useState(false);
-
-  const { data: customBanners = [] } = useQuery<any[]>({
+  const { data: customBannersRaw } = useQuery<any[]>({
     queryKey: ["/api/custom-banners"],
   });
+  const customBanners: any[] = customBannersRaw ?? [];
 
   const isStoreOpen = () => {
     if (!businessConfig) return true;
@@ -155,7 +156,7 @@ export default function MenuPage() {
 
   const getStatusMessage = () => {
     if (!businessConfig) return null;
-    if (businessConfig.isEmergencyClosed) return "نعتذر، الكافيه مغلق حالياً لظروف طارئة";
+    if (businessConfig.isEmergencyClosed) return tc("نعتذر، الكافيه مغلق حالياً لظروف طارئة", "Sorry, the cafe is temporarily closed due to an emergency");
     
     const isOpen = isStoreOpen();
     if (isOpen) return null;
@@ -169,7 +170,7 @@ export default function MenuPage() {
       return `الكافيه مغلق حالياً، يفتح بعد ${timeStr}`;
     }
 
-    return "الكافيه مغلق حالياً";
+    return tc("الكافيه مغلق حالياً", "The cafe is currently closed");
   };
 
   const { data: coffeeItems = [], isLoading } = useQuery<CoffeeItem[]>({
@@ -180,8 +181,15 @@ export default function MenuPage() {
     queryKey: ["/api/product-addons"],
   });
 
-  const { data: itemsWithAddons = [] } = useQuery<string[]>({
-    queryKey: ["/api/coffee-items-with-addons"],
+  const { data: itemsWithAddonsList = [] } = useQuery<string[]>({
+    queryKey: ["/api/coffee-items/with-addons"],
+    staleTime: 5 * 60 * 1000,
+  });
+  const itemsWithAddonsSet = useMemo(() => new Set(itemsWithAddonsList), [itemsWithAddonsList]);
+
+  const { data: itemAddonsMap = {} } = useQuery<Record<string, AddonPreview[]>>({
+    queryKey: ["/api/coffee-items/addons-preview"],
+    staleTime: 5 * 60 * 1000,
   });
 
   const { data: promoOffers = [] } = useQuery<IPromoOffer[]>({
@@ -196,70 +204,52 @@ export default function MenuPage() {
     queryKey: ["/api/business-config"],
   });
 
-  // Active orders query – only when authenticated
-  const { data: serverActiveOrders = [] } = useQuery<any[]>({
-    queryKey: ["/api/orders/customer", customerPhone],
-    enabled: !!(isAuthenticated && customerPhone),
-    refetchInterval: 30000,
-    staleTime: 20000,
+  // ── Active Order Banner ─────────────────────────────────────────────
+  const [activeOrderNum, setActiveOrderNum] = useState<string | null>(() =>
+    localStorage.getItem("br-active-order")
+  );
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  const { data: activeOrder, isLoading: activeOrderLoading } = useQuery<any>({
+    queryKey: ["/api/orders/number", activeOrderNum],
     queryFn: async () => {
-      const res = await fetch(`/api/orders/customer/${encodeURIComponent(customerPhone || "")}`);
-      if (!res.ok) return [];
+      if (!activeOrderNum) return null;
+      const res = await fetch(`/api/orders/number/${encodeURIComponent(activeOrderNum)}`);
+      if (!res.ok) { localStorage.removeItem("br-active-order"); return null; }
       return res.json();
     },
+    enabled: !!activeOrderNum && !bannerDismissed,
+    refetchInterval: 20000,
+    retry: false,
   });
 
-  // Pick the most recent active order (server or localStorage)
-  const activeOrder = useMemo(() => {
-    const ACTIVE_STATUSES = new Set(["pending", "payment_confirmed", "in_progress", "ready"]);
-    // Server orders (auth users)
-    const fromServer = serverActiveOrders
-      .filter((o: any) => ACTIVE_STATUSES.has(o.status))
-      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-    if (fromServer) return fromServer;
-
-    // Fallback: local guest orders placed within last 3 hours
-    const localOrders = customerStorage.getOrders();
-    const cutoff = Date.now() - 3 * 60 * 60 * 1000;
-    const fromLocal = localOrders
-      .filter((o: any) => new Date(o.createdAt).getTime() > cutoff)
-      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-    return fromLocal || null;
-  }, [serverActiveOrders]);
-
-  const showActiveBanner = !!(activeOrder && activeOrder.orderNumber !== dismissedActiveOrderId);
-
-  const dismissActiveBanner = () => {
-    if (activeOrder) {
-      sessionStorage.setItem("menu-dismissed-active-order", activeOrder.orderNumber);
-      setDismissedActiveOrderId(activeOrder.orderNumber);
+  // Clear banner once order is completed or cancelled
+  useEffect(() => {
+    if (activeOrder?.status === 'completed' || activeOrder?.status === 'cancelled') {
+      localStorage.removeItem("br-active-order");
+      setActiveOrderNum(null);
     }
-    setShowOrderDetail(false);
-  };
+  }, [activeOrder?.status]);
 
-  const getOrderStatusLabel = (status: string) => {
-    const labels: Record<string, string> = {
-      pending: "قيد الانتظار",
-      payment_confirmed: "تم تأكيد الدفع",
-      in_progress: "جاري التحضير ☕",
-      ready: "جاهز للاستلام 🎉",
+  const showActiveBanner = !bannerDismissed && !!activeOrder && 
+    !['completed','cancelled'].includes(activeOrder.status);
+
+  const getActiveOrderStatusLabel = (status: string) => {
+    const labels: Record<string,string> = {
+      pending: 'في الانتظار', awaiting_payment: 'بانتظار الدفع',
+      payment_confirmed: 'تم الدفع', in_progress: 'قيد التحضير',
+      ready: 'جاهز للاستلام ✅', out_for_delivery: 'في الطريق إليك 🚗',
     };
     return labels[status] || status;
   };
+  // ────────────────────────────────────────────────────────────────────
 
-  const getOrderStatusIcon = (status: string) => {
-    if (status === "in_progress") return ChefHat;
-    if (status === "ready") return Package;
-    if (status === "payment_confirmed") return ClipboardList;
-    return Clock;
-  };
-
-  const totalItems = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+  const totalItems = (cartItems || []).reduce((sum, item) => sum + item.quantity, 0);
 
   const isBothModes = false; // Unified categories — no food/drink tab separation
 
-  // Construct dynamic banners
-  const bannerSlides = (() => {
+  // Construct dynamic banners — memoized to prevent infinite re-renders
+  const bannerSlides = useMemo(() => {
     const slides: any[] = [];
 
     // 1. Add custom admin banners first
@@ -369,112 +359,174 @@ export default function MenuPage() {
     }
 
     return slides;
-  })();
+  }, [customBanners, coffeeItems, promoOffers, i18n.language]);
 
   useEffect(() => {
+    if (!bannerSlides || bannerSlides.length <= 1) return;
     const interval = setInterval(() => {
       setCurrentBannerIndex((prev) => (prev + 1) % bannerSlides.length);
     }, 5000);
     return () => clearInterval(interval);
-  }, [bannerSlides.length]);
+  }, [bannerSlides?.length]);
 
   const iconMap: Record<string, any> = {
     Coffee, Flame, Snowflake, Star, Cake, Utensils, Sparkles
   };
 
-  const systemCategories = [
-    { id: "all",        name: t("menu.categories.all"),       icon: Coffee,    isSystem: true },
-    { id: "hot",        name: t("menu.categories.hot"),       icon: Flame,     isSystem: true },
-    { id: "cold",       name: t("menu.categories.cold"),      icon: Snowflake, isSystem: true },
-    { id: "desserts",   name: t("menu.categories.desserts"),  icon: Cake,      isSystem: true },
-    { id: "bakery",     name: t("menu.categories.bakery"),    icon: Cake,      isSystem: true },
-    { id: "sandwiches", name: t("menu.categories.sandwiches"),icon: Utensils,  isSystem: true },
-  ];
+  const allTab = { id: "all", name: tc("الكل", "All"), icon: Coffee };
 
-  const customCategories = dynamicCategories
-    .filter(c => !c.isSystem)
-    .map(c => ({
+  const categories = [
+    allTab,
+    ...dynamicCategories.map(c => ({
       id: c.id,
       name: i18n.language === 'ar' ? c.nameAr : (c.nameEn || c.nameAr),
       icon: iconMap[c.icon || 'Coffee'] || Coffee,
-      isSystem: false
-    }));
+    })),
+  ];
 
-  const categories = [...systemCategories, ...customCategories];
-
-  const bestSellers = useMemo(() => coffeeItems
+  const bestSellers = coffeeItems
     .filter(item => (item as any).isBestSeller || (item as any).salesCount > 10 || item.category === 'food' || item.category === 'bakery')
     .sort((a, b) => {
+      // Prioritize food in best sellers if it matches
       const aIsFood = a.category === 'food' || a.category === 'bakery';
       const bIsFood = b.category === 'food' || b.category === 'bakery';
       if (aIsFood && !bIsFood) return -1;
       if (!aIsFood && bIsFood) return 1;
       return ((b as any).salesCount || 0) - ((a as any).salesCount || 0);
     })
-    .slice(0, 8), [coffeeItems]);
+    .slice(0, 8);
 
-  const getGroupingKey = useCallback((item: CoffeeItem): string => {
+
+  const getGroupingKey = (item: CoffeeItem): string => {
+    // 1. Explicit groupId has highest priority
     if ((item as any).groupId) return `${item.category}::${(item as any).groupId}`;
+
     const nameAr = item.nameAr || "";
     if (!nameAr || typeof nameAr !== 'string') return `${item.category}::unknown`;
-    const cleaned = nameAr.trim().replace(/^[\u064B-\u0652]+/, '');
-    const firstWord = cleaned.split(/\s+/)[0] || 'unknown';
-    return `${item.category}::${firstWord}`;
-  }, []);
 
-  const groupedItems = useMemo(() => coffeeItems.reduce((acc: Record<string, CoffeeItem[]>, item) => {
+    // Remove common diacritics to normalise names
+    const cleaned = nameAr.trim().replace(/^[\u064B-\u0652]+/, '');
+
+    // Group items sharing the same FIRST TWO words AND same category
+    // (e.g. "قهوة عربية صغير" + "قهوة عربية كبير" → same group;
+    //  but "قهوة تركية" stays separate)
+    const parts = cleaned.split(/\s+/).filter(Boolean);
+    const prefix = parts.slice(0, 2).join(' ') || parts[0] || 'unknown';
+    return `${item.category}::${prefix}`;
+  };
+
+  const groupedItems = coffeeItems.reduce((acc: Record<string, CoffeeItem[]>, item) => {
     const groupKey = getGroupingKey(item);
+    
     if (!acc[groupKey]) acc[groupKey] = [];
     acc[groupKey].push(item);
     return acc;
-  }, {}), [coffeeItems, getGroupingKey]);
+  }, {});
 
-  const representativeItems = useMemo(() =>
-    Object.values(groupedItems).map(group => group[0]),
-  [groupedItems]);
+  const representativeItems = Object.values(groupedItems).map(group => {
+    // Find the primary variant or just use the first one
+    return group[0];
+  });
 
-  const filteredItems = useMemo(() => {
-    const now = new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-    const currentTimeNum = currentHour * 100 + currentMinute;
-    const currentDay = now.getDay();
-    const searchLower = searchQuery.toLowerCase();
+  const filteredItems = representativeItems.filter(item => {
+    const matchesCategory = selectedCategory === "all" || item.category === selectedCategory;
+    const name = i18n.language === 'ar' ? item.nameAr : item.nameEn || item.nameAr;
+    const matchesSearch = name.toLowerCase().includes(searchQuery.toLowerCase());
 
-    return representativeItems.filter(item => {
-      const matchesCategory = selectedCategory === "all" || item.category === selectedCategory;
-      const name = i18n.language === 'ar' ? item.nameAr : item.nameEn || item.nameAr;
-      const matchesSearch = name.toLowerCase().includes(searchLower);
-
+    // ── Branch availability filter ──────────────────────────────────────
+    if (selectedBranchId) {
       const anyItem = item as any;
-      if (anyItem.availableFrom || anyItem.availableTo || (anyItem.availableDays && anyItem.availableDays.length > 0)) {
-        if (anyItem.availableDays && anyItem.availableDays.length > 0 && !anyItem.availableDays.includes(currentDay)) return false;
-        if (anyItem.availableFrom) {
-          const [fh, fm] = (anyItem.availableFrom as string).split(':').map(Number);
-          if (currentTimeNum < fh * 100 + fm) return false;
-        }
-        if (anyItem.availableTo) {
-          const [th, tm] = (anyItem.availableTo as string).split(':').map(Number);
-          if (currentTimeNum > th * 100 + tm) return false;
-        }
+      const pb: string[] = anyItem.publishedBranches || [];
+      // '*' means published in ALL branches — always show
+      const publishedEverywhere = pb.length === 0 || pb.includes('*');
+      if (!publishedEverywhere && !pb.includes(selectedBranchId)) return false;
+      // branchAvailability: if entry exists for this branch with isAvailable=0, hide it
+      if (anyItem.branchAvailability && anyItem.branchAvailability.length > 0) {
+        const entry = anyItem.branchAvailability.find(
+          (b: any) => b.branchId === selectedBranchId
+        );
+        if (entry && entry.isAvailable === 0) return false;
       }
-      return matchesCategory && matchesSearch;
-    });
-  }, [representativeItems, selectedCategory, searchQuery, i18n.language]);
+    }
+    // ───────────────────────────────────────────────────────────────────
 
-  const sortedFilteredItems = useMemo(() => [...filteredItems].sort((a, b) => {
+    // Seasonal / time-based filtering
+    const anyItem = item as any;
+    if (anyItem.availableFrom || anyItem.availableTo || (anyItem.availableDays && anyItem.availableDays.length > 0)) {
+      const now = new Date();
+      const currentHour = now.getHours();
+      const currentMinute = now.getMinutes();
+      const currentTimeNum = currentHour * 100 + currentMinute;
+      const currentDay = now.getDay();
+      if (anyItem.availableDays && anyItem.availableDays.length > 0 && !anyItem.availableDays.includes(currentDay)) {
+        return false;
+      }
+      if (anyItem.availableFrom) {
+        const [fh, fm] = (anyItem.availableFrom as string).split(':').map(Number);
+        if (currentTimeNum < fh * 100 + fm) return false;
+      }
+      if (anyItem.availableTo) {
+        const [th, tm] = (anyItem.availableTo as string).split(':').map(Number);
+        if (currentTimeNum > th * 100 + tm) return false;
+      }
+    }
+    
+    return matchesCategory && matchesSearch;
+  });
+
+  const sortedFilteredItems = [...filteredItems].sort((a, b) => {
     if (selectedCategory !== "all") return 0;
     const categoryOrder = ['hot', 'cold', 'desserts', 'bakery', 'sandwiches'];
     const aIdx = categoryOrder.indexOf(a.category);
     const bIdx = categoryOrder.indexOf(b.category);
-    return (aIdx === -1 ? 99 : aIdx) - (bIdx === -1 ? 99 : bIdx);
-  }), [filteredItems, selectedCategory]);
+    const aPos = aIdx === -1 ? 99 : aIdx;
+    const bPos = bIdx === -1 ? 99 : bIdx;
+    return aPos - bPos;
+  });
+
+  // Auto-compute isBestSeller (top 3 items by salesCount with at least 1 sale)
+  // and isNew from isNewProduct field
+  const _allSalesCounts = coffeeItems
+    .map(i => (i as any).salesCount || 0)
+    .filter((c: number) => c > 0)
+    .sort((a: number, b: number) => b - a);
+  const _bestSellerThreshold = _allSalesCounts.length >= 3
+    ? _allSalesCounts[2]  // value of 3rd highest
+    : _allSalesCounts[0] || 1;
+  const augmentedItems = sortedFilteredItems.map(item => ({
+    ...item,
+    isBestSeller: ((item as any).salesCount || 0) >= _bestSellerThreshold && _bestSellerThreshold > 0,
+    isNew: (item as any).isNewProduct === 1,
+  }));
+
+  const cartHasReservationItem = cartItems.some(ci => (ci.coffeeItem as any)?.isReservation);
+  const cartHasNonReservationItem = cartItems.some(ci => !(ci.coffeeItem as any)?.isReservation);
+
+  const checkReservationIsolation = (isReservationProduct: boolean): boolean => {
+    if (isReservationProduct && cartHasNonReservationItem) {
+      toast({
+        title: tc("تنبيه", "Notice"),
+        description: tc("منتجات الحجز لا يمكن إضافتها مع منتجات أخرى. يرجى إفراغ السلة أولاً.", "Reservation products cannot be mixed with other items. Please clear your cart first."),
+        variant: "destructive"
+      });
+      return false;
+    }
+    if (!isReservationProduct && cartHasReservationItem) {
+      toast({
+        title: tc("تنبيه", "Notice"),
+        description: tc("لديك منتج حجز في السلة. لا يمكن إضافة منتجات أخرى معه.", "You have a reservation item in your cart. No other items can be added."),
+        variant: "destructive"
+      });
+      return false;
+    }
+    return true;
+  };
 
   const handleAddToCartDirect = (item: CoffeeItem) => {
     if (!isStoreOpen()) {
       toast({
-        title: "المتجر مغلق",
-        description: "نعتذر، لا يمكن إضافة الطلبات حالياً بسبب إغلاق المتجر.",
+        title: tc("المتجر مغلق", "Store Closed"),
+        description: tc("نعتذر، لا يمكن إضافة الطلبات حالياً بسبب إغلاق المتجر.", "Sorry, orders cannot be added right now as the store is closed."),
         variant: "destructive"
       });
       return;
@@ -482,8 +534,8 @@ export default function MenuPage() {
     const isAvailable = item.isAvailable !== 0 && (item.availabilityStatus === 'available' || item.availabilityStatus === 'new' || !item.availabilityStatus);
     if (!isAvailable) {
       toast({
-        title: "غير متوفر",
-        description: "نعتذر، هذا المنتج غير متوفر حالياً",
+        title: tc("غير متوفر", "Unavailable"),
+        description: tc("نعتذر، هذا المنتج غير متوفر حالياً", "Sorry, this product is currently unavailable"),
         variant: "destructive"
       });
       return;
@@ -494,9 +546,13 @@ export default function MenuPage() {
     const group = groupedItems[groupKey] || [item];
     const hasMultipleVariants = group.length > 1;
     const hasSizes = item.availableSizes && item.availableSizes.length > 0;
-    const hasAddons = itemsWithAddons.includes((item as any).id);
+    const hasAddons = itemsWithAddonsSet.has((item as any).id);
+    const hasBundledItems = (item as any).bundledItems?.some((s: any) => s.items?.length > 0);
+    const isReservation = !!(item as any).isReservation;
 
-    if (hasMultipleVariants || hasSizes || hasAddons) {
+    if (!checkReservationIsolation(isReservation)) return;
+
+    if (isReservation || hasMultipleVariants || hasSizes || hasAddons || hasBundledItems) {
       setSelectedItem(item);
       setIsModalOpen(true);
     } else {
@@ -536,19 +592,51 @@ export default function MenuPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background" dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}>
-      <header className="fixed top-0 inset-x-0 z-[60] h-16 bg-primary/40 backdrop-blur-md border-b border-white/10 flex items-center justify-between px-4">
+    <div className="min-h-screen bg-background scroll-smooth-ios" dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}>
+      <header className="fixed top-0 inset-x-0 z-[60] bg-black/60 backdrop-blur-md border-b border-white/10 flex items-end justify-between px-4 pb-3 min-h-[64px]" style={{paddingTop: 'max(env(safe-area-inset-top, 0px), 12px)'}}>
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-white/10 p-1.5 flex items-center justify-center">
             <img src={clunyLogo} alt="Logo" className="w-full h-full object-contain" />
           </div>
           <div className="flex flex-col">
-            <h1 className="text-base font-black text-white leading-tight">CLUNY</h1>
-            <span className="text-[10px] font-bold text-white/60 tracking-wider uppercase">CAFE</span>
+            {(() => {
+              const isCarMode = (() => {
+                try { return sessionStorage.getItem("qirox_car_pickup_mode") === "1"; } catch { return false; }
+              })();
+              if (isCarMode) {
+                return (
+                  <>
+                    <h1 className="text-base font-black text-white leading-tight" data-testid="text-car-menu-title">منيو السيارات</h1>
+                    <span className="text-[10px] font-bold text-white/60 tracking-wider">استلام من السيارة 🚗</span>
+                  </>
+                );
+              }
+              return (
+                <>
+                  <h1 className="text-base font-black text-white leading-tight">CLUNY CAFE  </h1>
+                  <span className="text-[10px] font-bold text-white/60 tracking-wider uppercase">CAFE</span>
+                </>
+              );
+            })()}
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Branch selector button */}
+          <button
+            onClick={() => setShowBranchSelector(true)}
+            className="flex items-center gap-1.5 h-9 px-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/10 transition-all duration-200"
+            title={tc("تغيير الفرع", "Change Branch")}
+            data-testid="button-change-branch"
+          >
+            <MapPin className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+            <span className="text-[11px] font-semibold max-w-[80px] truncate leading-none">
+              {selectedBranch
+                ? (i18n.language === 'ar' ? selectedBranch.nameAr : selectedBranch.nameEn || selectedBranch.nameAr)
+                : tc("الفرع", "Branch")}
+            </span>
+          </button>
+
           {isAuthenticated && (
             <Button 
               variant="ghost" 
@@ -599,215 +687,10 @@ export default function MenuPage() {
           </Button>
         </div>
       </header>
+      <main className="space-y-6 pb-24 relative z-0" style={{paddingTop: 'max(calc(env(safe-area-inset-top, 0px) + 64px), 76px)'}}>
 
-      {/* Active Order Banner – fixed strip below header */}
-      <AnimatePresence>
-        {showActiveBanner && (
-          <motion.div
-            initial={{ y: -80, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -80, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 340, damping: 30 }}
-            className="fixed top-16 inset-x-0 z-50"
-            dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}
-          >
-            <div
-              className={`mx-3 mt-2 rounded-2xl shadow-2xl border overflow-hidden flex items-center gap-3 px-4 py-3 ${
-                activeOrder?.status === 'ready'
-                  ? 'bg-gradient-to-r from-green-600 to-emerald-500 border-green-400/30'
-                  : activeOrder?.status === 'in_progress'
-                  ? 'bg-gradient-to-r from-blue-700 to-blue-500 border-blue-400/30'
-                  : 'bg-gradient-to-r from-amber-600 to-orange-500 border-amber-400/30'
-              }`}
-            >
-              {/* Clickable info area */}
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => setShowOrderDetail(true)}
-                onKeyDown={e => e.key === 'Enter' && setShowOrderDetail(true)}
-                className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
-                data-testid="button-active-order-banner"
-              >
-                {(() => {
-                  const Icon = getOrderStatusIcon(activeOrder?.status || 'pending');
-                  return (
-                    <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
-                      <Icon className="w-5 h-5 text-white" />
-                    </div>
-                  );
-                })()}
-                <div className="flex-1 min-w-0">
-                  <p className="text-[11px] font-bold text-white/70 uppercase tracking-wider">
-                    {i18n.language === 'ar' ? 'لديك طلب قائم' : 'Active Order'}
-                  </p>
-                  <p className="text-sm font-black text-white truncate">
-                    {activeOrder?.orderNumber} &mdash; {getOrderStatusLabel(activeOrder?.status || 'pending')}
-                  </p>
-                </div>
-                <span className="text-xs font-bold text-white/80 bg-white/20 rounded-lg px-2 py-1 flex-shrink-0">
-                  {i18n.language === 'ar' ? 'عرض' : 'View'}
-                </span>
-              </div>
-              {/* Dismiss button – separate from info area */}
-              <button
-                onClick={dismissActiveBanner}
-                className="w-7 h-7 rounded-lg bg-white/20 flex items-center justify-center hover:bg-white/30 transition flex-shrink-0"
-                data-testid="button-dismiss-active-order"
-              >
-                <X className="w-4 h-4 text-white" />
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+        <div ref={bannerRef} className="w-full" style={{marginTop: 'calc(-1 * max(calc(env(safe-area-inset-top, 0px) + 64px), 76px))'}}>
 
-      {/* Order Detail Bottom Sheet */}
-      <AnimatePresence>
-        {showOrderDetail && activeOrder && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-end"
-            dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}
-            onClick={() => setShowOrderDetail(false)}
-          >
-            <motion.div
-              initial={{ y: 300 }}
-              animate={{ y: 0 }}
-              exit={{ y: 300 }}
-              transition={{ type: "spring", stiffness: 340, damping: 32 }}
-              className="w-full bg-card rounded-t-3xl shadow-2xl p-6 space-y-5 max-h-[80vh] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Handle */}
-              <div className="w-12 h-1.5 bg-muted-foreground/20 rounded-full mx-auto mb-2" />
-
-              {/* Status badge */}
-              <div className="flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 ${
-                  activeOrder.status === 'ready' ? 'bg-green-100 dark:bg-green-900/30' :
-                  activeOrder.status === 'in_progress' ? 'bg-blue-100 dark:bg-blue-900/30' :
-                  'bg-amber-100 dark:bg-amber-900/30'
-                }`}>
-                  {(() => {
-                    const Icon = getOrderStatusIcon(activeOrder.status);
-                    return <Icon className={`w-6 h-6 ${
-                      activeOrder.status === 'ready' ? 'text-green-600' :
-                      activeOrder.status === 'in_progress' ? 'text-blue-600' :
-                      'text-amber-600'
-                    }`} />;
-                  })()}
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground font-medium">
-                    {i18n.language === 'ar' ? 'حالة الطلب' : 'Order Status'}
-                  </p>
-                  <p className="text-lg font-black text-foreground">
-                    {getOrderStatusLabel(activeOrder.status)}
-                  </p>
-                </div>
-              </div>
-
-              {/* Order number */}
-              <div className="bg-muted/50 rounded-2xl p-4 flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-muted-foreground font-medium mb-0.5">
-                    {i18n.language === 'ar' ? 'رقم الفاتورة' : 'Order Number'}
-                  </p>
-                  <p className="text-xl font-black text-foreground tracking-wider">{activeOrder.orderNumber}</p>
-                </div>
-                <Bell className={`w-7 h-7 ${
-                  activeOrder.status === 'ready' ? 'text-green-500 animate-bounce' :
-                  activeOrder.status === 'in_progress' ? 'text-blue-400 animate-pulse' :
-                  'text-amber-400 animate-pulse'
-                }`} />
-              </div>
-
-              {/* Progress steps */}
-              <div className="space-y-2">
-                {[
-                  { id: 'pending', label: i18n.language === 'ar' ? 'تم إرسال الطلب' : 'Order Sent', icon: Clock },
-                  { id: 'payment_confirmed', label: i18n.language === 'ar' ? 'تأكيد الدفع' : 'Payment Confirmed', icon: ClipboardList },
-                  { id: 'in_progress', label: i18n.language === 'ar' ? 'جاري التحضير' : 'Preparing', icon: ChefHat },
-                  { id: 'ready', label: i18n.language === 'ar' ? 'جاهز للاستلام' : 'Ready', icon: Package },
-                ].map((step, idx, arr) => {
-                  const ORDER_INDICES: Record<string, number> = { pending: 0, payment_confirmed: 1, in_progress: 2, ready: 3 };
-                  const currentIdx = ORDER_INDICES[activeOrder.status] ?? 0;
-                  const stepIdx = ORDER_INDICES[step.id] ?? idx;
-                  const isDone = stepIdx <= currentIdx;
-                  const isActive = stepIdx === currentIdx;
-                  const Icon = step.icon;
-                  return (
-                    <div key={step.id} className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
-                        isDone
-                          ? isActive
-                            ? 'bg-primary text-primary-foreground ring-4 ring-primary/20'
-                            : 'bg-primary/20 text-primary'
-                          : 'bg-muted text-muted-foreground'
-                      }`}>
-                        <Icon className="w-4 h-4" />
-                      </div>
-                      <p className={`text-sm font-semibold ${isDone ? 'text-foreground' : 'text-muted-foreground'}`}>
-                        {step.label}
-                      </p>
-                      {isActive && (
-                        <span className="text-xs bg-primary/10 text-primary font-bold px-2 py-0.5 rounded-full animate-pulse">
-                          {i18n.language === 'ar' ? 'الآن' : 'Now'}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Items summary */}
-              {activeOrder.items && activeOrder.items.length > 0 && (
-                <div className="space-y-1.5">
-                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                    {i18n.language === 'ar' ? 'الطلبات' : 'Items'}
-                  </p>
-                  {activeOrder.items.slice(0, 3).map((item: any, i: number) => (
-                    <div key={i} className="flex items-center justify-between text-sm text-foreground">
-                      <span>{item.nameAr || item.coffeeItem?.nameAr || item.name || '—'}</span>
-                      <span className="text-muted-foreground">× {item.quantity}</span>
-                    </div>
-                  ))}
-                  {activeOrder.items.length > 3 && (
-                    <p className="text-xs text-muted-foreground">+{activeOrder.items.length - 3} {i18n.language === 'ar' ? 'أصناف أخرى' : 'more items'}</p>
-                  )}
-                </div>
-              )}
-
-              {/* Actions */}
-              <div className="flex gap-3 pt-1">
-                <Button
-                  onClick={() => { setShowOrderDetail(false); setLocation("/my-orders"); }}
-                  className="flex-1 rounded-2xl h-12 font-bold"
-                  data-testid="button-view-my-orders"
-                >
-                  <ClipboardList className="w-4 h-4 me-2" />
-                  {i18n.language === 'ar' ? 'جميع طلباتي' : 'My Orders'}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={dismissActiveBanner}
-                  className="flex-1 rounded-2xl h-12 font-bold border-2"
-                  data-testid="button-start-new-order"
-                >
-                  <X className="w-4 h-4 me-2" />
-                  {i18n.language === 'ar' ? 'طلب جديد' : 'New Order'}
-                </Button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <main className={`${showActiveBanner ? 'pt-28' : 'pt-16'} space-y-6 pb-24 relative z-0 transition-all duration-300`}>
-        <div ref={bannerRef} className={`w-full ${showActiveBanner ? '-mt-28' : '-mt-16'}`}>
           <div className="relative h-[320px] sm:h-[400px] overflow-hidden shadow-lg border-b border-border/50">
             <AnimatePresence mode="wait">
               <motion.div
@@ -901,6 +784,98 @@ export default function MenuPage() {
 
         <div className="px-4 space-y-6">
 
+          {/* ── Active Order Banner ── */}
+          <AnimatePresence>
+            {showActiveBanner && (
+              <motion.div
+                initial={{ opacity: 0, y: -12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -12 }}
+                transition={{ duration: 0.35 }}
+              >
+                <div className={`relative rounded-2xl overflow-hidden shadow-lg border-2 ${
+                  activeOrder.status === 'ready'
+                    ? 'bg-green-50 dark:bg-green-950 border-green-400'
+                    : activeOrder.status === 'in_progress'
+                    ? 'bg-blue-50 dark:bg-blue-950 border-blue-400'
+                    : 'bg-amber-50 dark:bg-amber-950 border-amber-400'
+                }`}>
+                  {/* Close (dismiss) button */}
+                  <button
+                    onClick={() => setBannerDismissed(true)}
+                    className="absolute top-2 ltr:right-2 rtl:left-2 rounded-full bg-black/10 hover:bg-black/20 p-1 z-10"
+                    aria-label="إغلاق"
+                    data-testid="button-dismiss-active-order"
+                  >
+                    <X size={14} />
+                  </button>
+
+                  <div className="flex items-center gap-3 px-4 py-3">
+                    {/* Status icon */}
+                    <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
+                      activeOrder.status === 'ready' ? 'bg-green-500' :
+                      activeOrder.status === 'in_progress' ? 'bg-blue-500' : 'bg-amber-500'
+                    }`}>
+                      {activeOrder.status === 'ready'
+                        ? <CheckCircle size={18} className="text-white" />
+                        : <Package size={18} className="text-white" />
+                      }
+                    </div>
+
+                    {/* Text block */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-sm text-gray-900 dark:text-gray-100">لديك طلب قائم</span>
+                        <span className="font-mono font-bold text-sm bg-black text-white dark:bg-white dark:text-black px-2 py-0.5 rounded-lg">
+                          #{String(activeOrderNum).padStart(4, '0')}
+                        </span>
+                      </div>
+                      <div className={`text-xs font-bold mt-0.5 ${
+                        activeOrder.status === 'ready' ? 'text-green-700 dark:text-green-400' :
+                        activeOrder.status === 'in_progress' ? 'text-blue-700 dark:text-blue-400' : 'text-amber-700 dark:text-amber-400'
+                      }`}>
+                        {getActiveOrderStatusLabel(activeOrder.status)}
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex flex-col gap-1.5 flex-shrink-0 items-center ml-6">
+                      <button
+                        onClick={() => setLocation(`/track/${activeOrderNum}`)}
+                        className={`text-xs font-bold px-3 py-1.5 rounded-xl text-white flex items-center gap-1 whitespace-nowrap ${
+                          activeOrder.status === 'ready' ? 'bg-green-600 hover:bg-green-700' :
+                          activeOrder.status === 'in_progress' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-amber-600 hover:bg-amber-700'
+                        }`}
+                        data-testid="button-track-active-order"
+                      >
+                        تتبع طلبك
+                        <ArrowLeft size={12} />
+                      </button>
+                      <button
+                        onClick={() => {
+                          localStorage.removeItem("br-active-order");
+                          setActiveOrderNum(null);
+                          setBannerDismissed(true);
+                        }}
+                        className="text-[11px] text-gray-500 hover:text-gray-700 text-center underline whitespace-nowrap"
+                        data-testid="button-new-order"
+                      >
+                        طلب جديد
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Pulse bar for ready status */}
+                  {activeOrder.status === 'ready' && (
+                    <div className="bg-green-500 text-white text-xs font-bold text-center py-1.5 animate-pulse">
+                      🎉 طلبك جاهز! تفضل للاستلام
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <div className="flex items-center gap-4 bg-secondary/50 rounded-xl p-3">
             <div className="flex items-center gap-2 text-muted-foreground">
               <MapPin className="w-4 h-4 text-primary" />
@@ -941,48 +916,125 @@ export default function MenuPage() {
 
           {promoOffers.length > 0 && (
             <section className="space-y-4">
-              <div className="flex items-center gap-2">
-                <Gift className="w-5 h-5 text-accent" />
-                <h2 className="text-xl font-bold text-foreground">{t("menu.offers")}</h2>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">🎁</span>
+                  <h2 className="text-xl font-black text-foreground">عروضنا</h2>
+                </div>
+                <Badge variant="outline" className="text-xs text-primary border-primary/30 font-bold">
+                  {promoOffers.length} عرض
+                </Badge>
               </div>
-              <div className="flex gap-4 overflow-x-auto no-scrollbar snap-x snap-mandatory -mx-4 px-4 pb-2">
-                {promoOffers.map((offer) => (
-                  <motion.div 
-                    key={offer.id} 
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    className="flex-shrink-0 w-[200px] snap-start bg-gradient-to-br from-accent/10 to-primary/10 rounded-2xl border-2 border-accent/30 p-3 space-y-3 shadow-sm cursor-pointer group relative overflow-hidden"
-                    data-testid={`card-offer-${offer.id}`}
-                  >
-                    <div className="absolute top-2 left-2 z-10">
-                      <Badge className="bg-accent text-white border-0 px-2 py-0.5 text-[10px]">
-                        <Tag className="w-3 h-3 ml-1" />
-                        {t("menu.offer_badge")}
-                      </Badge>
-                    </div>
-                    {offer.imageUrl && (
-                      <div className="aspect-video rounded-xl overflow-hidden bg-secondary">
-                        <img 
-                          src={offer.imageUrl} 
-                          loading="lazy"
-                          decoding="async"
-                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" 
-                          alt={i18n.language === 'ar' ? offer.nameAr : offer.nameEn || offer.nameAr} 
-                        />
+              <div className="flex gap-4 overflow-x-auto no-scrollbar snap-x snap-mandatory -mx-4 px-4 pb-3">
+                {promoOffers.map((offer: any) => {
+                  const discountPct = offer.originalPrice > offer.offerPrice
+                    ? Math.round(((offer.originalPrice - offer.offerPrice) / offer.originalPrice) * 100)
+                    : 0;
+                  const offerName = i18n.language === 'ar' ? offer.nameAr : (offer.nameEn || offer.nameAr);
+
+                  const handleOrderBundle = () => {
+                    if (!isStoreOpen()) {
+                      toast({ title: i18n.language === 'ar' ? "المتجر مغلق" : "Store Closed", variant: "destructive" });
+                      return;
+                    }
+                    const items: Array<{coffeeItemId: string; quantity: number}> = offer.items || [];
+                    if (items.length > 0) {
+                      items.forEach((bi: {coffeeItemId: string; quantity: number}) => {
+                        addToCart(bi.coffeeItemId, bi.quantity || 1);
+                      });
+                      toast({
+                        title: `✅ ${offerName}`,
+                        description: i18n.language === 'ar' ? "تمت إضافة الباقة للسلة" : "Bundle added to cart",
+                        duration: 3000,
+                      });
+                    } else {
+                      toast({
+                        title: `🎁 ${offerName}`,
+                        description: i18n.language === 'ar' ? `سعر الباقة: ${offer.offerPrice} ر.س` : `Bundle price: ${offer.offerPrice} SAR`,
+                        duration: 4000,
+                      });
+                    }
+                  };
+
+                  return (
+                    <motion.div
+                      key={offer.id}
+                      whileTap={{ scale: 0.97 }}
+                      className="flex-shrink-0 w-[260px] snap-start rounded-2xl overflow-hidden border border-border/50 shadow-sm bg-card group"
+                      data-testid={`card-offer-${offer.id}`}
+                    >
+                      {/* Image */}
+                      <div className="relative h-36 bg-gradient-to-br from-primary/10 to-accent/10 overflow-hidden">
+                        {offer.imageUrl ? (
+                          <img
+                            src={offer.imageUrl}
+                            alt={offerName}
+                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                            onError={(e) => { const el = e.currentTarget as HTMLImageElement; el.style.display = 'none'; el.parentElement!.querySelector('.offer-fallback')?.classList.remove('hidden'); }}
+                          />
+                        ) : null}
+                        <div className={`offer-fallback w-full h-full flex items-center justify-center text-5xl ${offer.imageUrl ? 'hidden' : ''}`}>🎁</div>
+                        {/* Discount badge */}
+                        {discountPct > 0 && (
+                          <div className={`absolute top-2 ${i18n.language === 'ar' ? 'left-2' : 'right-2'} bg-primary text-white text-xs font-black px-2.5 py-1 rounded-full shadow-lg`}>
+                            -{discountPct}%
+                          </div>
+                        )}
+                        {/* Type badge */}
+                        <div className={`absolute top-2 ${i18n.language === 'ar' ? 'right-2' : 'left-2'} bg-black/50 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-0.5 rounded-full`}>
+                          {offer.offerType === 'bundle' ? '📦 باقة' : offer.offerType === 'bogo' ? '🎁 اشتر+احصل' : '🏷️ خصم'}
+                        </div>
                       </div>
-                    )}
-                    <div className="space-y-1.5">
-                      <h3 className="text-sm font-semibold text-foreground">{i18n.language === 'ar' ? offer.nameAr : offer.nameEn || offer.nameAr}</h3>
-                      {offer.description && (
-                        <p className="text-xs text-muted-foreground line-clamp-2">{offer.description}</p>
-                      )}
-                      <div className="flex items-center gap-2">
-                        <span className="text-accent font-bold">{offer.offerPrice} <small className="text-xs font-normal"><SarIcon /></small></span>
-                        <span className="text-xs text-muted-foreground line-through">{offer.originalPrice} <SarIcon /></span>
+
+                      {/* Content */}
+                      <div className="p-3 space-y-2">
+                        <h3 className="font-bold text-foreground text-sm leading-tight line-clamp-1">{offerName}</h3>
+                        {offer.description && (
+                          <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">{offer.description}</p>
+                        )}
+
+                        {/* Items list */}
+                        {offer.items && offer.items.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {offer.items.slice(0, 3).map((bi: any, idx: number) => {
+                              const item = coffeeItems.find((c: any) => c.id === bi.coffeeItemId);
+                              return item ? (
+                                <span key={idx} className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded-md">
+                                  {item.nameAr} {bi.quantity > 1 ? `×${bi.quantity}` : ''}
+                                </span>
+                              ) : null;
+                            })}
+                            {offer.items.length > 3 && (
+                              <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded-md">+{offer.items.length - 3}</span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Price */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-base font-black text-primary">
+                            {offer.offerPrice.toFixed(2)} <SarIcon size={11} />
+                          </span>
+                          {offer.originalPrice !== offer.offerPrice && (
+                            <span className="text-xs text-muted-foreground line-through">
+                              {offer.originalPrice.toFixed(2)} <SarIcon size={11} />
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Order button */}
+                        <button
+                          onClick={handleOrderBundle}
+                          disabled={!isStoreOpen()}
+                          className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed text-primary-foreground text-xs font-bold py-2 rounded-xl transition-all active:scale-95"
+                          data-testid={`btn-order-bundle-${offer.id}`}
+                        >
+                          {i18n.language === 'ar' ? 'اطلب الباقة' : 'Order Bundle'}
+                        </button>
                       </div>
-                    </div>
-                  </motion.div>
-                ))}
+                    </motion.div>
+                  );
+                })}
               </div>
             </section>
           )}
@@ -1037,16 +1089,12 @@ export default function MenuPage() {
                   onClick={() => handleAddToCartDirect(item)}
                   data-testid={`card-featured-${item.id}`}
                 >
-                  <div className="aspect-square rounded-xl overflow-hidden bg-secondary">
+                  <div className="aspect-square rounded-xl overflow-hidden bg-secondary flex items-center justify-center">
                     <img 
-                      src={item.imageUrl} 
-                      loading="lazy"
-                      decoding="async"
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" 
+                      src={item.imageUrl || clunyLogo} 
+                      className={`transition-transform duration-500 group-hover:scale-110 ${item.imageUrl ? 'w-full h-full object-cover' : 'w-3/4 h-3/4 object-contain p-1'}`}
                       alt={i18n.language === 'ar' ? item.nameAr : item.nameEn || item.nameAr} 
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).src = "/placeholder-coffee.png";
-                      }}
+                      onError={(e) => { const img = e.target as HTMLImageElement; img.src = clunyLogo; img.className = img.className.replace('object-cover', 'object-contain') + ' p-1 w-3/4 h-3/4'; }}
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -1069,43 +1117,46 @@ export default function MenuPage() {
             </h2>
             {businessConfig?.menuLayout === 'cards' ? (
               <CardsMenuLayout
-                items={sortedFilteredItems as any}
+                items={augmentedItems as any}
                 onAddItem={handleAddToCartDirect as any}
                 lang={i18n.language}
                 currency=<SarIcon />
                 favoriteIds={favoriteIds}
                 onToggleFavorite={isAuthenticated ? handleToggleFavorite : undefined}
+                itemAddonsMap={itemAddonsMap}
               />
             ) : businessConfig?.menuLayout === 'list' ? (
               <ListMenuLayout
-                items={sortedFilteredItems as any}
+                items={augmentedItems as any}
                 onAddItem={handleAddToCartDirect as any}
                 lang={i18n.language}
                 currency=<SarIcon />
                 favoriteIds={favoriteIds}
                 onToggleFavorite={isAuthenticated ? handleToggleFavorite : undefined}
+                itemAddonsMap={itemAddonsMap}
               />
             ) : (
               <ClassicMenuLayout
-                items={sortedFilteredItems as any}
+                items={augmentedItems as any}
                 onAddItem={handleAddToCartDirect as any}
                 lang={i18n.language}
                 currency=<SarIcon />
                 favoriteIds={favoriteIds}
                 onToggleFavorite={isAuthenticated ? handleToggleFavorite : undefined}
+                itemAddonsMap={itemAddonsMap}
               />
             )}
           </section>
         </div>
       </main>
-
       <AddToCartModal
         item={selectedItem}
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         variants={selectedItem ? (groupedItems[getGroupingKey(selectedItem)] || [selectedItem]) : []}
         onAddToCart={(data) => {
-          addToCart(data.coffeeItemId, data.quantity, data.selectedSize, data.selectedAddons, data.selectedItemAddons);
+          if (!checkReservationIsolation(!!data.isReservation)) return;
+          addToCart(data.coffeeItemId, data.quantity, data.selectedSize, data.selectedAddons, data.selectedItemAddons, data.selectedReservationPackage);
           setIsModalOpen(false);
           toast({ 
             title: t("menu.added_to_cart"), 
@@ -1114,7 +1165,6 @@ export default function MenuPage() {
           });
         }}
       />
-
       {totalItems > 0 && (
         <motion.div 
           initial={{ y: 100, opacity: 0 }}
@@ -1122,7 +1172,7 @@ export default function MenuPage() {
           className="fixed bottom-6 inset-x-4 z-50"
         >
           <Button 
-            onClick={() => showCart()}
+            onClick={() => setLocation("/cart")}
             className="w-full h-14 bg-primary hover:bg-primary/90 text-primary-foreground rounded-2xl shadow-lg flex items-center justify-between px-5"
             data-testid="button-view-cart"
           >
@@ -1137,7 +1187,7 @@ export default function MenuPage() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-lg font-bold">
-                {cartItems.reduce((sum, i) => {
+                {(cartItems || []).reduce((sum, i) => {
                   let itemPrice = 0;
                   const basePrice = i.coffeeItem?.price || 0;
 
@@ -1160,29 +1210,55 @@ export default function MenuPage() {
                   } else {
                     price = parseFloat(String(itemPrice));
                   }
+
+                  // Include inline addon prices
+                  const inlineAddonPrices = ((i as any).selectedItemAddons || []).reduce((s: number, a: any) => s + (Number(a.price) || 0), 0);
                   
-                  return sum + (isNaN(price) ? 0 : price * i.quantity);
+                  return sum + (isNaN(price) ? 0 : (price + inlineAddonPrices) * i.quantity);
                 }, 0).toFixed(2)} <SarIcon />
               </span>
             </div>
           </Button>
         </motion.div>
       )}
-
-      <footer className="text-center py-5 text-xs text-muted-foreground/50">
-        made by{" "}
-        <a
-          href="https://qiroxstudio.online"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-muted-foreground/70 hover:text-primary transition-colors underline underline-offset-2"
-          data-testid="link-qirox-studio"
-        >
-          Qirox Studio
-        </a>{" "}
-        group
+      <BranchesSection />
+      {/* Branch selector modal — shown on first visit or when user clicks the branch button */}
+      <BranchSelectorModal />
+      <footer className="text-center py-5 space-y-2">
+        <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground/70">
+          <a
+            href="tel:+966566507666"
+            className="flex items-center gap-1 hover:text-primary transition-colors"
+            data-testid="link-footer-call"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.63 3.45 2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 9a16 16 0 0 0 6 6l1.06-1.06a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 21.73 16z"/></svg>
+            <span dir="ltr">+966 56 650 7666</span>
+          </a>
+          <span className="text-muted-foreground/30">•</span>
+          <a
+            href="https://maps.app.goo.gl/zhHFfQVjWRxVKEBn6?g_st=ic"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 hover:text-primary transition-colors"
+            data-testid="link-footer-maps"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+            <span>موقعنا</span>
+          </a>
+        </div>
+        <div className="text-xs text-muted-foreground/40">
+          made by{" "}
+          <a
+            href="https://qiroxstudio.online"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-muted-foreground/70 transition-colors underline underline-offset-2"
+            data-testid="link-qirox-studio"
+          >
+            QIROX STUDIO | كيروكس استوديو
+          </a>
+        </div>
       </footer>
-
     </div>
   );
 }

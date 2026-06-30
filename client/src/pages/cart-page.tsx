@@ -8,6 +8,9 @@ import { getCoffeeImage } from "@/lib/coffee-data-clean";
 import { ArrowRight, ShoppingCart, Trash2, Plus, Minus, ArrowLeft } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import SarIcon from "@/components/sar-icon";
+import { useCustomer } from "@/contexts/CustomerContext";
+import { useAuthModal } from "@/contexts/AuthModalContext";
+import { customerStorage } from "@/lib/customer-storage";
 
 export default function CartPage() {
   const translation = useTranslation();
@@ -15,6 +18,16 @@ export default function CartPage() {
   const i18n = translation?.i18n || { language: 'ar' };
   const { cartItems, removeFromCart, updateQuantity, getTotalPrice } = useCartStore();
   const [, setLocation] = useLocation();
+  const { isAuthenticated } = useCustomer();
+  const { openAuthModal } = useAuthModal();
+  const goCheckout = () => {
+    const isGuest = customerStorage.isGuestMode() && !!customerStorage.getGuestInfo();
+    if (isAuthenticated || isGuest) {
+      setLocation("/delivery");
+      return;
+    }
+    openAuthModal({ onSuccess: () => setLocation("/delivery") });
+  };
 
   const isAr = i18n.language === 'ar';
 
@@ -115,10 +128,10 @@ export default function CartPage() {
                             className="w-16 h-16 sm:w-20 sm:h-20 object-cover rounded-xl shadow-lg"
                             loading="lazy"
                             onError={(e) => {
-                              e.currentTarget.src = "/images/default-coffee.png";
+                              e.currentTarget.src = "/images/brand-logo.png"; e.currentTarget.style.objectFit = "contain"; e.currentTarget.style.padding = "8px"; if (e.currentTarget.parentElement) e.currentTarget.parentElement.style.background = "#1a1a1a";
                             }}
                           />
-                          <div className={`absolute -top-1 sm:-top-2 w-5 h-5 sm:w-6 sm:h-6 bg-amber-600 rounded-full flex items-center justify-center shadow-md ${isAr ? '-right-1 sm:-right-2' : '-left-1 sm:-left-2'}`}>
+                          <div className={`absolute -top-1 sm:-top-2 w-5 h-5 sm:w-6 sm:h-6 bg-primary rounded-full flex items-center justify-center shadow-md ${isAr ? '-right-1 sm:-right-2' : '-left-1 sm:-left-2'}`}>
                             <span className="text-white text-[10px] sm:text-xs font-bold">{item.quantity}</span>
                           </div>
                         </div>
@@ -157,7 +170,7 @@ export default function CartPage() {
                           <Button
                             size="icon"
                             variant="ghost"
-                            onClick={() => updateQuantity(item.coffeeItemId, Math.max(0, item.quantity - 1))}
+                            onClick={() => updateQuantity(item.id, Math.max(0, item.quantity - 1))}
                             className="h-9 w-9 sm:h-8 sm:w-8 text-foreground hover:bg-primary hover:text-primary-foreground rounded-full"
                             data-testid={`button-decrease-${item.coffeeItemId}`}
                           >
@@ -171,7 +184,7 @@ export default function CartPage() {
                           <Button
                             size="icon"
                             variant="ghost"
-                            onClick={() => updateQuantity(item.coffeeItemId, item.quantity + 1)}
+                            onClick={() => updateQuantity(item.id, item.quantity + 1)}
                             className="h-9 w-9 sm:h-8 sm:w-8 text-foreground hover:bg-primary hover:text-primary-foreground rounded-full"
                             data-testid={`button-increase-${item.coffeeItemId}`}
                           >
@@ -182,7 +195,7 @@ export default function CartPage() {
                         <Button
                           size="icon"
                           variant="outline"
-                          onClick={() => removeFromCart(item.coffeeItemId)}
+                          onClick={() => removeFromCart(item.id)}
                           className="h-9 w-9 sm:h-10 sm:w-10 border-red-200 text-red-500 hover:bg-red-50 hover:border-red-300 rounded-full"
                           data-testid={`button-remove-${item.coffeeItemId}`}
                         >
@@ -197,7 +210,7 @@ export default function CartPage() {
 
             <div className="hidden lg:block lg:col-span-1">
               <Card className="bg-gradient-to-br from-card/95 to-background/80 border-primary/50 backdrop-blur-sm sticky top-24 shadow-2xl">
-                <CardHeader className="bg-gradient-to-r from-amber-600 to-orange-600 text-white rounded-t-lg">
+                <CardHeader className="bg-gradient-to-r from-primary to-primary/80 text-primary-foreground rounded-t-lg">
                   <CardTitle className="font-amiri text-2xl flex items-center gap-2">
                     <ShoppingCart className="w-6 h-6" />
                     {t("checkout.order_summary")}
@@ -219,8 +232,8 @@ export default function CartPage() {
                   </div>
 
                   <Button 
-                    onClick={() => setLocation("/delivery")}
-                    className="w-full bg-gradient-to-r from-amber-600 to-orange-600 text-white py-6 text-xl font-bold hover:from-amber-700 hover:to-orange-700 transition-all duration-300 shadow-xl hover:shadow-amber-500/25 rounded-full"
+                    onClick={goCheckout}
+                    className="w-full bg-primary text-primary-foreground py-6 text-xl font-bold hover:bg-primary/90 transition-all duration-300 shadow-xl rounded-full"
                     data-testid="button-checkout"
                   >
                     {t("cart.checkout_now")}
@@ -232,15 +245,15 @@ export default function CartPage() {
         </div>
 
         {/* Fixed Bottom Summary for Mobile */}
-        <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-card/95 backdrop-blur-xl border-t border-border shadow-2xl p-4 z-50">
+        <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-card/95 backdrop-blur-xl border-t border-border shadow-2xl p-4 pb-safe z-50" style={{paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 16px)'}}>
           <div className="flex items-center justify-between gap-4">
             <div className="flex flex-col text-start">
               <span className="text-xs text-muted-foreground">{t("cart.total")} ({t("cart.items_pcs", { count: cartItems.reduce((sum, item) => sum + item.quantity, 0) })})</span>
               <span className="text-xl font-black text-primary">{totalPrice.toFixed(2)} <SarIcon /></span>
             </div>
             <Button 
-              onClick={() => setLocation("/delivery")}
-              className="flex-1 max-w-[200px] bg-gradient-to-r from-amber-600 to-orange-600 text-white py-5 text-lg font-bold hover:from-amber-700 hover:to-orange-700 rounded-full shadow-lg"
+              onClick={goCheckout}
+              className="flex-1 max-w-[200px] bg-primary text-primary-foreground py-5 text-lg font-bold hover:bg-primary/90 rounded-full shadow-lg"
               data-testid="button-checkout-mobile"
             >
               {t("cart.checkout")}

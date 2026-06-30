@@ -102,7 +102,6 @@ import {
   StatusHistoryModel,
   AccountModel,
   AppointmentModel,
-  OrderCounterModel,
 } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { nanoid } from "nanoid";
@@ -408,10 +407,6 @@ export class DBStorage implements IStorage {
     }
   }
 
-  private async initializeCoffeeMenu() {
-    return;
-  }
-
   private async initializeDemoEmployee() {
     const existing = await EmployeeModel.findOne({ username: 'manager' });
     if (existing) return;
@@ -533,7 +528,14 @@ export class DBStorage implements IStorage {
   }
 
   async getEmployee(id: string): Promise<Employee | undefined> {
-    const employee = await EmployeeModel.findById(id).lean();
+    // Try by MongoDB ObjectId first, then fall back to custom id field (nanoid)
+    let employee: any = null;
+    if (id.match(/^[0-9a-fA-F]{24}$/)) {
+      employee = await EmployeeModel.findById(id).lean();
+    }
+    if (!employee) {
+      employee = await EmployeeModel.findOne({ id }).lean();
+    }
     if (!employee) return undefined;
     const result: any = {
       ...employee,
@@ -1048,30 +1050,53 @@ export class DBStorage implements IStorage {
     if (!order.items) throw new Error("Order items are missing in storage");
     if (!order.totalAmount && order.totalAmount !== 0) throw new Error("Order total amount is missing in storage");
 
-    const COUNTER_WRAP_AT = 9999; // Wrap display number after 9999
-
-    // Atomically increment the per-tenant counter — no race conditions, no slow sort queries
-    const counterDoc = await (OrderCounterModel as any).findOneAndUpdate(
-      { tenantId: order.tenantId },
-      { $inc: { seq: 1 } },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
-
-    const rawNext: number = counterDoc.seq;
-    // Wrap the display number: 1 → 9999 → 1 → ...
-    const nextNumber = ((rawNext - 1) % COUNTER_WRAP_AT) + 1;
-    const orderNumber = `ORD#${nextNumber.toString().padStart(4, '0')}`;
-
-    const orderData = { ...order, dailyNumber: rawNext, orderNumber };
-    console.log(`[STORAGE] Creating order #${orderNumber} (seq=${rawNext})`);
-    try {
-      const newOrder = new OrderModel(orderData);
-      await newOrder.save();
-      return serializeDoc(newOrder);
-    } catch (error: any) {
-      console.error("[STORAGE] Database error creating order:", error);
-      throw error;
+    // Auto-calculate prep time if not already set
+    if (!order.estimatedPrepTimeInMinutes) {
+      try {
+        const { BusinessConfigModel } = await import("@shared/schema");
+        const config = await BusinessConfigModel.findOne({ tenantId: order.tenantId || 'demo-tenant' }).lean();
+        const base = (config as any)?.prepBaseMinutes ?? 10;
+        const extra = (config as any)?.prepExtraMinutesPerItem ?? 3;
+        const freeCount = (config as any)?.prepFreeItemCount ?? 2;
+        const totalQty = Array.isArray(order.items)
+          ? order.items.reduce((s: number, i: any) => s + (Number(i.quantity) || 1), 0)
+          : 1;
+        const extraMins = totalQty > freeCount ? (totalQty - freeCount) * extra : 0;
+        order = { ...order, estimatedPrepTimeInMinutes: base + extraMins, prepTimeSetAt: new Date() };
+      } catch { /* use defaults */ }
     }
+
+    const MAX_RETRIES = 5;
+    const COUNTER_WRAP_AT = 1000; // Reset counter after 1000 orders
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        // Find the highest existing dailyNumber for this tenant
+        const lastOrder = await OrderModel.findOne(
+          { tenantId: order.tenantId },
+          { dailyNumber: 1 }
+        ).sort({ dailyNumber: -1 }).lean();
+        const rawNext = ((lastOrder as any)?.dailyNumber ?? 0) + 1 + attempt;
+        // Wrap around: after 1000, restart from 1
+        const nextNumber = ((rawNext - 1) % COUNTER_WRAP_AT) + 1;
+        const orderNumber = `ORD#${nextNumber.toString().padStart(4, '0')}`;
+
+        const orderData = { ...order, dailyNumber: rawNext, orderNumber };
+        console.log("[STORAGE] Creating order in DB:", JSON.stringify(orderData));
+        const newOrder = new OrderModel(orderData);
+        await newOrder.save();
+        return serializeDoc(newOrder);
+      } catch (error: any) {
+        const isDuplicate = error?.code === 11000 &&
+          (error?.keyPattern?.orderNumber || error?.keyPattern?.dailyNumber);
+        if (isDuplicate && attempt < MAX_RETRIES - 1) {
+          console.warn(`[STORAGE] Duplicate orderNumber on attempt ${attempt + 1}, retrying...`);
+          continue;
+        }
+        console.error("[STORAGE] Database error creating order:", error);
+        throw error;
+      }
+    }
+    throw new Error("Failed to generate a unique order number after retries");
   }
 
   async getOrder(id: string): Promise<Order | undefined> {
@@ -1083,7 +1108,35 @@ export class DBStorage implements IStorage {
   }
 
   async getOrderByNumber(orderNumber: string): Promise<Order | undefined> {
-    const order = await OrderModel.findOne({ orderNumber }).lean();
+    // Decode URL-encoded characters (e.g. %23 → #) from QR code URLs
+    let decoded = orderNumber;
+    try { decoded = decodeURIComponent(orderNumber); } catch {}
+
+    // Try exact match with original and decoded value
+    let order = await OrderModel.findOne({ orderNumber: decoded }).lean();
+    if (!order && decoded !== orderNumber) {
+      order = await OrderModel.findOne({ orderNumber }).lean();
+    }
+    if (!order) {
+      // Try matching dailyNumber: extract only digits from the input
+      const digits = decoded.replace(/\D/g, '');
+      const num = digits ? parseInt(digits, 10) : NaN;
+      if (!isNaN(num)) {
+        order = await OrderModel.findOne({ dailyNumber: num }).lean();
+      }
+    }
+    if (!order) {
+      // Try ORD#NNNN format in case user typed just a number like "0023"
+      const plainNum = parseInt(decoded.replace(/\D/g, ''), 10);
+      if (!isNaN(plainNum)) {
+        const paddedFmt = `ORD#${String(plainNum).padStart(4, '0')}`;
+        order = await OrderModel.findOne({ orderNumber: paddedFmt }).lean();
+      }
+    }
+    if (!order) {
+      // Try matching by custom id field
+      order = await OrderModel.findOne({ id: decoded }).lean();
+    }
     return order ? serializeDoc(order) : undefined;
   }
 
@@ -1121,6 +1174,7 @@ export class DBStorage implements IStorage {
           carType: carPickup.carType,
           carColor: carPickup.carColor,
           plateNumber: carPickup.plateNumber,
+          carPickup: true,
           'carInfo.carType': carPickup.carType,
           'carInfo.carColor': carPickup.carColor,
           'carInfo.plateNumber': carPickup.plateNumber,
@@ -1138,6 +1192,7 @@ export class DBStorage implements IStorage {
             carType: carPickup.carType,
             carColor: carPickup.carColor,
             plateNumber: carPickup.plateNumber,
+            carPickup: true,
             'carInfo.carType': carPickup.carType,
             'carInfo.carColor': carPickup.carColor,
             'carInfo.plateNumber': carPickup.plateNumber,
@@ -1150,9 +1205,8 @@ export class DBStorage implements IStorage {
     return order ? serializeDoc(order) : undefined;
   }
 
-  async getOrders(limit?: number, offset?: number, tenantId?: string): Promise<Order[]> {
-    const filter: any = tenantId ? { tenantId } : {};
-    let q = OrderModel.find(filter).sort({ createdAt: -1 }) as any;
+  async getOrders(limit?: number, offset?: number): Promise<Order[]> {
+    let q = OrderModel.find({}).sort({ createdAt: -1 }) as any;
     if (offset && offset > 0) q = q.skip(offset);
     if (limit && limit > 0) q = q.limit(limit);
     const orders = await q.lean();
@@ -1195,12 +1249,23 @@ export class DBStorage implements IStorage {
   }
 
   async createLoyaltyCard(card: InsertLoyaltyCard): Promise<LoyaltyCard> {
-    const newCard = await LoyaltyCardModel.create(card);
+    const cardWithDefaults = {
+      ...card,
+      id: nanoid(),
+      cardNumber: card.cardNumber || `QC${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+      qrToken: card.qrToken || `QR-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+      customerId: card.customerId || card.phoneNumber || `anon-${Date.now()}`,
+    };
+    const newCard = await LoyaltyCardModel.create(cardWithDefaults);
     return serializeDoc(newCard);
   }
 
   async getLoyaltyCard(id: string): Promise<LoyaltyCard | undefined> {
-    const card = await LoyaltyCardModel.findOne({ id }).lean();
+    if (!id) return undefined;
+    let card = await LoyaltyCardModel.findOne({ id }).lean();
+    if (!card && id.match(/^[0-9a-fA-F]{24}$/)) {
+      card = await LoyaltyCardModel.findById(id).lean();
+    }
     return card ? serializeDoc(card) : undefined;
   }
 
@@ -1228,7 +1293,11 @@ export class DBStorage implements IStorage {
   }
 
   async updateLoyaltyCard(id: string, updates: Partial<LoyaltyCard>): Promise<LoyaltyCard | undefined> {
-    const card = await LoyaltyCardModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).lean();
+    if (!id) return undefined;
+    let card = await LoyaltyCardModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).lean();
+    if (!card && id.match(/^[0-9a-fA-F]{24}$/)) {
+      card = await LoyaltyCardModel.findByIdAndUpdate(id, { $set: updates }, { new: true }).lean();
+    }
     return card ? serializeDoc(card) : undefined;
   }
 
@@ -1294,7 +1363,7 @@ export class DBStorage implements IStorage {
   }
 
   async createLoyaltyReward(reward: InsertLoyaltyReward): Promise<LoyaltyReward> {
-    const newReward = await LoyaltyRewardModel.create(reward);
+    const newReward = await LoyaltyRewardModel.create({ ...reward, id: nanoid() });
     return serializeDoc(newReward);
   }
 
@@ -1304,7 +1373,8 @@ export class DBStorage implements IStorage {
   }
 
   async getLoyaltyReward(id: string): Promise<LoyaltyReward | undefined> {
-    const reward = await LoyaltyRewardModel.findOne({ id }).lean();
+    let reward = await LoyaltyRewardModel.findOne({ id }).lean();
+    if (!reward && id.match(/^[0-9a-fA-F]{24}$/)) reward = await LoyaltyRewardModel.findById(id).lean().catch(() => null);
     return reward ? serializeDoc(reward) : undefined;
   }
 
@@ -1314,12 +1384,13 @@ export class DBStorage implements IStorage {
   }
 
   async createIngredient(ingredient: any): Promise<any> {
-    const newIngredient = await IngredientModel.create(ingredient);
+    const newIngredient = await IngredientModel.create({ ...ingredient, id: nanoid() });
     return serializeDoc(newIngredient);
   }
 
   async updateIngredientAvailability(id: string, isAvailable: number): Promise<any> {
-    const ingredient = await IngredientModel.findOneAndUpdate({ id }, { $set: { isAvailable } }, { new: true }).lean();
+    let ingredient = await IngredientModel.findOneAndUpdate({ id }, { $set: { isAvailable } }, { new: true }).lean();
+    if (!ingredient) ingredient = await IngredientModel.findByIdAndUpdate(id, { $set: { isAvailable } }, { new: true }).lean().catch(() => null);
     return ingredient ? serializeDoc(ingredient) : undefined;
   }
 
@@ -1353,6 +1424,23 @@ export class DBStorage implements IStorage {
       } catch (e) {
         // Invalid ObjectId format, ignore
       }
+    }
+    if (result.deletedCount > 0) {
+      // Remove branch from products' publishedBranches — if array becomes empty, mark as '*' (all branches)
+      await CoffeeItemModel.updateMany(
+        { publishedBranches: id },
+        { $pull: { publishedBranches: id } }
+      );
+      // Products that now have empty publishedBranches should be visible in all branches
+      await CoffeeItemModel.updateMany(
+        { publishedBranches: { $size: 0 } },
+        { $set: { publishedBranches: ['*'] } }
+      );
+      // Also clean up branchAvailability entries for the deleted branch
+      await CoffeeItemModel.updateMany(
+        { 'branchAvailability.branchId': id },
+        { $pull: { branchAvailability: { branchId: id } } }
+      );
     }
     return result.deletedCount > 0;
   }
@@ -1395,7 +1483,7 @@ export class DBStorage implements IStorage {
   }
 
   async getRawItem(id: string): Promise<RawItem | undefined> {
-    const item = await RawItemModel.findOne({ id }).lean();
+    const item = await RawItemModel.findOne({ $or: [{ id }, { _id: id }] }).lean();
     return item ? serializeDoc(item) : undefined;
   }
 
@@ -1405,17 +1493,22 @@ export class DBStorage implements IStorage {
   }
 
   async createRawItem(item: InsertRawItem): Promise<RawItem> {
-    const newItem = await RawItemModel.create(item);
+    const { nanoid } = await import("nanoid");
+    const newItem = await RawItemModel.create({ id: nanoid(), ...item });
     return serializeDoc(newItem);
   }
 
   async updateRawItem(id: string, updates: Partial<RawItem>): Promise<RawItem | undefined> {
-    const item = await RawItemModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).lean();
+    const item = await RawItemModel.findOneAndUpdate(
+      { $or: [{ id }, { _id: id }] },
+      { $set: { ...updates, updatedAt: new Date() } },
+      { new: true }
+    ).lean();
     return item ? serializeDoc(item) : undefined;
   }
 
   async deleteRawItem(id: string): Promise<boolean> {
-    const result = await RawItemModel.deleteOne({ id });
+    const result = await RawItemModel.deleteOne({ $or: [{ id }, { _id: id }] });
     return result.deletedCount > 0;
   }
 
@@ -1435,28 +1528,60 @@ export class DBStorage implements IStorage {
   }
 
   async createSupplier(supplier: InsertSupplier): Promise<Supplier> {
-    const newSupplier = await SupplierModel.create(supplier);
+    const newSupplier = await SupplierModel.create({ ...supplier, id: nanoid() });
     return serializeDoc(newSupplier);
   }
 
   async updateSupplier(id: string, updates: Partial<Supplier>): Promise<Supplier | undefined> {
-    const supplier = await SupplierModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).lean();
+    let supplier = await SupplierModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).lean();
+    if (!supplier) supplier = await SupplierModel.findByIdAndUpdate(id, { $set: updates }, { new: true }).lean().catch(() => null);
     return supplier ? serializeDoc(supplier) : undefined;
   }
 
   async deleteSupplier(id: string): Promise<boolean> {
-    const result = await SupplierModel.deleteOne({ id });
+    let result = await SupplierModel.deleteOne({ id });
+    if (result.deletedCount === 0) result = await SupplierModel.deleteOne({ _id: id }).catch(() => ({ deletedCount: 0 })) as any;
     return result.deletedCount > 0;
   }
 
   async getBranchStock(branchId: string): Promise<BranchStock[]> {
     const stock = await BranchStockModel.find({ branchId }).lean();
-    return (stock as any[]).map(serializeDoc);
+    const rawItems = await RawItemModel.find({}).lean();
+    return (stock as any[]).map(s => {
+      const serialized = serializeDoc(s);
+      const rawItem = rawItems.find((r: any) => r.id === s.rawItemId || r._id?.toString() === s.rawItemId);
+      if (rawItem) {
+        serialized.rawItem = {
+          nameAr: (rawItem as any).nameAr,
+          nameEn: (rawItem as any).nameEn,
+          code: (rawItem as any).code,
+          unit: (rawItem as any).unit,
+          minStockLevel: (rawItem as any).minStockLevel,
+          unitCost: (rawItem as any).unitCost,
+          category: (rawItem as any).category,
+        };
+      }
+      return serialized;
+    });
   }
 
   async getBranchStockItem(branchId: string, rawItemId: string): Promise<BranchStock | undefined> {
     const stock = await BranchStockModel.findOne({ branchId, rawItemId }).lean();
-    return stock ? serializeDoc(stock) : undefined;
+    if (!stock) return undefined;
+    const serialized = serializeDoc(stock);
+    const rawItem = await RawItemModel.findOne({ $or: [{ id: rawItemId }, { _id: rawItemId }] }).lean();
+    if (rawItem) {
+      serialized.rawItem = {
+        nameAr: (rawItem as any).nameAr,
+        nameEn: (rawItem as any).nameEn,
+        code: (rawItem as any).code,
+        unit: (rawItem as any).unit,
+        minStockLevel: (rawItem as any).minStockLevel,
+        unitCost: (rawItem as any).unitCost,
+        category: (rawItem as any).category,
+      };
+    }
+    return serialized;
   }
 
   async updateBranchStock(branchId: string, rawItemId: string, quantity: number, createdBy: string, movementType: string = "adjustment", notes: string = ""): Promise<BranchStock> {
@@ -1520,7 +1645,23 @@ export class DBStorage implements IStorage {
 
   async getAllBranchesStock(): Promise<any[]> {
     const stock = await BranchStockModel.find({}).lean();
-    return (stock as any[]).map(serializeDoc);
+    const rawItems = await RawItemModel.find({}).lean();
+    return (stock as any[]).map(s => {
+      const serialized = serializeDoc(s);
+      const rawItem = rawItems.find((r: any) => r.id === s.rawItemId || r._id?.toString() === s.rawItemId);
+      if (rawItem) {
+        serialized.rawItem = {
+          nameAr: (rawItem as any).nameAr,
+          nameEn: (rawItem as any).nameEn,
+          code: (rawItem as any).code,
+          unit: (rawItem as any).unit,
+          minStockLevel: (rawItem as any).minStockLevel,
+          unitCost: (rawItem as any).unitCost,
+          category: (rawItem as any).category,
+        };
+      }
+      return serialized;
+    });
   }
 
   async getStockTransfers(branchId?: string): Promise<StockTransfer[]> {
@@ -1530,24 +1671,30 @@ export class DBStorage implements IStorage {
   }
 
   async getStockTransfer(id: string): Promise<StockTransfer | undefined> {
-    const transfer = await StockTransferModel.findOne({ id }).lean();
+    const transfer = await StockTransferModel.findOne({ $or: [{ id }, { _id: id }] }).lean().catch(() => StockTransferModel.findOne({ id }).lean());
     return transfer ? serializeDoc(transfer) : undefined;
   }
 
   async createStockTransfer(transfer: InsertStockTransfer): Promise<StockTransfer> {
-    const newTransfer = await StockTransferModel.create(transfer);
+    const year = new Date().getFullYear();
+    const month = String(new Date().getMonth() + 1).padStart(2, "0");
+    const count = await StockTransferModel.countDocuments({});
+    const transferNumber = `TR-${year}${month}-${String(count + 1).padStart(5, "0")}`;
+    const newTransfer = await StockTransferModel.create({ ...transfer, id: nanoid(), transferNumber });
     return serializeDoc(newTransfer);
   }
 
   async updateStockTransferStatus(id: string, status: string, approvedBy?: string): Promise<StockTransfer | undefined> {
     const updates: any = { status };
     if (approvedBy) updates.approvedBy = approvedBy;
-    const transfer = await StockTransferModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).lean();
+    let transfer = await StockTransferModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).lean();
+    if (!transfer) transfer = await StockTransferModel.findByIdAndUpdate(id, { $set: updates }, { new: true }).lean().catch(() => null);
     return transfer ? serializeDoc(transfer) : undefined;
   }
 
   async completeStockTransfer(id: string, completedBy: string): Promise<StockTransfer | undefined> {
-    const transfer = await StockTransferModel.findOne({ id });
+    const transfer = await StockTransferModel.findOne({ id })
+      || await StockTransferModel.findById(id).catch(() => null);
     if (!transfer || transfer.status !== "approved") return undefined;
     for (const item of transfer.items) {
       const fromStock = await BranchStockModel.findOne({ branchId: transfer.fromBranchId, rawItemId: item.rawItemId });
@@ -1580,22 +1727,32 @@ export class DBStorage implements IStorage {
   }
 
   async getPurchaseInvoice(id: string): Promise<PurchaseInvoice | undefined> {
-    const invoice = await PurchaseInvoiceModel.findOne({ id }).lean();
+    const invoice = await PurchaseInvoiceModel.findOne({ id }).lean()
+      || await PurchaseInvoiceModel.findById(id).lean().catch(() => null);
     return invoice ? serializeDoc(invoice) : undefined;
   }
 
   async createPurchaseInvoice(invoice: InsertPurchaseInvoice): Promise<PurchaseInvoice> {
-    const newInvoice = await PurchaseInvoiceModel.create(invoice);
+    // Auto-generate a unique invoice number if not provided
+    const year = new Date().getFullYear();
+    const month = String(new Date().getMonth() + 1).padStart(2, "0");
+    const count = await PurchaseInvoiceModel.countDocuments({});
+    const invoiceNumber = `PO-${year}${month}-${String(count + 1).padStart(5, "0")}`;
+    const newInvoice = await PurchaseInvoiceModel.create({ ...invoice, id: nanoid(), invoiceNumber });
     return serializeDoc(newInvoice);
   }
 
   async updatePurchaseInvoice(id: string, updates: Partial<PurchaseInvoice>): Promise<PurchaseInvoice | undefined> {
-    const invoice = await PurchaseInvoiceModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).lean();
+    let invoice = await PurchaseInvoiceModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).lean();
+    if (!invoice) {
+      invoice = await PurchaseInvoiceModel.findByIdAndUpdate(id, { $set: updates }, { new: true }).lean().catch(() => null);
+    }
     return invoice ? serializeDoc(invoice) : undefined;
   }
 
   async receivePurchaseInvoice(id: string, receivedBy: string): Promise<PurchaseInvoice | undefined> {
-    const invoice = await PurchaseInvoiceModel.findOne({ id });
+    const invoice = await PurchaseInvoiceModel.findOne({ id })
+      || await PurchaseInvoiceModel.findById(id).catch(() => null);
     if (!invoice || invoice.status === "received") return undefined;
     
     // Update stock for each item in the invoice
@@ -1680,7 +1837,8 @@ export class DBStorage implements IStorage {
   }
 
   async updatePurchaseInvoicePayment(id: string, paidAmount: number): Promise<PurchaseInvoice | undefined> {
-    const invoice = await PurchaseInvoiceModel.findOne({ id });
+    const invoice = await PurchaseInvoiceModel.findOne({ id })
+      || await PurchaseInvoiceModel.findById(id).catch(() => null);
     if (!invoice) return undefined;
     invoice.paidAmount = (invoice.paidAmount || 0) + paidAmount;
     invoice.paymentStatus = invoice.paidAmount >= (invoice.totalAmount || 0) ? "paid" : "partial";
@@ -1699,17 +1857,19 @@ export class DBStorage implements IStorage {
   }
 
   async createRecipeItem(item: InsertRecipeItem): Promise<RecipeItem> {
-    const newItem = await RecipeItemModel.create(item);
+    const newItem = await RecipeItemModel.create({ ...item, id: nanoid() });
     return serializeDoc(newItem);
   }
 
   async updateRecipeItem(id: string, updates: Partial<RecipeItem>): Promise<RecipeItem | undefined> {
-    const item = await RecipeItemModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).lean();
+    let item = await RecipeItemModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).lean();
+    if (!item) item = await RecipeItemModel.findByIdAndUpdate(id, { $set: updates }, { new: true }).lean().catch(() => null);
     return item ? serializeDoc(item) : undefined;
   }
 
   async deleteRecipeItem(id: string): Promise<boolean> {
-    const result = await RecipeItemModel.deleteOne({ id });
+    let result = await RecipeItemModel.deleteOne({ id });
+    if (result.deletedCount === 0) result = await RecipeItemModel.deleteOne({ _id: id }).catch(() => ({ deletedCount: 0 })) as any;
     return result.deletedCount > 0;
   }
 
@@ -1726,7 +1886,7 @@ export class DBStorage implements IStorage {
   }
 
   async getStockAlerts(branchId?: string, resolved: boolean = false): Promise<StockAlert[]> {
-    const query: any = { resolved };
+    const query: any = { isResolved: resolved ? 1 : 0 };
     if (branchId) query.branchId = branchId;
     const alerts = await StockAlertModel.find(query).sort({ createdAt: -1 }).lean();
     return (alerts as any[]).map(serializeDoc);
@@ -1738,12 +1898,14 @@ export class DBStorage implements IStorage {
   }
 
   async resolveStockAlert(id: string, resolvedBy: string): Promise<StockAlert | undefined> {
-    const alert = await StockAlertModel.findOneAndUpdate({ id }, { $set: { resolved: true, resolvedBy, resolvedAt: new Date() } }, { new: true }).lean();
+    let alert = await StockAlertModel.findOneAndUpdate({ id }, { $set: { isResolved: 1, resolvedBy, resolvedAt: new Date() } }, { new: true }).lean();
+    if (!alert) alert = await StockAlertModel.findByIdAndUpdate(id, { $set: { isResolved: 1, resolvedBy, resolvedAt: new Date() } }, { new: true }).lean().catch(() => null);
     return alert ? serializeDoc(alert) : undefined;
   }
 
   async markAlertAsRead(id: string): Promise<StockAlert | undefined> {
-    const alert = await StockAlertModel.findOneAndUpdate({ id }, { $set: { isRead: 1 } }, { new: true }).lean();
+    let alert = await StockAlertModel.findOneAndUpdate({ id }, { $set: { isRead: 1 } }, { new: true }).lean();
+    if (!alert) alert = await StockAlertModel.findByIdAndUpdate(id, { $set: { isRead: 1 } }, { new: true }).lean().catch(() => null);
     return alert ? serializeDoc(alert) : undefined;
   }
 
@@ -1775,9 +1937,18 @@ export class DBStorage implements IStorage {
       )
     );
 
+    // Track items with no recipe to use coffeeItem.costOfGoods as fallback
+    type NoRecipeItem = { coffeeItemId: string; quantity: number };
+    const itemsWithNoRecipe: NoRecipeItem[] = [];
+
     for (const { item, recipe } of recipeResults) {
+      if (recipe.length === 0) {
+        console.warn(`[INVENTORY] No recipe found for coffeeItemId="${item.coffeeItemId}" — will use item.costOfGoods as fallback`);
+        itemsWithNoRecipe.push({ coffeeItemId: item.coffeeItemId, quantity: item.quantity || 1 });
+      }
       for (const r of recipe) {
-        tasks.push({ rawItemId: r.rawItemId, required: r.quantity * item.quantity, unit: r.unit, source: 'Recipe' });
+        const wasteMultiplier = 1 + ((r as any).wastePercentage || 0) / 100;
+        tasks.push({ rawItemId: r.rawItemId, required: r.quantity * item.quantity * wasteMultiplier, unit: r.unit, source: 'Recipe' });
       }
       if (item.addons && Array.isArray(item.addons)) {
         for (const addon of item.addons) {
@@ -1787,15 +1958,69 @@ export class DBStorage implements IStorage {
       }
     }
 
-    // Fetch all stock and raw items in parallel
-    const [stockResults, rawResults] = await Promise.all([
-      Promise.all(tasks.map(t => BranchStockModel.findOne({ branchId, rawItemId: t.rawItemId }))),
-      Promise.all(tasks.map(t => RawItemModel.findOne({ id: t.rawItemId }).lean()))
-    ]);
+    // Fallback: calculate COGS from coffeeItem.costOfGoods for items with no recipe
+    let fallbackCogs = 0;
+    if (itemsWithNoRecipe.length > 0) {
+      const coffeeIds = itemsWithNoRecipe.map(i => i.coffeeItemId);
+      const coffeeItems = await CoffeeItemModel.find({ id: { $in: coffeeIds } }).lean();
+      for (const noRecipeItem of itemsWithNoRecipe) {
+        const coffeeItem = coffeeItems.find((c: any) => c.id === noRecipeItem.coffeeItemId);
+        const itemCost = Number((coffeeItem as any)?.costOfGoods || 0) * noRecipeItem.quantity;
+        fallbackCogs += itemCost;
+      }
+    }
+
+    if (tasks.length === 0) {
+      // No recipes at all — log prominently so managers notice missing recipe links
+      const missingItemIds = itemsWithNoRecipe.map(i => i.coffeeItemId).join(', ');
+      console.warn(
+        `[INVENTORY] ⚠️ ORDER ${orderId}: No inventory deduction performed.\n` +
+        `  Reason: No recipes linked for item(s): ${missingItemIds || 'unknown'}.\n` +
+        `  Action: Link recipes to these items in Manager → Inventory → Recipes to enable stock deduction.\n` +
+        `  Fallback COGS (cost estimate only, no real deduction): ${fallbackCogs} SAR`
+      );
+      if (fallbackCogs > 0) {
+        await OrderModel.findOneAndUpdate({ id: orderId }, {
+          $set: {
+            costOfGoods: fallbackCogs,
+            inventoryDeducted: 0,
+            inventoryWarning: `No recipes linked for: ${missingItemIds}`,
+            updatedAt: new Date()
+          }
+        }).catch(() => {});
+      }
+      return {
+        success: true,
+        costOfGoods: fallbackCogs,
+        deductionDetails: [],
+        shortages: [],
+        warnings: [`⚠️ لم يتم خصم المخزون: لا توجد وصفات مرتبطة بالمنتجات [${missingItemIds}]. يُرجى ربط الوصفات من صفحة المخزون.`],
+        errors: []
+      };
+    }
+
+    // Fetch all raw items in parallel
+    const rawResults = await Promise.all(tasks.map(t => RawItemModel.findOne({ id: t.rawItemId }).lean()));
+
+    // Only deduct from the order's own branch — no cross-branch fallback.
+    // Cross-branch deduction caused phantom stock discrepancies across branches.
+    const uniqueRawItemIds = [...new Set(tasks.map(t => t.rawItemId))];
+    const branchStocksForItems = await BranchStockModel.find({
+      branchId,
+      rawItemId: { $in: uniqueRawItemIds }
+    }).lean();
+
+    const stockResults = tasks.map(task => {
+      const exactMatch = branchStocksForItems.find(s => s.rawItemId === task.rawItemId);
+      if (!exactMatch) {
+        console.warn(`[INVENTORY] No stock record for rawItemId="${task.rawItemId}" in branchId="${branchId}" — shortage recorded`);
+      }
+      return exactMatch ?? null;
+    });
 
     // Process each task with atomic $inc updates
     await Promise.all(tasks.map(async (task, idx) => {
-      const stock = stockResults[idx];
+      const stock = stockResults[idx] as any;
       const raw = rawResults[idx];
       const { rawItemId, required, unit, source } = task;
 
@@ -1803,13 +2028,13 @@ export class DBStorage implements IStorage {
         const previousQuantity = stock.currentQuantity;
         const newQuantity = previousQuantity - required;
 
-        // Atomic deduction to avoid race conditions
+        // Atomic deduction to avoid race conditions — always use order's branchId
         await BranchStockModel.findOneAndUpdate(
           { branchId, rawItemId, currentQuantity: { $gte: required } },
           { $inc: { currentQuantity: -required }, $set: { lastUpdated: new Date() } }
         );
 
-        const unitCost = Number((raw as any)?.lastCost || 0);
+        const unitCost = Number((raw as any)?.lastCost || (raw as any)?.unitCost || 0);
         const totalCost = unitCost * required;
         costOfGoods += totalCost;
 
@@ -1840,26 +2065,49 @@ export class DBStorage implements IStorage {
           notes: `Order #${orderId} - ${source} Item`
         }).catch(err => console.error('[INVENTORY] StockMovement create error:', err));
       } else {
+        const available = stock ? stock.currentQuantity : 0;
+        console.warn(`[INVENTORY] Shortage in branch "${branchId}": rawItemId="${rawItemId}" required=${required} available=${available}`);
         shortages.push({
           rawItemId,
           rawItemName: (raw as any)?.nameAr || "Unknown",
           required,
-          available: stock ? stock.currentQuantity : 0,
+          available,
           unit
         });
+        // Auto-create a stock alert so branch managers are notified of the shortage
+        StockAlertModel.findOneAndUpdate(
+          { branchId, rawItemId, isResolved: { $ne: 1 } },
+          {
+            $setOnInsert: {
+              id: nanoid(),
+              branchId,
+              rawItemId,
+              alertType: 'out_of_stock',
+              currentQuantity: available,
+              thresholdQuantity: required,
+              isRead: 0,
+              isResolved: 0,
+              createdAt: new Date(),
+            }
+          },
+          { upsert: true }
+        ).catch(err => console.error('[INVENTORY] StockAlert create error:', err));
       }
     }));
 
+    // Add fallback COGS for items that had no recipe
+    const totalCostOfGoods = costOfGoods + fallbackCogs;
+
     OrderModel.findOneAndUpdate({ id: orderId }, {
       $set: {
-        costOfGoods,
+        costOfGoods: totalCostOfGoods,
         inventoryDeducted: shortages.length === 0 ? 1 : 2,
         inventoryDeductionDetails: deductionDetails,
         updatedAt: new Date()
       }
     }).catch(err => console.error('[INVENTORY] Order COGS update error:', err));
 
-    return { success: shortages.length === 0, costOfGoods, grossProfit: 0, deductionDetails, shortages, warnings: [], errors: [] };
+    return { success: shortages.length === 0, costOfGoods: totalCostOfGoods, grossProfit: 0, deductionDetails, shortages, warnings: [], errors: [] };
   }
 
   async calculateOrderCOGS(items: any[], branchId?: string): Promise<any> {

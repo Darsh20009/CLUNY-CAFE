@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
+import { useTranslate } from "@/lib/useTranslate";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient } from "@/lib/queryClient";
-import { useOrderWebSocket } from "@/lib/websocket";
+import { queryClient, getErrorMessage } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +18,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { playNotificationSound } from "@/lib/notification-sounds";
+import { playNotificationSound, getSoundEnabled, setSoundEnabled as saveSoundEnabled } from "@/lib/notification-sounds";
+import { AudioUnlockBanner } from "@/components/audio-unlock-banner";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
 import SarIcon from "@/components/sar-icon";
 
@@ -55,9 +56,10 @@ interface IBranch {
 }
 
 export default function CashierTableOrders() {
+  const tc = useTranslate();
   const [, setLocation] = useLocation();
   const [employee, setEmployee] = useState<Employee | null>(null);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(() => getSoundEnabled('cashier-tables'));
   const previousOrderIdsRef = useRef<Set<string>>(new Set());
   const { toast } = useToast();
 
@@ -71,23 +73,10 @@ export default function CashierTableOrders() {
     }
   }, [setLocation]);
 
-  const handleOrderEvent = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["/api/orders/table/unassigned"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/cashier", employee?.id, "orders"] });
-  }, [employee?.id]);
-
-  useOrderWebSocket({
-    clientType: "display",
-    onNewOrder: handleOrderEvent,
-    onOrderUpdated: handleOrderEvent,
-    enabled: !!employee,
-  });
-
   // Fetch unassigned orders
   const { data: unassignedOrders } = useQuery<IOrder[]>({
     queryKey: ["/api/orders/table/unassigned"],
-    refetchInterval: 60000,
-    staleTime: 30000,
+    refetchInterval: 15000,
     enabled: !!employee,
   });
 
@@ -100,16 +89,25 @@ export default function CashierTableOrders() {
       const newOrderIds = [...currentOrderIds].filter(id => !previousOrderIdsRef.current.has(id));
       
       if (newOrderIds.length > 0 && previousOrderIdsRef.current.size > 0) {
-        // Play notification sound for new orders
+        // Check if any new orders are online (from customer website)
+        const newOrders = unassignedOrders.filter((o: any) => newOrderIds.includes(o.id));
+        const hasOnlineOrder = newOrders.some((o: any) =>
+          o.channel === 'online' || o.channel === 'web' || o.orderType === 'online' || !o.channel
+        );
+
         if (soundEnabled) {
-          playNotificationSound('cashierOrder', 0.6);
+          if (hasOnlineOrder) {
+            playNotificationSound('cashierOrder', 0.8);
+          } else {
+            playNotificationSound('newOrder', 0.6);
+          }
         }
         
         toast({
-          title: `طلب جديد من الطاولة`,
+          title: hasOnlineOrder ? `🌐 طلب جديد أونلاين` : `طلب جديد من الطاولة`,
           description: `لديك ${newOrderIds.length} ${newOrderIds.length === 1 ? 'طلب جديد' : 'طلبات جديدة'}`,
           duration: 6000,
-          className: "bg-green-600 text-white border-green-700",
+          className: hasOnlineOrder ? "bg-violet-600 text-white border-violet-700" : "bg-green-600 text-white border-green-700",
         });
       }
       
@@ -137,15 +135,14 @@ export default function CashierTableOrders() {
       if (!response.ok) throw new Error("Failed to fetch orders");
       return response.json();
     },
-    refetchInterval: 60000,
-    staleTime: 30000,
+    refetchInterval: 15000,
   });
 
   // Assign order to cashier mutation
   const assignOrderMutation = useMutation({
     mutationFn: async (orderId: string) => {
       if (!employee?.id) {
-        throw new Error("معرف الكاشير غير متاح. يرجى تسجيل الدخول مجدداً");
+        throw new Error(tc("معرف الكاشير غير متاح. يرجى تسجيل الدخول مجدداً", "Cashier ID not available. Please log in again."));
       }
       const response = await fetch(`/api/orders/${orderId}/assign-cashier`, {
         method: "PATCH",
@@ -169,14 +166,14 @@ export default function CashierTableOrders() {
       }
       
       toast({
-        title: "تم استلام الطلب",
-        description: "تم استلام الطلب بنجاح",
+        title: tc("تم استلام الطلب", "Order received"),
+        description: tc("تم استلام الطلب بنجاح", "Order was received successfully"),
       });
     },
     onError: (error: Error) => {
       toast({
-        title: "خطأ",
-        description: error.message,
+        title: tc("خطأ", "Error"),
+        description: getErrorMessage(error, tc("فشل تحديث الطلب", "Failed to update order")),
         variant: "destructive",
       });
     },
@@ -198,14 +195,14 @@ export default function CashierTableOrders() {
       queryClient.invalidateQueries({ queryKey: ["/api/orders/table/unassigned"] });
       queryClient.invalidateQueries({ queryKey: ["/api/cashier", employee?.id, "orders"] });
       toast({
-        title: "تم رفض الطلب",
-        description: "تم إلغاء الطلب بنجاح",
+        title: tc("تم رفض الطلب", "Order rejected"),
+        description: tc("تم إلغاء الطلب بنجاح", "Order was cancelled successfully"),
       });
     },
     onError: (error: Error) => {
       toast({
-        title: "خطأ",
-        description: error.message || "فشل رفض الطلب",
+        title: tc("خطأ", "Error"),
+        description: error.message || tc("فشل رفض الطلب", "Failed to reject order"),
         variant: "destructive",
       });
     },
@@ -215,7 +212,7 @@ export default function CashierTableOrders() {
   const updateStatusMutation = useMutation({
     mutationFn: async ({ orderId, status }: { orderId: string; status: string }) => {
       if (!employee?.id) {
-        throw new Error("معرف الكاشير غير متاح. يرجى تسجيل الدخول مجدداً");
+        throw new Error(tc("معرف الكاشير غير متاح. يرجى تسجيل الدخول مجدداً", "Cashier ID not available. Please log in again."));
       }
       const response = await fetch(`/api/orders/${orderId}/table-status`, {
         method: "PATCH",
@@ -239,14 +236,14 @@ export default function CashierTableOrders() {
       }
       
       toast({
-        title: "تم تحديث حالة الطلب",
+        title: tc("تم تحديث حالة الطلب", "Order status updated"),
         description: getStatusDescription(variables.status),
       });
     },
     onError: () => {
       toast({
-        title: "خطأ",
-        description: "فشل تحديث حالة الطلب",
+        title: tc("خطأ", "Error"),
+        description: tc("فشل تحديث حالة الطلب", "Failed to update order status"),
         variant: "destructive",
       });
     },
@@ -255,38 +252,38 @@ export default function CashierTableOrders() {
   const getStatusDescription = (status: string) => {
     switch (status) {
       case "payment_confirmed":
-        return "تم تأكيد الدفع";
+        return tc("تم تأكيد الدفع", "Payment confirmed");
       case "preparing":
-        return "الطلب قيد التحضير";
+        return tc("الطلب قيد التحضير", "Order is being prepared");
       case "ready":
-        return "الطلب جاهز للتقديم";
+        return tc("الطلب جاهز للتقديم", "Order ready to serve");
       case "delivered":
-        return "تم تقديم الطلب للعميل";
+        return tc("تم تقديم الطلب للعميل", "Order served to customer");
       case "cancelled":
-        return "تم إلغاء الطلب";
+        return tc("تم إلغاء الطلب", "Order cancelled");
       default:
-        return "تم تحديث الحالة";
+        return tc("تم تحديث الحالة", "Status updated");
     }
   };
 
   const getStatusBadge = (status?: string) => {
     switch (status) {
       case "pending":
-        return <Badge className="bg-yellow-500 hover:bg-yellow-600 text-white">طلب جديد</Badge>;
+        return <Badge className="bg-yellow-500 hover:bg-yellow-600 text-white">{tc("طلب جديد", "New Order")}</Badge>;
       case "payment_confirmed":
-        return <Badge className="bg-green-500 hover:bg-green-600 text-white">تم الدفع</Badge>;
+        return <Badge className="bg-green-500 hover:bg-green-600 text-white">{tc("تم الدفع", "Paid")}</Badge>;
       case "preparing":
-        return <Badge className="bg-blue-500 hover:bg-blue-600 text-white">قيد التحضير</Badge>;
+        return <Badge className="bg-blue-500 hover:bg-blue-600 text-white">{tc("قيد التحضير", "Preparing")}</Badge>;
       case "ready":
-        return <Badge className="bg-purple-500 hover:bg-purple-600 text-white">جاهز للتقديم</Badge>;
+        return <Badge className="bg-purple-500 hover:bg-purple-600 text-white">{tc("جاهز للتقديم", "Ready")}</Badge>;
       case "delivering_to_table":
-        return <Badge className="bg-purple-500 hover:bg-purple-600 text-white">جاري التوصيل</Badge>;
+        return <Badge className="bg-purple-500 hover:bg-purple-600 text-white">{tc("جاري التوصيل", "Delivering")}</Badge>;
       case "delivered":
-        return <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white">تم التقديم</Badge>;
+        return <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white">{tc("تم التقديم", "Served")}</Badge>;
       case "cancelled":
-        return <Badge className="bg-red-600 hover:bg-red-700 text-white">ملغي</Badge>;
+        return <Badge className="bg-red-600 hover:bg-red-700 text-white">{tc("ملغي", "Cancelled")}</Badge>;
       default:
-        return <Badge variant="secondary">غير معروف</Badge>;
+        return <Badge variant="secondary">{tc("غير معروف", "Unknown")}</Badge>;
     }
   };
 
@@ -316,29 +313,25 @@ export default function CashierTableOrders() {
   const filteredMyOrders = myOrders || [];
 
   return (
-    <div className="min-h-screen p-4 pb-20 sm:pb-4 bg-[#e3e1c5] text-[#111112]" dir="rtl">
+    <div className="min-h-screen p-4 pb-20 sm:pb-4 bg-background">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-accent">إدارة طلبات الطاولات</h1>
+            <h1 className="text-3xl font-bold text-accent">{tc("إدارة طلبات الطاولات", "Table Orders")}</h1>
             <p className="text-gray-400">
-              مرحباً {employee?.fullName}
+              {tc("مرحباً", "Welcome")} {employee?.fullName}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button 
-              variant="outline" 
-              size="icon"
-              onClick={() => setSoundEnabled(!soundEnabled)}
-              className={soundEnabled ? "border-green-500 text-green-500" : "border-muted text-muted-foreground"}
-              data-testid="button-toggle-sound"
-              aria-label={soundEnabled ? "كتم الصوت" : "تفعيل الصوت"}
-            >
-              {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-            </Button>
-            <Button variant="outline" className="bg-[#944219]" onClick={() => setLocation("/employee/dashboard")}>
-              العودة للوحة التحكم
+            <AudioUnlockBanner
+              pageKey="cashier-tables"
+              soundEnabled={soundEnabled}
+              onToggleSound={(val) => { setSoundEnabled(val); saveSoundEnabled('cashier-tables', val); }}
+              compact
+            />
+            <Button variant="outline" className="bg-gray-800" onClick={() => setLocation("/employee/home")}>
+              {tc("العودة للوحة التحكم", "Back to Dashboard")}
             </Button>
           </div>
         </div>
@@ -347,26 +340,26 @@ export default function CashierTableOrders() {
         <Tabs defaultValue="pending" className="space-y-4">
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="pending">
-              طلبات جديدة ({filteredUnassignedOrders.length})
+              {tc("طلبات جديدة", "New Orders")} ({filteredUnassignedOrders.length})
             </TabsTrigger>
             <TabsTrigger value="my-orders">
-              طلباتي ({filteredMyOrders.filter(o => o.tableStatus !== 'delivered' && o.tableStatus !== 'cancelled').length})
+              {tc("طلباتي", "My Orders")} ({filteredMyOrders.filter(o => o.tableStatus !== 'delivered' && o.tableStatus !== 'cancelled').length})
             </TabsTrigger>
             <TabsTrigger value="tables">
-              إدارة الطاولات
+              {tc("إدارة الطاولات", "Table Management")}
             </TabsTrigger>
           </TabsList>
 
           {/* Unassigned Orders */}
           <TabsContent value="pending">
-            <Card className="border-primary/20 bg-[#54513f]">
+            <Card className="border-primary/20 bg-card">
               <CardHeader>
-                <CardTitle className="text-accent text-right">الطلبات الجديدة</CardTitle>
+                <CardTitle className="text-accent text-right">{tc("الطلبات الجديدة", "New Orders")}</CardTitle>
               </CardHeader>
               <CardContent>
                 {filteredUnassignedOrders.length === 0 ? (
                   <div className="text-center py-8 text-gray-400">
-                    لا توجد طلبات جديدة
+                    {tc("لا توجد طلبات جديدة", "No new orders")}
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -374,14 +367,14 @@ export default function CashierTableOrders() {
                       const StatusIcon = getStatusIcon(order.tableStatus);
                       const branch = branches.find(b => b.id === order.branchId);
                       return (
-                        <Card key={order.id} className="bg-[#1a1410] border-primary/10">
+                        <Card key={order.id} className="bg-gray-900 border-primary/10">
                           <CardContent className="p-4">
                             <div className="flex flex-wrap items-center justify-between gap-4">
                               <div className="flex-1 space-y-2">
                                 {branch && (
                                   <div className="flex items-center gap-2 mb-2">
                                     <MapPin className="w-4 h-4 text-accent" />
-                                    <span className="text-xs bg-gradient-to-r from-amber-600 to-amber-700 text-white px-2 py-1 rounded">
+                                    <span className="text-xs bg-primary text-white px-2 py-1 rounded">
                                       {branch.nameAr}
                                     </span>
                                   </div>
@@ -389,7 +382,7 @@ export default function CashierTableOrders() {
                                 <div className="flex items-center gap-2">
                                   <StatusIcon className="w-5 h-5" />
                                   <h3 className="font-bold text-lg">
-                                    طاولة {order.tableNumber}
+                                    {tc("طاولة", "Table")} {order.tableNumber}
                                   </h3>
                                   {getStatusBadge(order.tableStatus)}
                                 </div>
@@ -401,7 +394,7 @@ export default function CashierTableOrders() {
                                 )}
                                 <div className="text-sm">
                                   <span className="font-medium">العناصر:</span>{" "}
-                                  {Array.isArray(order.items) ? order.items.map((item: any) => `${item.nameAr} (${item.quantity})`).join(", ") : "لا توجد عناصر"}
+                                  {Array.isArray(order.items) ? order.items.map((item: any) => `${item.nameAr} (${item.quantity})`).join(", ") : tc("لا توجد عناصر", "No items")}
                                 </div>
                                 <div className="font-bold text-lg">
                                   {order.totalAmount.toFixed(2)} <SarIcon />
@@ -415,12 +408,12 @@ export default function CashierTableOrders() {
                                   data-testid={`button-accept-${order.id}`}
                                 >
                                   <CheckCircle className="w-4 h-4 ml-1" />
-                                  قبول
+                                  {tc("قبول", "Accept")}
                                 </Button>
                                 <Button
                                   variant="destructive"
                                   onClick={() => {
-                                    if (confirm(`هل أنت متأكد من رفض طلب الطاولة ${order.tableNumber}؟`)) {
+                                    if (confirm(`${tc("هل أنت متأكد من رفض طلب الطاولة", "Are you sure you want to reject the order for table")} ${order.tableNumber}?`)) {
                                       rejectOrderMutation.mutate(order.id);
                                     }
                                   }}
@@ -428,7 +421,7 @@ export default function CashierTableOrders() {
                                   data-testid={`button-reject-${order.id}`}
                                 >
                                   <XCircle className="w-4 h-4 ml-1" />
-                                  رفض
+                                  {tc("رفض", "Reject")}
                                 </Button>
                               </div>
                             </div>
@@ -444,21 +437,21 @@ export default function CashierTableOrders() {
 
           {/* My Orders */}
           <TabsContent value="my-orders">
-            <Card className="border-primary/20 bg-[#54513f]">
+            <Card className="border-primary/20 bg-card">
               <CardHeader>
-                <CardTitle className="text-accent text-right">طلباتي</CardTitle>
+                <CardTitle className="text-accent text-right">{tc("طلباتي", "My Orders")}</CardTitle>
               </CardHeader>
               <CardContent>
                 {filteredMyOrders.length === 0 ? (
                   <div className="text-center py-8 text-gray-400">
-                    لا توجد طلبات مستلمة
+                    {tc("لا توجد طلبات مستلمة", "No received orders")}
                   </div>
                 ) : (
                   <div className="space-y-4">
                     {filteredMyOrders.map((order) => {
                       const StatusIcon = getStatusIcon(order.tableStatus);
                       return (
-                        <Card key={order.id} className="bg-[#1a1410] border-primary/10">
+                        <Card key={order.id} className="bg-gray-900 border-primary/10">
                           <CardContent className="p-4">
                             <div className="space-y-4">
                               <div className="flex flex-wrap items-center justify-between gap-4">
@@ -466,7 +459,7 @@ export default function CashierTableOrders() {
                                   <div className="flex items-center gap-2">
                                     <StatusIcon className="w-5 h-5" />
                                     <h3 className="font-bold text-lg">
-                                      طاولة {order.tableNumber}
+                                      {tc("طاولة", "Table")} {order.tableNumber}
                                     </h3>
                                     {getStatusBadge(order.tableStatus)}
                                   </div>
@@ -477,8 +470,8 @@ export default function CashierTableOrders() {
                                     </div>
                                   )}
                                   <div className="text-sm text-white">
-                                    <span className="font-medium">العناصر:</span>{" "}
-                                    {Array.isArray(order.items) ? order.items.map((item: any) => `${item.nameAr} (${item.quantity})`).join(", ") : "لا توجد عناصر"}
+                                    <span className="font-medium">{tc("العناصر:", "Items:")}</span>{" "}
+                                    {Array.isArray(order.items) ? order.items.map((item: any) => `${item.nameAr} (${item.quantity})`).join(", ") : tc("لا توجد عناصر", "No items")}
                                   </div>
                                   <div className="font-bold text-lg text-accent">
                                     {order.totalAmount.toFixed(2)} <SarIcon />
@@ -490,7 +483,7 @@ export default function CashierTableOrders() {
                               {order.tableStatus !== "delivered" && order.tableStatus !== "cancelled" && (
                                 <div className="border-t border-primary/20 pt-4 space-y-3">
                                   <div>
-                                    <Label className="text-accent text-sm mb-2 block">تحديث حالة الطلب:</Label>
+                                    <Label className="text-accent text-sm mb-2 block">{tc("تحديث حالة الطلب:", "Update order status:")}</Label>
                                     <Select
                                       value={order.tableStatus}
                                       onValueChange={(value) =>
@@ -505,12 +498,12 @@ export default function CashierTableOrders() {
                                       </SelectTrigger>
                                       <SelectContent>
                                         <SelectItem value="payment_confirmed">
-                                          تم تأكيد الدفع
+                                          {tc("تم تأكيد الدفع", "Payment Confirmed")}
                                         </SelectItem>
-                                        <SelectItem value="preparing">قيد التحضير</SelectItem>
-                                        <SelectItem value="ready">جاهز للتقديم</SelectItem>
-                                        <SelectItem value="delivered">تم التقديم</SelectItem>
-                                        <SelectItem value="cancelled">إلغاء</SelectItem>
+                                        <SelectItem value="preparing">{tc("قيد التحضير", "Preparing")}</SelectItem>
+                                        <SelectItem value="ready">{tc("جاهز للتقديم", "Ready to Serve")}</SelectItem>
+                                        <SelectItem value="delivered">{tc("تم التقديم", "Served")}</SelectItem>
+                                        <SelectItem value="cancelled">{tc("إلغاء", "Cancel")}</SelectItem>
                                       </SelectContent>
                                     </Select>
                                   </div>
@@ -519,14 +512,14 @@ export default function CashierTableOrders() {
                                       variant="destructive"
                                       size="sm"
                                       onClick={() => {
-                                        if (confirm(`هل أنت متأكد من رفض طلب الطاولة ${order.tableNumber}؟`)) {
+                                        if (confirm(`${tc("هل أنت متأكد من رفض طلب الطاولة", "Are you sure you want to reject the order for table")} ${order.tableNumber}?`)) {
                                           rejectOrderMutation.mutate(order.id);
                                         }
                                       }}
                                       disabled={rejectOrderMutation.isPending}
                                       data-testid={`button-reject-order-${order.id}`}
                                     >
-                                      رفض الطلب
+                                      {tc("رفض الطلب", "Reject Order")}
                                     </Button>
                                   </div>
                                 </div>
@@ -544,17 +537,17 @@ export default function CashierTableOrders() {
 
           {/* Tables Management */}
           <TabsContent value="tables">
-            <Card className="border-primary/20 bg-[#54513f]">
+            <Card className="border-primary/20 bg-card">
               <CardHeader>
-                <CardTitle className="text-accent text-right">إدارة الطاولات</CardTitle>
+                <CardTitle className="text-accent text-right">{tc("إدارة الطاولات", "Table Management")}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-center py-8">
                   <p className="text-gray-400 mb-4">
-                    لإدارة الطاولات، يرجى الذهاب إلى لوحة تحكم المدير
+                    {tc("لإدارة الطاولات، يرجى الذهاب إلى لوحة تحكم المدير", "To manage tables, please go to the manager dashboard")}
                   </p>
                   <Button onClick={() => setLocation("/manager/tables")}>
-                    الذهاب إلى إدارة الطاولات
+                    {tc("الذهاب إلى إدارة الطاولات", "Go to Table Management")}
                   </Button>
                 </div>
               </CardContent>

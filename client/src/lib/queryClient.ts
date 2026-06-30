@@ -1,10 +1,11 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { apiUrl } from "@/lib/server-url";
 
 function getEmployeeHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
   try {
     const stored = localStorage.getItem("currentEmployee");
-    const restoreKey = localStorage.getItem("cluny-restore-key");
+    const restoreKey = localStorage.getItem("qirox-restore-key");
     if (stored) {
       const employee = JSON.parse(stored);
       if (employee.id) headers['X-Employee-Id'] = employee.id;
@@ -16,12 +17,12 @@ function getEmployeeHeaders(): Record<string, string> {
 
 async function tryRestoreSession(): Promise<boolean> {
   const stored = localStorage.getItem("currentEmployee");
-  const restoreKey = localStorage.getItem("cluny-restore-key");
+  const restoreKey = localStorage.getItem("qirox-restore-key");
   if (!stored || !restoreKey) return false;
   
   try {
     const employee = JSON.parse(stored);
-    const res = await fetch("/api/employees/restore-session", {
+    const res = await fetch(apiUrl("/api/employees/restore-session"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -32,14 +33,14 @@ async function tryRestoreSession(): Promise<boolean> {
       const data = await res.json();
       localStorage.setItem("currentEmployee", JSON.stringify(data.employee));
       if (data.restoreKey) {
-        localStorage.setItem("cluny-restore-key", data.restoreKey);
+        localStorage.setItem("qirox-restore-key", data.restoreKey);
       }
       return true;
     }
   } catch (e) { console.warn('[queryClient] Session restore failed:', e); }
   
   localStorage.removeItem("currentEmployee");
-  localStorage.removeItem("cluny-restore-key");
+  localStorage.removeItem("qirox-restore-key");
   return false;
 }
 
@@ -59,6 +60,28 @@ async function throwIfResNotOk(res: Response) {
  }
 }
 
+export function getErrorMessage(error: unknown, fallback = "حدث خطأ، يرجى المحاولة مرة أخرى"): string {
+  if (!error) return fallback;
+  const msg = error instanceof Error ? error.message : String(error);
+  if (
+    msg.toLowerCase().includes("json") ||
+    msg.toLowerCase().includes("unexpected end") ||
+    msg.toLowerCase().includes("unexpected token") ||
+    msg.toLowerCase().includes("failed to fetch") ||
+    msg.toLowerCase().includes("networkerror") ||
+    msg.toLowerCase().includes("load failed")
+  ) {
+    return "تعذّر الاتصال بالسيرفر، يرجى المحاولة مرة أخرى";
+  }
+  return msg || fallback;
+}
+
+export async function safeParseJson<T>(res: Response): Promise<T | null> {
+  const text = await res.text();
+  if (!text || !text.trim()) return null;
+  try { return JSON.parse(text) as T; } catch { return null; }
+}
+
 export async function apiRequest(
  method: string,
  url: string,
@@ -67,7 +90,7 @@ export async function apiRequest(
 ): Promise<Response> {
  const employeeHeaders = getEmployeeHeaders();
  
- const res = await fetch(url, {
+ const res = await fetch(apiUrl(url), {
  method,
  headers: data 
    ? { "Content-Type": "application/json", ...employeeHeaders }
@@ -78,7 +101,7 @@ export async function apiRequest(
 
  const newRestoreKey = res.headers.get('X-New-Restore-Key');
  if (newRestoreKey) {
-   localStorage.setItem("cluny-restore-key", newRestoreKey);
+   localStorage.setItem("qirox-restore-key", newRestoreKey);
  }
 
  if (res.status === 401 && !isRetry) {
@@ -109,14 +132,14 @@ export const getQueryFn: <T>(options: {
  const url = queryKey.join("/") as string;
  const employeeHeaders = getEmployeeHeaders();
  
- let res = await fetch(url, {
+ let res = await fetch(apiUrl(url), {
  credentials: "include",
  headers: { ...employeeHeaders },
  });
 
  const newRestoreKey = res.headers.get('X-New-Restore-Key');
  if (newRestoreKey) {
-   localStorage.setItem("cluny-restore-key", newRestoreKey);
+   localStorage.setItem("qirox-restore-key", newRestoreKey);
  }
 
  if (res.status === 401 && unauthorizedBehavior !== "returnNull") {
@@ -129,7 +152,7 @@ export const getQueryFn: <T>(options: {
    }
    const restored = await (restorePromise || tryRestoreSession());
    if (restored) {
-     res = await fetch(url, { 
+     res = await fetch(apiUrl(url), { 
        credentials: "include",
        headers: { ...getEmployeeHeaders() },
      });
@@ -141,7 +164,9 @@ export const getQueryFn: <T>(options: {
  }
 
  await throwIfResNotOk(res);
- return await res.json();
+ const text = await res.text();
+ if (!text || !text.trim()) return null as any;
+ try { return JSON.parse(text); } catch { return null as any; }
  };
 
 export const queryClient = new QueryClient({

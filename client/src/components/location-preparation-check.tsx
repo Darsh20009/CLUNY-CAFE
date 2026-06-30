@@ -5,15 +5,28 @@ import { Badge } from '@/components/ui/badge';
 import { MapPin, Navigation, Clock, CheckCircle, AlertTriangle, Loader2, RefreshCw, ExternalLink } from 'lucide-react';
 
 interface Branch {
-  _id: string;
+  _id?: string;
+  id?: string;
   nameAr: string;
   nameEn?: string;
   address: string;
   phone: string;
+  // Server stores as lat/lng — support both formats for robustness
   location?: {
-    latitude: number;
-    longitude: number;
+    lat?: number;
+    lng?: number;
+    latitude?: number;
+    longitude?: number;
   };
+}
+
+// Normalize branch location to { lat, lng } — handles both formats
+function getBranchLatLng(location: Branch['location']): { lat: number; lng: number } | null {
+  if (!location) return null;
+  const lat = location.lat ?? location.latitude;
+  const lng = location.lng ?? location.longitude;
+  if (lat == null || lng == null || isNaN(lat) || isNaN(lng)) return null;
+  return { lat, lng };
 }
 
 interface LocationPreparationCheckProps {
@@ -45,7 +58,7 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
 export default function LocationPreparationCheck({ 
   branch, 
   onPreparationReady,
-  preparationRadius = 100000 
+  preparationRadius = 5 
 }: LocationPreparationCheckProps) {
   const [locationState, setLocationState] = useState<LocationState>({ status: 'idle' });
   const [distance, setDistance] = useState<number | null>(null);
@@ -60,13 +73,9 @@ export default function LocationPreparationCheck({
       longitude
     });
 
-    if (branch.location) {
-      const dist = calculateDistance(
-        latitude, 
-        longitude, 
-        branch.location.latitude, 
-        branch.location.longitude
-      );
+    const branchCoords = getBranchLatLng(branch.location);
+    if (branchCoords) {
+      const dist = calculateDistance(latitude, longitude, branchCoords.lat, branchCoords.lng);
       setDistance(Math.round(dist));
       const withinRadius = dist <= preparationRadius;
       setIsWithinRadius(withinRadius);
@@ -111,25 +120,25 @@ export default function LocationPreparationCheck({
 
     setLocationState({ status: 'loading' });
 
-    // Get initial position
+    // Get initial position — fast first fix using cached/low-accuracy
     navigator.geolocation.getCurrentPosition(
       handleLocationUpdate,
       handleLocationError,
       {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
+        enableHighAccuracy: false,
+        timeout: 4000,
+        maximumAge: 30000
       }
     );
 
-    // Watch for position changes
+    // Watch for position changes — high accuracy refines after first fix
     const id = navigator.geolocation.watchPosition(
       handleLocationUpdate,
       handleLocationError,
       {
         enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 5000
+        timeout: 8000,
+        maximumAge: 2000
       }
     );
     setWatchId(id);
@@ -149,15 +158,17 @@ export default function LocationPreparationCheck({
   }, [stopLocationTracking]);
 
   const openDirections = () => {
-    if (branch.location) {
-      const url = `https://www.google.com/maps/dir/?api=1&destination=${branch.location.latitude},${branch.location.longitude}&travelmode=driving`;
+    const branchCoords = getBranchLatLng(branch.location);
+    if (branchCoords) {
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${branchCoords.lat},${branchCoords.lng}&travelmode=driving`;
       window.open(url, '_blank');
     }
   };
 
   const openBranchLocation = () => {
-    if (branch.location) {
-      const url = `https://www.google.com/maps?q=${branch.location.latitude},${branch.location.longitude}`;
+    const branchCoords = getBranchLatLng(branch.location);
+    if (branchCoords) {
+      const url = `https://www.google.com/maps?q=${branchCoords.lat},${branchCoords.lng}`;
       window.open(url, '_blank');
     }
   };
@@ -170,7 +181,9 @@ export default function LocationPreparationCheck({
     return `${(distance / 1000).toFixed(1)} كم`;
   };
 
-  if (!branch.location) {
+  const branchCoordsForRender = getBranchLatLng(branch.location);
+
+  if (!branch.location || !branchCoordsForRender) {
     return (
       <Card className="border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-900">
         <CardContent className="p-4">
@@ -225,7 +238,7 @@ export default function LocationPreparationCheck({
         {locationState.status === 'idle' && (
           <div className="text-center py-6" dir="rtl">
             <p className="text-muted-foreground mb-4">
-              اضغط على الزر لتحديد موقعك والتحقق من قربك من الفرع (اختياري)
+              اضغط على الزر لتحديد موقعك والتحقق من قربك من الفرع (مطلوب لتأكيد الاستلام)
             </p>
             <Button 
               onClick={startLocationTracking}
@@ -319,7 +332,7 @@ export default function LocationPreparationCheck({
               <div className="bg-muted/50 rounded-lg p-3">
                 <p className="text-muted-foreground text-xs mb-1">موقع الفرع</p>
                 <p className="font-mono text-xs">
-                  {branch.location.latitude.toFixed(6)}, {branch.location.longitude.toFixed(6)}
+                  {(() => { const c = getBranchLatLng(branch.location); return c ? `${c.lat.toFixed(6)}, ${c.lng.toFixed(6)}` : '—'; })()}
                 </p>
               </div>
             </div>

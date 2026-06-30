@@ -1,106 +1,147 @@
 import { useLocation } from 'wouter';
-import { LayoutDashboard, Users, FileText, Settings, LogOut, Bell, MonitorSmartphone, CreditCard, UserCog } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
+import { LayoutDashboard, Users, FileText, Settings, LogOut, Bell, Code2, GitBranch, Mail, Coffee, BookOpen, Star, ClipboardList, CreditCard, Activity } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from '@/components/ui/sidebar';
+import clunyLogoStaff from "@assets/cluny-logo-customer.png";
+import { brand } from "@/lib/brand";
 
-export const adminNavItems = [
-  { id: 'dashboard', label: 'لوحة التحكم', shortLabel: 'الرئيسية', icon: LayoutDashboard, path: '/admin/dashboard' },
-  { id: 'reports', label: 'التقارير التفصيلية', shortLabel: 'التقارير', icon: FileText, path: '/admin/reports' },
-  { id: 'employees', label: 'الموظفون', shortLabel: 'الموظفون', icon: Users, path: '/admin/employees' },
-  { id: 'customers', label: 'إدارة العملاء', shortLabel: 'العملاء', icon: UserCog, path: '/admin/customers' },
-  { id: 'notifications', label: 'إرسال الإشعارات', shortLabel: 'الإشعارات', icon: Bell, path: '/admin/notifications' },
-  { id: 'settings', label: 'الإعدادات', shortLabel: 'الإعدادات', icon: Settings, path: '/admin/settings' },
-  { id: 'apple-pay', label: 'فحص Apple Pay', shortLabel: 'Apple Pay', icon: CreditCard, path: '/admin/apple-pay-health' },
-  { id: 'publishing', label: 'نشر التطبيق', shortLabel: 'النشر', icon: MonitorSmartphone, path: '/admin/app-publishing' },
-];
-
-function AdminSidebarLink({ item }: { item: typeof adminNavItems[number] }) {
-  const [location, navigate] = useLocation();
-  const { setOpenMobile } = useSidebar();
-  const Icon = item.icon;
-  const isActive = location === item.path;
-
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
-        asChild
-        isActive={isActive}
-        size="lg"
-        tooltip={item.label}
-        className={isActive ? 'bg-orange-600 text-white' : ''}
-      >
-        <button
-          type="button"
-          onClick={() => {
-            navigate(item.path);
-            setOpenMobile(false);
-          }}
-          data-testid={`sidebar-link-${item.id}`}
-        >
-          <Icon className="h-5 w-5" />
-          <span>{item.label}</span>
-        </button>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
-  );
-}
 
 export function AdminSidebar() {
-  const [, navigate] = useLocation();
-  const { setOpenMobile } = useSidebar();
+  const [location, navigate] = useLocation();
+  const { i18n } = useTranslation();
+  const isAr = i18n.language !== 'en';
+
+  const { data: unreadData } = useQuery<{ count: number }>({
+    queryKey: ['/api/notifications/unread-count'],
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const unreadCount = unreadData?.count ?? 0;
+
+  const groups = [
+    {
+      label: isAr ? "الرئيسية" : "Main",
+      items: [
+        { label: isAr ? 'لوحة التحكم' : 'Dashboard', icon: LayoutDashboard, path: '/admin/dashboard', isNotifications: false },
+      ]
+    },
+    {
+      label: isAr ? "العمليات" : "Operations",
+      items: [
+        { label: isAr ? 'إدارة المأكولات والمشروبات' : 'Menu Management', icon: Coffee, path: '/employee/menu-management', isNotifications: false },
+        { label: isAr ? 'إدارة الطلبات' : 'Orders', icon: ClipboardList, path: '/manager/orders', isNotifications: false },
+        { label: isAr ? 'حجوزات الطاولات' : 'Table Reservations', icon: BookOpen, path: '/manager/reservations', isNotifications: false },
+        { label: isAr ? 'حجوزات المنتجات' : 'Product Reservations', icon: Star, path: '/manager/product-reservations', isNotifications: false },
+      ]
+    },
+    {
+      label: isAr ? "الإدارة" : "Management",
+      items: [
+        { label: isAr ? 'الموظفون' : 'Employees', icon: Users, path: '/admin/employees', isNotifications: false },
+        { label: isAr ? 'الفروع' : 'Branches', icon: GitBranch, path: '/admin/branches', isNotifications: false },
+        { label: isAr ? 'التقارير' : 'Reports', icon: FileText, path: '/admin/reports', isNotifications: false },
+      ]
+    },
+    {
+      label: isAr ? "التواصل" : "Communication",
+      items: [
+        { label: isAr ? 'إرسال الإشعارات' : 'Send Notifications', icon: Bell, path: '/admin/notifications', isNotifications: true },
+        { label: isAr ? 'التسويق البريدي' : 'Email Marketing', icon: Mail, path: '/admin/email', isNotifications: false },
+      ]
+    },
+    {
+      label: isAr ? "المالية والأمان" : "Finance & Security",
+      items: [
+        { label: isAr ? 'سجل الدفعات والنظام' : 'Payments & System', icon: CreditCard, path: '/admin/payment-logs', isNotifications: false },
+      ]
+    },
+    {
+      label: isAr ? "الإعدادات" : "Settings",
+      items: [
+        { label: isAr ? 'الإعدادات' : 'Settings', icon: Settings, path: '/admin/settings', isNotifications: false },
+        { label: isAr ? 'إدارة API' : 'API Management', icon: Code2, path: '/admin/api', isNotifications: false },
+      ]
+    },
+  ];
 
   const handleLogout = async () => {
     await fetch('/api/employees/logout', { method: 'POST' });
-    localStorage.removeItem('cluny-restore-key');
-    setOpenMobile(false);
+    localStorage.removeItem("qirox-restore-key");
     navigate('/employee/login');
   };
 
   return (
-    <Sidebar side="right" collapsible="offcanvas" className="border-l border-orange-200 dark:border-orange-900/30">
-      <SidebarHeader className="border-b border-orange-200/80 bg-gradient-to-b from-orange-50 to-white p-5 dark:border-orange-900/30 dark:from-slate-900 dark:to-slate-950">
-        <div className="space-y-1">
-          <h2 className="text-xl font-bold text-orange-600 dark:text-orange-400" data-testid="text-admin-brand">CLUNY CAFE</h2>
-          <p className="text-xs text-muted-foreground" data-testid="text-admin-sidebar-subtitle">لوحة التحكم الإدارية</p>
+    <>
+      <div className="w-64 bg-background border-l border-border flex flex-col h-screen sticky top-0">
+        <div className="p-6 border-b border-border">
+          <div className="flex items-center gap-3 mb-1">
+            <img
+              src={clunyLogoStaff}
+              alt={brand.platformNameEn}
+              className="w-10 h-10 object-contain rounded-lg"
+            />
+            <div>
+              <h2 className="text-lg font-bold text-foreground">{isAr ? brand.platformNameAr : brand.platformNameEn}</h2>
+              <p className="text-xs text-muted-foreground">{isAr ? 'لوحة التحكم الإدارية' : 'Admin Dashboard'}</p>
+            </div>
+          </div>
         </div>
-      </SidebarHeader>
 
-      <SidebarContent className="bg-white p-2 dark:bg-slate-950">
-        <SidebarGroup>
-          <SidebarGroupLabel>التنقل السريع</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {adminNavItems.map((item) => (
-                <AdminSidebarLink key={item.path} item={item} />
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
+        <nav className="flex-1 p-4 space-y-4 overflow-y-auto">
+          {groups.map((group) => (
+            <div key={group.label}>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground px-2 mb-1">{group.label}</p>
+              <div className="space-y-1">
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = location === item.path;
+                  const showBadge = item.isNotifications && unreadCount > 0;
+                  return (
+                    <button
+                      key={item.path}
+                      onClick={() => navigate(item.path)}
+                      className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all text-right ${
+                        isActive
+                          ? 'bg-primary text-primary-foreground shadow-sm'
+                          : 'text-foreground hover:bg-primary/10'
+                      }`}
+                      data-testid={`sidebar-link-${item.path.split('/').pop()}`}
+                    >
+                      <div className="relative shrink-0">
+                        <Icon className="w-4 h-4" />
+                        {showBadge && (
+                          <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-3.5 px-0.5 rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center leading-none ring-1 ring-background">
+                            {unreadCount > 99 ? '99+' : unreadCount}
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-medium text-sm flex-1">{item.label}</span>
+                      {showBadge && (
+                        <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
+                          {unreadCount > 99 ? '99+' : unreadCount}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </nav>
 
-      <SidebarFooter className="border-t border-orange-200/80 bg-white p-4 dark:border-orange-900/30 dark:bg-slate-950">
-        <Button
-          onClick={handleLogout}
-          variant="outline"
-          className="w-full justify-start"
-          data-testid="button-logout"
-        >
-          <LogOut className="ml-2 h-4 w-4" />
-          تسجيل الخروج
-        </Button>
-      </SidebarFooter>
-    </Sidebar>
+        <div className="p-4 border-t border-border space-y-2">
+          <Button
+            onClick={handleLogout}
+            variant="outline"
+            className="w-full justify-start"
+            data-testid="button-logout"
+          >
+            <LogOut className="w-4 h-4 ml-2" />
+            {isAr ? 'تسجيل الخروج' : 'Logout'}
+          </Button>
+        </div>
+      </div>
+    </>
   );
 }

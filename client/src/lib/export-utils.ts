@@ -1,6 +1,7 @@
 /**
  * Export utility functions for CSV and PDF exports
  */
+import { brand } from "./brand";
 
 /**
  * Sanitize data for export by removing MongoDB internal fields
@@ -142,7 +143,7 @@ export function exportToPDF(
 
         <div class="info">
           <p>Generated on ${new Date().toLocaleString()}</p>
-          <p>CLUNY CAFE Operating System - Automated Report</p>
+          <p>${brand.platformNameEn} - Automated Report</p>
         </div>
       </body>
     </html>

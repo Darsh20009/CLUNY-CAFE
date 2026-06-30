@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useRoute } from "wouter";
+import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { useTranslate } from "@/lib/useTranslate";
 
 interface IOrder {
   id: string;
@@ -45,19 +46,19 @@ interface IOrder {
 
 export default function TableOrderTracking() {
   const [match, params] = useRoute("/table-order-tracking/:orderId");
+  const [, navigate] = useLocation();
   const { toast } = useToast();
+  const tc = useTranslate();
   const orderId = params?.orderId;
   const previousStatusRef = useRef<string | undefined>(undefined);
 
-  // Fetch order details
   const { data: order, isLoading } = useQuery<IOrder>({
     queryKey: ["/api/orders", orderId],
     queryFn: async () => {
       const response = await fetch(`/api/orders/${orderId}`);
-      if (!response.ok) throw new Error("الطلب غير موجود");
+      if (!response.ok) throw new Error(tc("الطلب غير موجود", "Order not found"));
       const data = await response.json();
-      
-      // Parse items if they're stored as JSON string
+
       if (data.items && typeof data.items === 'string') {
         try {
           data.items = JSON.parse(data.items);
@@ -66,73 +67,70 @@ export default function TableOrderTracking() {
           data.items = [];
         }
       }
-      
-      // Ensure items is an array
+
       if (!Array.isArray(data.items)) {
         data.items = [];
       }
-      
+
       return data;
     },
     enabled: !!orderId,
-    refetchInterval: 10000, // Poll every 10 seconds
+    refetchInterval: 10000,
   });
-  
-  // Detect status changes - Audio notifications removed
+
   useEffect(() => {
     const currentStatus = order?.tableStatus || order?.status;
-    
+
     if (order && currentStatus && previousStatusRef.current && previousStatusRef.current !== currentStatus) {
       const statusMessages: Record<string, string> = {
-        'payment_confirmed': 'تم تأكيد الدفع',
-        'preparing': 'جاري تحضير طلبك',
-        'ready': 'طلبك جاهز',
-        'delivering_to_table': 'طلبك في الطريق',
-        'delivered': 'تم توصيل طلبك',
+        'payment_confirmed': tc('تم تأكيد الدفع', 'Payment Confirmed'),
+        'preparing': tc('جاري تحضير طلبك', 'Your order is being prepared'),
+        'ready': tc('طلبك جاهز', 'Your order is ready'),
+        'delivering_to_table': tc('طلبك في الطريق', 'Your order is on the way'),
+        'delivered': tc('تم توصيل طلبك', 'Your order has been delivered'),
       };
-      
-      const message = statusMessages[currentStatus] || 'تم تحديث حالة طلبك';
-      
+
+      const message = statusMessages[currentStatus] || tc('تم تحديث حالة طلبك', 'Your order status has been updated');
+
       toast({
-        title: 'تحديث حالة الطلب',
+        title: tc('تحديث حالة الطلب', 'Order Status Update'),
         description: message,
         duration: 6000,
         className: "bg-blue-600 text-white border-blue-700",
       });
     }
-    
+
     if (order && currentStatus) {
       previousStatusRef.current = currentStatus;
     }
-  }, [order, toast]);
+  }, [order, toast, tc]);
 
-  // Cancel order mutation
   const cancelOrderMutation = useMutation({
     mutationFn: async () => {
       const response = await fetch(`/api/orders/${orderId}/cancel-by-customer`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          cancellationReason: "طلب الإلغاء من العميل",
+          cancellationReason: tc("طلب الإلغاء من العميل", "Customer requested cancellation"),
         }),
       });
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || "فشل في إلغاء الطلب");
+        throw new Error(error.error || tc("فشل في إلغاء الطلب", "Failed to cancel order"));
       }
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
       toast({
-        title: "تم إلغاء الطلب",
-        description: "تم إلغاء طلبك بنجاح",
+        title: tc("تم إلغاء الطلب", "Order Cancelled"),
+        description: tc("تم إلغاء طلبك بنجاح", "Your order has been cancelled successfully"),
       });
     },
     onError: (error: Error) => {
       toast({
-        title: "خطأ",
-        description: error.message || "فشل إلغاء الطلب",
+        title: tc("خطأ", "Error"),
+        description: error.message || tc("فشل إلغاء الطلب", "Failed to cancel order"),
         variant: "destructive",
       });
     },
@@ -143,57 +141,57 @@ export default function TableOrderTracking() {
       case "pending":
         return {
           icon: Clock,
-          label: "في الانتظار",
-          description: "طلبك في انتظار استلام الكاشير",
+          label: tc("في الانتظار", "Pending"),
+          description: tc("طلبك في انتظار استلام الكاشير", "Your order is waiting to be received by the cashier"),
           color: "text-yellow-500",
         };
       case "payment_confirmed":
         return {
           icon: CheckCircle,
-          label: "تم تأكيد الدفع",
-          description: "تم استلام طلبك وسيتم تحضيره قريباً",
+          label: tc("تم تأكيد الدفع", "Payment Confirmed"),
+          description: tc("تم استلام طلبك وسيتم تحضيره قريباً", "Your order has been received and will be prepared soon"),
           color: "text-blue-500",
         };
       case "preparing":
         return {
           icon: ChefHat,
-          label: "قيد التحضير",
-          description: "طلبك قيد التحضير الآن",
+          label: tc("قيد التحضير", "Preparing"),
+          description: tc("طلبك قيد التحضير الآن", "Your order is being prepared now"),
           color: "text-orange-500",
         };
       case "ready":
         return {
           icon: CheckCircle,
-          label: "جاهز للتقديم",
-          description: "طلبك جاهز والآن يتم تقديمه لك",
+          label: tc("جاهز للتقديم", "Ready to Serve"),
+          description: tc("طلبك جاهز والآن يتم تقديمه لك", "Your order is ready and is being served"),
           color: "text-green-500",
         };
       case "delivered":
         return {
           icon: CheckCircle,
-          label: "تم التقديم",
-          description: "تم تقديم طلبك بنجاح",
+          label: tc("تم التقديم", "Served"),
+          description: tc("تم تقديم طلبك بنجاح", "Your order has been served successfully"),
           color: "text-green-500",
         };
       case "delivering_to_table":
         return {
           icon: Truck,
-          label: "جاري التوصيل",
-          description: "طلبك في الطريق إلى طاولتك",
+          label: tc("جاري التوصيل", "On the Way"),
+          description: tc("طلبك في الطريق إلى طاولتك", "Your order is on its way to your table"),
           color: "text-purple-500",
         };
       case "cancelled":
         return {
           icon: XCircle,
-          label: "ملغي",
-          description: "تم إلغاء الطلب",
+          label: tc("ملغي", "Cancelled"),
+          description: tc("تم إلغاء الطلب", "Order has been cancelled"),
           color: "text-red-500",
         };
       default:
         return {
           icon: AlertCircle,
-          label: "غير معروف",
-          description: "حالة الطلب غير معروفة",
+          label: tc("غير معروف", "Unknown"),
+          description: tc("حالة الطلب غير معروفة", "Order status is unknown"),
           color: "text-gray-500",
         };
     }
@@ -201,9 +199,9 @@ export default function TableOrderTracking() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center" dir="rtl">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <div className="text-lg">جاري التحميل...</div>
+          <div className="text-lg">{tc("جاري التحميل...", "Loading...")}</div>
         </div>
       </div>
     );
@@ -211,39 +209,45 @@ export default function TableOrderTracking() {
 
   if (!order) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center" dir="rtl">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <Card className="max-w-md">
           <CardHeader>
-            <CardTitle>طلب غير موجود</CardTitle>
+            <CardTitle>{tc("طلب غير موجود", "Order Not Found")}</CardTitle>
           </CardHeader>
           <CardContent>
-            <p>عذراً، لم نتمكن من العثور على هذا الطلب.</p>
+            <p>{tc("عذراً، لم نتمكن من العثور على هذا الطلب.", "Sorry, we couldn't find this order.")}</p>
           </CardContent>
         </Card>
       </div>
     );
   }
 
-  // Use tableStatus if available, otherwise fall back to status
   const currentStatus = order.tableStatus || order.status;
   const statusInfo = getStatusInfo(currentStatus);
   const StatusIcon = statusInfo.icon;
   const canCancel = currentStatus === "pending";
 
   return (
-    <div className="min-h-screen bg-background p-4" dir="rtl">
+    <div className="min-h-screen bg-background p-4">
       <div className="max-w-2xl mx-auto space-y-6">
-        {/* Header */}
+        <button
+          onClick={() => navigate("/my-orders")}
+          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          data-testid="button-back-tracking"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+          رجوع
+        </button>
         <Card>
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <CardTitle className="text-2xl">تتبع الطلب</CardTitle>
+                <CardTitle className="text-2xl">{tc("تتبع الطلب", "Track Order")}</CardTitle>
                 <p className="text-sm text-muted-foreground mt-1">
-                  رقم الطلب: {order.orderNumber}
+                  {tc("رقم الطلب:", "Order #:")} {order.orderNumber}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  طاولة: {order.tableNumber}
+                  {tc("طاولة:", "Table:")} {order.tableNumber}
                 </p>
               </div>
               <Badge variant="outline" className="text-lg px-4 py-2">
@@ -253,7 +257,6 @@ export default function TableOrderTracking() {
           </CardHeader>
         </Card>
 
-        {/* Status Card */}
         <Card>
           <CardContent className="p-6">
             <div className="text-center space-y-4">
@@ -268,10 +271,9 @@ export default function TableOrderTracking() {
           </CardContent>
         </Card>
 
-        {/* Order Items */}
         <Card>
           <CardHeader>
-            <CardTitle>تفاصيل الطلب</CardTitle>
+            <CardTitle>{tc("تفاصيل الطلب", "Order Details")}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
@@ -282,7 +284,7 @@ export default function TableOrderTracking() {
                       <div>
                         <p className="font-medium">{item.nameAr}</p>
                         <p className="text-sm text-muted-foreground">
-                          الكمية: {item.quantity}
+                          {tc("الكمية:", "Qty:")} {item.quantity}
                         </p>
                       </div>
                       <p className="font-bold">
@@ -291,35 +293,33 @@ export default function TableOrderTracking() {
                     </div>
                   ))}
                   <div className="border-t pt-3 flex justify-between items-center font-bold text-lg">
-                    <span>الإجمالي</span>
+                    <span>{tc("الإجمالي", "Total")}</span>
                     <span>{order.totalAmount.toFixed(2)} <SarIcon /></span>
                   </div>
                 </>
               ) : (
-                <p className="text-center text-muted-foreground">جاري تحميل تفاصيل الطلب...</p>
+                <p className="text-center text-muted-foreground">{tc("جاري تحميل تفاصيل الطلب...", "Loading order details...")}</p>
               )}
             </div>
           </CardContent>
         </Card>
 
-        {/* Customer Info */}
         {order.customerInfo && (
           <Card>
             <CardHeader>
-              <CardTitle>معلومات العميل</CardTitle>
+              <CardTitle>{tc("معلومات العميل", "Customer Info")}</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="font-medium">{order.customerInfo.customerName}</p>
               {order.customerInfo.phone && order.customerInfo.phone !== "guest" && (
                 <p className="text-sm text-muted-foreground">
-                  الهاتف: {order.customerInfo.phone}
+                  {tc("الهاتف:", "Phone:")} {order.customerInfo.phone}
                 </p>
               )}
             </CardContent>
           </Card>
         )}
 
-        {/* Cancel Button */}
         {canCancel && (
           <AlertDialog>
             <AlertDialogTrigger asChild>
@@ -329,23 +329,23 @@ export default function TableOrderTracking() {
                 data-testid="button-cancel-order"
               >
                 <XCircle className="w-4 h-4 ml-2" />
-                إلغاء الطلب
+                {tc("إلغاء الطلب", "Cancel Order")}
               </Button>
             </AlertDialogTrigger>
-            <AlertDialogContent dir="rtl">
+            <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>هل أنت متأكد؟</AlertDialogTitle>
+                <AlertDialogTitle>{tc("هل أنت متأكد؟", "Are you sure?")}</AlertDialogTitle>
                 <AlertDialogDescription>
-                  هل تريد حقاً إلغاء هذا الطلب؟ لا يمكن التراجع عن هذا الإجراء.
+                  {tc("هل تريد حقاً إلغاء هذا الطلب؟ لا يمكن التراجع عن هذا الإجراء.", "Do you really want to cancel this order? This action cannot be undone.")}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel>رجوع</AlertDialogCancel>
+                <AlertDialogCancel>{tc("رجوع", "Back")}</AlertDialogCancel>
                 <AlertDialogAction
                   onClick={() => cancelOrderMutation.mutate()}
                   disabled={cancelOrderMutation.isPending}
                 >
-                  تأكيد الإلغاء
+                  {tc("تأكيد الإلغاء", "Confirm Cancellation")}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -353,7 +353,7 @@ export default function TableOrderTracking() {
         )}
 
         <div className="text-center text-sm text-muted-foreground">
-          يتم تحديث حالة الطلب تلقائياً
+          {tc("يتم تحديث حالة الطلب تلقائياً", "Order status updates automatically")}
         </div>
       </div>
     </div>

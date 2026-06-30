@@ -46,6 +46,7 @@ import {
   XCircle
 } from "lucide-react";
 import { format } from "date-fns";
+import { useTranslate, tc } from "@/lib/useTranslate";
 import { ar } from "date-fns/locale";
 
 interface StockTransfer {
@@ -80,16 +81,17 @@ interface Branch {
   nameAr: string;
 }
 
-const statusLabels: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
-  pending: { label: "قيد الانتظار", variant: "secondary" },
-  approved: { label: "تمت الموافقة", variant: "default" },
-  in_transit: { label: "في الطريق", variant: "outline" },
-  completed: { label: "مكتمل", variant: "default" },
-  cancelled: { label: "ملغي", variant: "destructive" },
+const statusLabels: Record<string, { labelAr: string; labelEn: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
+  pending: { labelAr: "قيد الانتظار", labelEn: "Pending", variant: "secondary" },
+  approved: { labelAr: "تمت الموافقة", labelEn: "Approved", variant: "default" },
+  in_transit: { labelAr: "في الطريق", labelEn: "In Transit", variant: "outline" },
+  completed: { labelAr: "مكتمل", labelEn: "Completed", variant: "default" },
+  cancelled: { labelAr: "ملغي", labelEn: "Cancelled", variant: "destructive" },
 };
 
 export default function InventoryTransfersPage() {
   const { toast } = useToast();
+  const tc = useTranslate();
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -126,10 +128,10 @@ export default function InventoryTransfersPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/transfers"] });
       setIsAddDialogOpen(false);
       resetForm();
-      toast({ title: "تم إنشاء طلب التحويل بنجاح" });
+      toast({ title: tc("تم إنشاء طلب التحويل بنجاح", "Transfer request created successfully") });
     },
     onError: (error: any) => {
-      toast({ title: error.message || "فشل في إنشاء طلب التحويل", variant: "destructive" });
+      toast({ title: error.message || tc("فشل في إنشاء طلب التحويل", "Failed to create transfer request"), variant: "destructive" });
     },
   });
 
@@ -234,12 +236,12 @@ export default function InventoryTransfersPage() {
   }
 
   return (
-    <div className="p-6 space-y-6" dir="rtl">
+    <div className="min-h-screen bg-white text-gray-900 p-6 space-y-6">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <ArrowRightLeft className="h-8 w-8 text-primary" />
+          <ArrowRightLeft className="h-8 w-8 text-green-600" />
           <div>
-            <h1 className="text-2xl font-bold">تحويلات المخزون</h1>
+            <h1 className="text-2xl font-bold">{tc("تحويلات المخزون", "Stock Transfers")}</h1>
             <p className="text-muted-foreground text-sm">إدارة تحويلات المواد بين الفروع</p>
           </div>
         </div>
@@ -313,9 +315,9 @@ export default function InventoryTransfersPage() {
                 <SelectValue placeholder="الحالة" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">جميع الحالات</SelectItem>
-                {Object.entries(statusLabels).map(([key, { label }]) => (
-                  <SelectItem key={key} value={key}>{label}</SelectItem>
+                <SelectItem value="all">{tc("جميع الحالات", "All Statuses")}</SelectItem>
+                {Object.entries(statusLabels).map(([key, cfg]) => (
+                  <SelectItem key={key} value={key}>{tc(cfg.labelAr, cfg.labelEn)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -326,13 +328,13 @@ export default function InventoryTransfersPage() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead className="text-right">رقم التحويل</TableHead>
+                  <TableHead className="text-right">{tc("رقم التحويل", "Transfer #")}</TableHead>
                   <TableHead className="text-right">من</TableHead>
                   <TableHead className="text-right">إلى</TableHead>
                   <TableHead className="text-right">عدد المواد</TableHead>
-                  <TableHead className="text-right">الحالة</TableHead>
-                  <TableHead className="text-right">التاريخ</TableHead>
-                  <TableHead className="text-right">الإجراءات</TableHead>
+                  <TableHead className="text-right">{tc("الحالة", "Status")}</TableHead>
+                  <TableHead className="text-right">{tc("التاريخ", "Date")}</TableHead>
+                  <TableHead className="text-right">{tc("الإجراءات", "Actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -351,7 +353,7 @@ export default function InventoryTransfersPage() {
                       <TableCell>{transfer.items.length}</TableCell>
                       <TableCell>
                         <Badge variant={statusLabels[transfer.status]?.variant || "secondary"}>
-                          {statusLabels[transfer.status]?.label || transfer.status}
+                          {tc(statusLabels[transfer.status]?.labelAr || transfer.status, statusLabels[transfer.status]?.labelEn || transfer.status)}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -412,9 +414,9 @@ export default function InventoryTransfersPage() {
       </Card>
 
       <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" dir="rtl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>طلب تحويل جديد</DialogTitle>
+            <DialogTitle>{tc("طلب تحويل جديد", "New Transfer Request")}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-2 gap-4">
@@ -533,7 +535,7 @@ export default function InventoryTransfersPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>إلغاء</Button>
+            <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>{tc("إلغاء", "Cancel")}</Button>
             <Button
               onClick={() => createMutation.mutate(formData)}
               disabled={createMutation.isPending || !formData.fromBranchId || !formData.toBranchId || formData.items.length === 0}
@@ -547,9 +549,9 @@ export default function InventoryTransfersPage() {
       </Dialog>
 
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="max-w-2xl" dir="rtl">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>تفاصيل التحويل</DialogTitle>
+            <DialogTitle>{tc("تفاصيل التحويل", "Transfer Details")}</DialogTitle>
           </DialogHeader>
           {selectedTransfer && (
             <div className="space-y-4">
@@ -561,7 +563,7 @@ export default function InventoryTransfersPage() {
                 <div>
                   <Label className="text-muted-foreground">الحالة</Label>
                   <Badge variant={statusLabels[selectedTransfer.status]?.variant || "secondary"}>
-                    {statusLabels[selectedTransfer.status]?.label || selectedTransfer.status}
+                    {tc(statusLabels[selectedTransfer.status]?.labelAr, statusLabels[selectedTransfer.status]?.labelEn) || selectedTransfer.status}
                   </Badge>
                 </div>
                 <div>

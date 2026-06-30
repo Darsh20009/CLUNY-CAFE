@@ -25,24 +25,12 @@ interface ProductAddon {
   unit?: string;
 }
 
-interface CoffeeItemAddon extends Record<string, any> {
-  coffeeItemId?: string;
+interface CoffeeItemAddon {
+  coffeeItemId: string;
   addonId: string;
-  id: string;
-  nameAr: string;
-  nameEn?: string;
-  category: string;
-  price: number;
-  isAvailable: number;
-  isSingleSelect?: boolean;
-  rawItemId?: string;
-  quantityPerUnit?: number;
-  unit?: string;
-  imageUrl?: string;
-  isDefault?: number;
-  defaultValue?: string;
-  minQuantity?: number;
-  maxQuantity?: number;
+  isDefault: number;
+  minQuantity: number;
+  maxQuantity: number;
 }
 
 export interface SelectedAddon {
@@ -122,7 +110,6 @@ export default function DrinkCustomizationDialog({
 
   const { data: allAddons = [], isLoading: loadingAddons } = useQuery<ProductAddon[]>({
     queryKey: ["/api/product-addons"],
-    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       try {
         const res = await fetch("/api/product-addons");
@@ -137,7 +124,6 @@ export default function DrinkCustomizationDialog({
   const { data: coffeeAddons = [], isLoading: loadingCoffeeAddons } = useQuery<CoffeeItemAddon[]>({
     queryKey: ["/api/coffee-items", activeItem?.id, "addons"],
     enabled: !!activeItem?.id,
-    staleTime: 3 * 60 * 1000,
     queryFn: async () => {
       if (!activeItem?.id) return [];
       try {
@@ -186,42 +172,15 @@ export default function DrinkCustomizationDialog({
   }, [initialQuantity]);
 
   const itemMenuCategory = (activeItem as any)?.category || '';
-  const inlineItemAddons: any[] = (activeItem as any)?.addons || [];
-
-  // Priority 1: global linked addons (coffeeAddons from CoffeeItemAddon collection)
-  // Priority 2: inline addons stored directly on the CoffeeItem
-  // Priority 3: allAddons cross-reference fallback (legacy)
-  const availableAddons: ProductAddon[] = coffeeAddons.length > 0
-    ? (coffeeAddons.filter(addon => {
-        if (addon.isAvailable !== 1) return false;
-        if ((addon as any).menuCategory && itemMenuCategory) {
-          return (addon as any).menuCategory === itemMenuCategory;
-        }
-        return true;
-      }) as unknown as ProductAddon[])
-    : inlineItemAddons.length > 0
-      ? (inlineItemAddons.map((a: any, idx: number) => ({
-          id: `inline-${idx}`,
-          nameAr: a.nameAr,
-          nameEn: a.nameEn,
-          category: a.section || 'other',
-          price: a.price || 0,
-          isAvailable: 1,
-          isSingleSelect: a.isSingleSelect || false,
-          imageUrl: a.imageUrl || '',
-          rawItemId: undefined,
-          quantityPerUnit: undefined,
-          unit: undefined,
-          isFree: 0,
-          orderIndex: idx,
-        })) as unknown as ProductAddon[])
-      : allAddons.filter(addon => {
-          if (addon.isAvailable !== 1) return false;
-          if ((addon as any).menuCategory && itemMenuCategory) {
-            return (addon as any).menuCategory === itemMenuCategory;
-          }
-          return true;
-        });
+  const availableAddons = allAddons.filter(addon => {
+    if (addon.isAvailable !== 1) return false;
+    if (!coffeeAddons.some(link => link.addonId === addon.id)) return false;
+    // If addon has a menuCategory set, only show it when item's category matches
+    if ((addon as any).menuCategory && itemMenuCategory) {
+      return (addon as any).menuCategory === itemMenuCategory;
+    }
+    return true;
+  });
 
   const groupedAddons = availableAddons.reduce((groups, addon) => {
     const category = addon.category;
@@ -342,11 +301,27 @@ export default function DrinkCustomizationDialog({
 
   const isLoading = loadingAddons || loadingCoffeeAddons;
 
+  // Auto-confirm if product has no sizes and no add-ons after loading
+  useEffect(() => {
+    if (!open || isLoading || !activeItem) return;
+    const hasSizes = activeItem.availableSizes && activeItem.availableSizes.length > 0;
+    const hasVariants = variants && variants.length > 1;
+    const hasAddons = availableAddons.length > 0;
+    if (!hasSizes && !hasVariants && !hasAddons) {
+      const customization: DrinkCustomization = {
+        selectedAddons: [],
+        totalAddonsPrice: 0,
+      };
+      onConfirm(customization, quantity, activeItem);
+      onClose();
+    }
+  }, [isLoading, open]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!activeItem) return null;
 
   return (
     <Dialog open={open} onOpenChange={onClose} modal={modal}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-hidden flex flex-col" data-testid="dialog-customization">
+      <DialogContent className="max-w-lg max-h-[92vh] overflow-hidden flex flex-col" data-testid="dialog-customization">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-right">
             <Coffee className="w-5 h-5" />
@@ -359,7 +334,7 @@ export default function DrinkCustomizationDialog({
             <Loader2 className="w-6 h-6 animate-spin" />
           </div>
         ) : (
-          <ScrollArea className="flex-1 max-h-[50vh]">
+          <ScrollArea className="h-[60vh] max-h-[60vh] pr-2">
             <div className="space-y-4 p-1">
               {variants.length > 1 && (
                 <div className="space-y-2">
@@ -432,19 +407,15 @@ export default function DrinkCustomizationDialog({
               )}
 
               {Object.entries(groupedAddons).map(([category, addons]) => {
-                const knownCategory = CATEGORY_INFO[category];
-                const categoryInfo = knownCategory || CATEGORY_INFO.other;
-                const isSingleSelect = addons.some((a: any) => a.isSingleSelect === true) || category === 'sugar' || category === 'milk' || category === 'size' || category.toLowerCase() === 'size';
+                const categoryInfo = CATEGORY_INFO[category] || CATEGORY_INFO.other;
+                const isSingleSelect = addons.some((a: any) => a.selectionType === 'single') || category === 'sugar' || category === 'milk' || category === 'size' || category.toLowerCase() === 'size';
                 const CategoryIcon = categoryInfo.icon;
-                const displayName = knownCategory
-                  ? (isAr ? categoryInfo.nameAr : categoryInfo.nameEn)
-                  : category || (isAr ? 'إضافات' : 'Extras');
 
                 return (
                   <div key={category} className="space-y-2">
                     <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                       <CategoryIcon className="w-4 h-4" />
-                      <span>{displayName}</span>
+                      <span>{isAr ? categoryInfo.nameAr : categoryInfo.nameEn}</span>
                       {isSingleSelect && (
                         <Badge variant="outline" className="text-xs">{isAr ? "اختر واحد" : "Select one"}</Badge>
                       )}

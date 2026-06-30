@@ -3,6 +3,8 @@ import QRCode from "qrcode";
 import JsBarcode from "jsbarcode";
 import clunyLogo from "@assets/cluny-logo-customer.png";
 import SarIcon from "@/components/sar-icon";
+import { brand } from "@/lib/brand";
+import { VAT_RATE } from "@/lib/constants";
 
 interface OrderItem {
   coffeeItem: {
@@ -36,14 +38,13 @@ interface TaxInvoiceProps {
   branchAddress?: string;
 }
 
-const TAX_RATE = 0.15;
-const VAT_NUMBER = "311234567890003";
-const COMPANY_NAME = "كلوني كافيه";
-const COMPANY_NAME_EN = "CLUNY CAFE";
-const COMPANY_CR = "1010123456";
+const VAT_NUMBER = "312718675800003";
+const COMPANY_NAME = brand.shortNameAr;
+const COMPANY_NAME_EN = brand.nameEn;
+const COMPANY_CR = "1163184110";
 const COMPANY_VAT_NAME = "شركة كلوني للخدمات الغذائية"; // Added for ZATCA compliance
-const DEFAULT_BRANCH = "الفرع الرئيسي";
-const DEFAULT_ADDRESS = "الرياض، المملكة العربية السعودية";
+const DEFAULT_BRANCH = "الفرع الرئيسي - ينبع"; // Default branch
+const DEFAULT_ADDRESS = "ينبع، المملكة العربية السعودية"; // Default address
 
 function generateZATCAQRCode(data: {
   sellerName: string;
@@ -123,10 +124,10 @@ export const TaxInvoicePrint = forwardRef<HTMLDivElement, TaxInvoiceProps>(
     
     const totalDiscounts = codeDiscountAmount + invDiscountAmount + itemDiscountsTotal;
     
-    const subtotalBeforeTax = totalAmount / (1 + TAX_RATE);
+    const subtotalBeforeTax = totalAmount / (1 + VAT_RATE);
     const vatAmount = totalAmount - subtotalBeforeTax;
     
-    const subtotalBeforeAllDiscounts = subtotalBeforeTax + (totalDiscounts / (1 + TAX_RATE));
+    const subtotalBeforeAllDiscounts = subtotalBeforeTax + (totalDiscounts / (1 + VAT_RATE));
     
     const displayInvoiceNumber = invoiceNumber || `INV-${orderNumber}`;
     const { date: formattedDate, time: formattedTime } = formatDate(date);
@@ -191,6 +192,11 @@ export const TaxInvoicePrint = forwardRef<HTMLDivElement, TaxInvoiceProps>(
       <div ref={ref} className="hidden print:block">
         <div className="max-w-[80mm] mx-auto bg-white text-black p-3 font-sans" dir="rtl">
           <div className="text-center mb-4 pb-4 border-b-2 border-dashed border-gray-800">
+            <img
+              src={clunyLogo}
+              alt="CLUNY CAFE"
+              style={{ filter: 'invert(1)', mixBlendMode: 'multiply', width: '90px', height: '90px', objectFit: 'contain', margin: '0 auto 6px' }}
+            />
             <h1 className="text-2xl font-bold text-gray-900">{COMPANY_NAME}</h1>
             <p className="text-sm text-gray-600 font-medium">{COMPANY_NAME_EN}</p>
             <p className="text-xs text-gray-500 mt-1">{displayBranchName}</p>
@@ -311,21 +317,21 @@ export const TaxInvoicePrint = forwardRef<HTMLDivElement, TaxInvoiceProps>(
               {itemDiscountsTotal > 0 && (
                 <div className="flex justify-between text-green-700">
                   <span>خصومات الأصناف:</span>
-                  <span>({(itemDiscountsTotal / (1 + TAX_RATE)).toFixed(2)}) <SarIcon /></span>
+                  <span>({(itemDiscountsTotal / (1 + VAT_RATE)).toFixed(2)}) <SarIcon /></span>
                 </div>
               )}
               
               {discount && codeDiscountAmount > 0 && (
                 <div className="flex justify-between text-green-700">
                   <span>خصم {discount.code} ({discount.percentage}%):</span>
-                  <span>({(codeDiscountAmount / (1 + TAX_RATE)).toFixed(2)}) <SarIcon /></span>
+                  <span>({(codeDiscountAmount / (1 + VAT_RATE)).toFixed(2)}) <SarIcon /></span>
                 </div>
               )}
 
               {invDiscountAmount > 0 && (
                 <div className="flex justify-between text-green-700">
                   <span>خصم الفاتورة:</span>
-                  <span>({(invDiscountAmount / (1 + TAX_RATE)).toFixed(2)}) <SarIcon /></span>
+                  <span>({(invDiscountAmount / (1 + VAT_RATE)).toFixed(2)}) <SarIcon /></span>
                 </div>
               )}
 
@@ -349,7 +355,20 @@ export const TaxInvoicePrint = forwardRef<HTMLDivElement, TaxInvoiceProps>(
           <div className="mb-4 pb-3 border-b border-dashed border-gray-400">
             <div className="flex justify-between items-center bg-blue-50 px-3 py-2 rounded text-sm">
               <span className="text-gray-600">طريقة الدفع:</span>
-              <span className="font-bold text-blue-800">{paymentMethod}</span>
+              <span className="font-bold text-blue-800">{
+                (() => {
+                  const m = (paymentMethod || 'cash').toLowerCase();
+                  if (m === 'cash') return 'نقدي';
+                  if (m === 'card' || m === 'network' || m === 'pos' || m === 'pos-network') return 'شبكة';
+                  if (m === 'apple_pay' || m === 'neoleap-apple-pay' || m === 'paymob-apple-pay') return 'Apple Pay';
+                  if (m === 'geidea' || m === 'paymob' || m === 'paymob-card') return 'بطاقة ائتمان';
+                  if (m === 'mada' || m === 'bank_transfer') return 'تحويل بنكي';
+                  if (m === 'rajhi') return 'بنك الراجحي';
+                  if (m === 'split') return 'نقدي + شبكة';
+                  if (m === 'loyalty' || m === 'qahwa-card' || m === 'qirox-card') return 'بطاقة ولاء';
+                  return paymentMethod;
+                })()
+              }</span>
             </div>
           </div>
 
@@ -407,12 +426,12 @@ export const TaxInvoicePrint = forwardRef<HTMLDivElement, TaxInvoiceProps>(
             <div className="bg-gray-100 rounded-lg p-2 mb-3 text-xs">
               <p className="text-gray-600">جميع الأسعار شاملة ضريبة القيمة المضافة 15%</p>
               <p className="text-gray-500">All prices include 15% VAT</p>
-              <p className="font-bold text-amber-700 mt-1">www.cluny.cafe</p>
+              <p className="font-bold text-amber-700 mt-1">{brand.website}</p>
             </div>
             
             <div className="text-xs text-gray-500">
               <p>تابعونا على وسائل التواصل الاجتماعي</p>
-              <p className="font-mono font-bold text-amber-700">@CLUNY CAFE</p>
+              <p className="font-mono font-bold text-amber-700">{brand.social.instagram}</p>
             </div>
             
             <div className="mt-3 pt-2 border-t border-gray-300 text-[9px] text-gray-400">

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslate } from "@/lib/useTranslate";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -54,6 +55,7 @@ interface IBranch {
 }
 
 export default function CashierTables() {
+  const tc = useTranslate();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [selectedTable, setSelectedTable] = useState<ITable | null>(null);
@@ -97,16 +99,23 @@ export default function CashierTables() {
     queryKey: ["/api/tables", selectedBranchId || employeeBranchId],
     queryFn: async () => {
       const branchId = selectedBranchId || employeeBranchId;
-      const response = await fetch(`/api/tables?branchId=${branchId}`, {
+      const url = branchId ? `/api/tables?branchId=${branchId}` : `/api/tables`;
+      const response = await fetch(url, {
         credentials: "include",
       });
       if (!response.ok) throw new Error("Failed to fetch tables");
       const data = await response.json();
-      return Array.isArray(data) ? data.filter((t: ITable) => t.branchId === branchId) : [];
+      if (!Array.isArray(data)) return [];
+      // Only filter by branchId if we have one AND tables have branchId set
+      if (branchId) {
+        const filtered = data.filter((t: ITable) => t.branchId === branchId);
+        // If filter returns empty but we got tables back, show all (branchId mismatch edge case)
+        return filtered.length > 0 ? filtered : data;
+      }
+      return data;
     },
-    enabled: !!(selectedBranchId || employeeBranchId),
-    refetchInterval: 60000,
-    staleTime: 30000,
+    enabled: true,
+    refetchInterval: 15000,
   });
 
   // Fetch pending table orders
@@ -118,8 +127,7 @@ export default function CashierTables() {
       const data = await response.json();
       return Array.isArray(data) ? data : [];
     },
-    refetchInterval: 60000,
-    staleTime: 30000,
+    refetchInterval: 15000,
   });
 
   // Get branch info
@@ -174,8 +182,8 @@ export default function CashierTables() {
     onSuccess: (data: any) => {
       queryClient.refetchQueries({ queryKey: ["/api/tables", employeeBranchId] });
       toast({
-        title: "تم حجز الطاولة",
-        description: "تم حجز الطاولة بنجاح",
+        title: tc("تم حجز الطاولة", "Table reserved"),
+        description: tc("تم حجز الطاولة بنجاح", "Table was reserved successfully"),
       });
       setReserveDialogOpen(false);
       setCustomerName("");
@@ -190,8 +198,8 @@ export default function CashierTables() {
     },
     onError: (error: Error) => {
       toast({
-        title: "خطأ",
-        description: error.message || "فشل حجز الطاولة",
+        title: tc("خطأ", "Error"),
+        description: error.message || tc("فشل حجز الطاولة", "Failed to reserve table"),
         variant: "destructive",
       });
     },
@@ -219,14 +227,14 @@ export default function CashierTables() {
     onSuccess: () => {
       queryClient.refetchQueries({ queryKey: ["/api/tables"] });
       toast({
-        title: "تم تحرير الطاولة",
-        description: "الطاولة متاحة الآن",
+        title: tc("تم تحرير الطاولة", "Table released"),
+        description: tc("الطاولة متاحة الآن", "Table is now available"),
       });
     },
     onError: (error: Error) => {
       toast({
-        title: "خطأ",
-        description: error.message || "فشل تحرير الطاولة",
+        title: tc("خطأ", "Error"),
+        description: error.message || tc("فشل تحرير الطاولة", "Failed to release table"),
         variant: "destructive",
       });
     },
@@ -250,14 +258,14 @@ export default function CashierTables() {
     onSuccess: () => {
       queryClient.refetchQueries({ queryKey: ["/api/tables", employeeBranchId] });
       toast({
-        title: "تم تفعيل الحجز",
-        description: "تم تفعيل الحجز بنجاح",
+        title: tc("تم تفعيل الحجز", "Reservation confirmed"),
+        description: tc("تم تفعيل الحجز بنجاح", "Reservation was confirmed successfully"),
       });
     },
     onError: (error: Error) => {
       toast({
-        title: "خطأ",
-        description: error.message || "فشل تفعيل الحجز",
+        title: tc("خطأ", "Error"),
+        description: error.message || tc("فشل تفعيل الحجز", "Failed to confirm reservation"),
         variant: "destructive",
       });
     },
@@ -281,14 +289,14 @@ export default function CashierTables() {
     onSuccess: () => {
       queryClient.refetchQueries({ queryKey: ["/api/tables", employeeBranchId] });
       toast({
-        title: "تم إلغاء الحجز",
-        description: "تم إلغاء الحجز بنجاح",
+        title: tc("تم إلغاء الحجز", "Reservation cancelled"),
+        description: tc("تم إلغاء الحجز بنجاح", "Reservation was cancelled successfully"),
       });
     },
     onError: (error: Error) => {
       toast({
-        title: "خطأ",
-        description: error.message || "فشل إلغاء الحجز",
+        title: tc("خطأ", "Error"),
+        description: error.message || tc("فشل إلغاء الحجز", "Failed to cancel reservation"),
         variant: "destructive",
       });
     },
@@ -300,7 +308,7 @@ export default function CashierTables() {
   };
 
   const handleReleaseTable = (table: ITable) => {
-    if (window.confirm(`هل أنت متأكد من تحرير الطاولة ${table.tableNumber}؟`)) {
+    if (window.confirm(`${tc("هل أنت متأكد من تحرير الطاولة", "Are you sure you want to release table")} ${table.tableNumber}?`)) {
       releaseTableMutation.mutate(table.id);
     }
   };
@@ -310,8 +318,8 @@ export default function CashierTables() {
     
     if (!customerName.trim()) {
       toast({
-        title: "خطأ",
-        description: "الرجاء إدخال اسم العميل",
+        title: tc("خطأ", "Error"),
+        description: tc("الرجاء إدخال اسم العميل", "Please enter the customer name"),
         variant: "destructive",
       });
       return;
@@ -319,8 +327,8 @@ export default function CashierTables() {
 
     if (!customerPhone.trim() || customerPhone.length < 9) {
       toast({
-        title: "خطأ",
-        description: "الرجاء إدخال رقم جوال صحيح",
+        title: tc("خطأ", "Error"),
+        description: tc("الرجاء إدخال رقم جوال صحيح", "Please enter a valid phone number"),
         variant: "destructive",
       });
       return;
@@ -329,8 +337,8 @@ export default function CashierTables() {
     const guests = parseInt(numberOfGuests);
     if (isNaN(guests) || guests < 1 || guests > 20) {
       toast({
-        title: "عدد غير صحيح",
-        description: "الرجاء إدخال عدد صحيح من الضيوف (1-20)",
+        title: tc("عدد غير صحيح", "Invalid count"),
+        description: tc("الرجاء إدخال عدد صحيح من الضيوف (1-20)", "Please enter a valid number of guests (1-20)"),
         variant: "destructive",
       });
       return;
@@ -338,8 +346,8 @@ export default function CashierTables() {
 
     if (!reservationDateTime) {
       toast({
-        title: "خطأ",
-        description: "الرجاء اختيار الميعاد",
+        title: tc("خطأ", "Error"),
+        description: tc("الرجاء اختيار الميعاد", "Please select a date and time"),
         variant: "destructive",
       });
       return;
@@ -379,32 +387,17 @@ export default function CashierTables() {
   // For admin/owner, allow branch selection
   const isAdminUser = currentEmployee?.role === "admin" || currentEmployee?.role === "owner";
 
-  if (!employeeBranchId && !isAdminUser) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center" dir="rtl">
-        <Card className="max-w-md">
-          <CardHeader>
-            <CardTitle>خطأ</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p>لم يتم تعيينك لفرع معين. يرجى التواصل مع المدير.</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   if (isAdminUser && !selectedBranchId) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-50 via-primary/5 to-amber-100 flex items-center justify-center p-4" dir="rtl">
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <Card className="max-w-md">
           <CardHeader>
-            <CardTitle>اختر الفرع</CardTitle>
+            <CardTitle>{tc("اختر الفرع", "Select Branch")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <Select value={selectedBranchId} onValueChange={setSelectedBranchId}>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="اختر الفرع" />
+                <SelectValue placeholder={tc("اختر الفرع", "Select branch")} />
               </SelectTrigger>
               <SelectContent>
                 {branches.map(branch => (
@@ -419,7 +412,7 @@ export default function CashierTables() {
               className="w-full"
               disabled={!selectedBranchId}
             >
-              متابعة
+              {tc("متابعة", "Continue")}
             </Button>
           </CardContent>
         </Card>
@@ -430,23 +423,23 @@ export default function CashierTables() {
   const activeBranchId = selectedBranchId || employeeBranchId;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 via-primary/5 to-amber-100 pb-16 sm:pb-0" dir="rtl">
+    <div className="min-h-screen bg-background pb-16 sm:pb-0">
       <div className="max-w-7xl mx-auto p-4 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-accent">إدارة الطاولات</h1>
+            <h1 className="text-3xl font-bold text-accent">{tc("إدارة الطاولات", "Table Management")}</h1>
             <p className="text-accent">
-              {branch?.nameAr || "تحميل..."} • {tables.length} طاولة
+              {branch?.nameAr || tc("تحميل...", "Loading...")} • {tables.length} {tc("طاولة", "tables")}
             </p>
           </div>
           <Button
             variant="ghost"
-            onClick={() => setLocation("/employee/dashboard")}
+            onClick={() => setLocation("/employee/home")}
             data-testid="button-back"
           >
             <ArrowRight className="ml-2 h-5 w-5" />
-            العودة
+            {tc("العودة", "Back")}
           </Button>
         </div>
 
@@ -456,13 +449,13 @@ export default function CashierTables() {
             <div className="flex flex-wrap gap-6 justify-center">
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-emerald-500" />
-                <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white">متاحة</Badge>
-                <span className="text-sm text-muted-foreground">جاهزة للحجز</span>
+                <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white">{tc("متاحة", "Available")}</Badge>
+                <span className="text-sm text-muted-foreground">{tc("جاهزة للحجز", "Ready to reserve")}</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-red-500" />
-                <Badge variant="destructive" className="bg-red-600 hover:bg-red-700">محجوزة</Badge>
-                <span className="text-sm text-muted-foreground">بها عميل حالياً</span>
+                <Badge variant="destructive" className="bg-red-600 hover:bg-red-700">{tc("محجوزة", "Occupied")}</Badge>
+                <span className="text-sm text-muted-foreground">{tc("بها عميل حالياً", "Has customer now")}</span>
               </div>
             </div>
           </CardContent>
@@ -471,13 +464,13 @@ export default function CashierTables() {
         {/* Tables Grid */}
         {isLoading ? (
           <div className="text-center py-12">
-            <div className="text-lg text-accent">جاري التحميل...</div>
+            <div className="text-lg text-accent">{tc("جاري التحميل...", "Loading...")}</div>
           </div>
         ) : tables.length === 0 ? (
           <Card className="bg-white/80 backdrop-blur">
             <CardContent className="py-12 text-center">
               <p className="text-muted-foreground">
-                لا توجد طاولات في هذا الفرع. يرجى التواصل مع المدير.
+                {tc("لا توجد طاولات في هذا الفرع. يرجى التواصل مع المدير.", "No tables in this branch. Please contact the manager.")}
               </p>
             </CardContent>
           </Card>
@@ -503,7 +496,7 @@ export default function CashierTables() {
                     }`}>
                       {table.tableNumber}
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1">الطاولة</div>
+                    <div className="text-xs text-muted-foreground mt-1">{tc("الطاولة", "Table")}</div>
                   </div>
                   
                   {table.reservedFor?.customerName ? (
@@ -514,20 +507,20 @@ export default function CashierTables() {
                           <>
                             <Badge className="bg-yellow-600 hover:bg-yellow-700 text-white animate-pulse px-3 py-1 flex items-center gap-1">
                               <Clock className="w-3 h-3" />
-                              معلقة
+                              {tc("معلقة", "Pending")}
                             </Badge>
-                            <span className="text-xs text-muted-foreground">الميعاد: {table.reservedFor.reservationTime}</span>
+                            <span className="text-xs text-muted-foreground">{tc("الميعاد:", "Time:")} {table.reservedFor.reservationTime}</span>
                           </>
                         )}
                         {table.reservedFor.status === 'confirmed' && (
                           <Badge className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1">
                             <Check className="w-3 h-3 ml-1" />
-                            مفعلة
+                            {tc("مفعلة", "Confirmed")}
                           </Badge>
                         )}
                         {table.reservedFor.status === 'cancelled' && (
                           <Badge className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1">
-                            ملغاة
+                            {tc("ملغاة", "Cancelled")}
                           </Badge>
                         )}
                       </div>
@@ -548,7 +541,7 @@ export default function CashierTables() {
                         </div>
                         {table.reservedFor?.numberOfGuests && (
                           <div className="flex items-center justify-center gap-2 text-xs text-slate-600 dark:text-slate-400">
-                            <span className="font-semibold">ضيوف:</span>
+                            <span className="font-semibold">{tc("ضيوف:", "Guests:")}</span>
                             <span>{table.reservedFor.numberOfGuests}</span>
                           </div>
                         )}
@@ -565,7 +558,7 @@ export default function CashierTables() {
                             data-testid={`button-approve-${table.tableNumber}`}
                           >
                             <Check className="w-3 h-3 ml-1" />
-                            تفعيل
+                            {tc("تفعيل", "Confirm")}
                           </Button>
                           <Button
                             size="sm"
@@ -576,7 +569,7 @@ export default function CashierTables() {
                             data-testid={`button-cancel-reserve-${table.tableNumber}`}
                           >
                             <X className="w-3 h-3 ml-1" />
-                            إلغاء
+                            {tc("إلغاء", "Cancel")}
                           </Button>
                         </div>
                       )}
@@ -590,7 +583,7 @@ export default function CashierTables() {
                           className="w-full border-blue-300 text-blue-600 hover:bg-blue-50"
                           data-testid={`button-order-${table.tableNumber}`}
                         >
-                          عرض طلب الطاولة
+                          {tc("عرض طلب الطاولة", "View Table Order")}
                         </Button>
                       )}
 
@@ -603,7 +596,7 @@ export default function CashierTables() {
                         data-testid={`button-release-${table.tableNumber}`}
                       >
                         <XCircle className="w-3 h-3 ml-1" />
-                        تحرير الطاولة
+                        {tc("تحرير الطاولة", "Release Table")}
                       </Button>
                     </div>
                   ) : (
@@ -611,13 +604,13 @@ export default function CashierTables() {
                       {/* Available Badge */}
                       <div className="flex justify-center">
                         <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1">
-                          متاحة الآن
+                          {tc("متاحة الآن", "Available Now")}
                         </Badge>
                       </div>
                       
                       {/* Empty State Info */}
                       <div className="text-xs text-muted-foreground py-2">
-                        جاهزة للحجز
+                        {tc("جاهزة للحجز", "Ready to reserve")}
                       </div>
                       
                       {/* Reserve Button */}
@@ -628,7 +621,7 @@ export default function CashierTables() {
                         data-testid={`button-reserve-${table.tableNumber}`}
                       >
                         <CheckCircle2 className="w-4 h-4 ml-1" />
-                        حجز الطاولة
+                        {tc("حجز الطاولة", "Reserve Table")}
                       </Button>
                     </div>
                   )}
@@ -640,28 +633,28 @@ export default function CashierTables() {
 
         {/* Reserve Dialog */}
         <Dialog open={reserveDialogOpen} onOpenChange={setReserveDialogOpen}>
-          <DialogContent className="sm:max-w-md bg-[#11936c]" dir="rtl">
+          <DialogContent className="sm:max-w-md bg-[#11936c]">
             <DialogHeader>
               <DialogTitle>
-                حجز طاولة {selectedTable?.tableNumber}
+                {tc("حجز طاولة", "Reserve Table")} {selectedTable?.tableNumber}
               </DialogTitle>
               <DialogDescription>
-                أدخل معلومات العميل لحجز الطاولة
+                {tc("أدخل معلومات العميل لحجز الطاولة", "Enter customer information to reserve the table")}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="customer-name">اسم العميل *</Label>
+                <Label htmlFor="customer-name">{tc("اسم العميل *", "Customer Name *")}</Label>
                 <Input
                   id="customer-name"
-                  placeholder="محمد أحمد"
+                  placeholder={tc("محمد أحمد", "Mohammed Ahmed")}
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
                   data-testid="input-customer-name"
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="customer-phone">رقم الجوال *</Label>
+                <Label htmlFor="customer-phone">{tc("رقم الجوال *", "Phone Number *")}</Label>
                 <Input
                   id="customer-phone"
                   placeholder="5xxxxxxxx"
@@ -672,7 +665,7 @@ export default function CashierTables() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="number-of-guests">عدد الضيوف *</Label>
+                <Label htmlFor="number-of-guests">{tc("عدد الضيوف *", "Number of Guests *")}</Label>
                 <Input
                   id="number-of-guests"
                   type="number"
@@ -685,7 +678,7 @@ export default function CashierTables() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="reservation-datetime">الميعاد *</Label>
+                <Label htmlFor="reservation-datetime">{tc("الميعاد *", "Date & Time *")}</Label>
                 <Input
                   id="reservation-datetime"
                   type="datetime-local"
@@ -693,7 +686,7 @@ export default function CashierTables() {
                   onChange={(e) => setReservationDateTime(e.target.value)}
                   data-testid="input-reservation-datetime"
                 />
-                <p className="text-xs text-muted-foreground">يتم تفعيل الحجز عند قدوم الميعاد قبله بـ 5 دقايق، والإلغاء تلقائياً بعد 5 دقايق من الميعاد</p>
+                <p className="text-xs text-muted-foreground">{tc("يتم تفعيل الحجز عند قدوم الميعاد قبله بـ 5 دقايق، والإلغاء تلقائياً بعد 5 دقايق من الميعاد", "Reservation is confirmed 5 minutes before the time and auto-cancelled 5 minutes after")}</p>
               </div>
               <div className="flex gap-2">
                 <Button
@@ -702,7 +695,7 @@ export default function CashierTables() {
                   className="flex-1"
                   data-testid="button-confirm-reserve"
                 >
-                  تأكيد الحجز
+                  {tc("تأكيد الحجز", "Confirm Reservation")}
                 </Button>
                 <Button
                   variant="outline"
@@ -715,7 +708,7 @@ export default function CashierTables() {
                   className="flex-1"
                   data-testid="button-cancel-reserve"
                 >
-                  إلغاء
+                  {tc("إلغاء", "Cancel")}
                 </Button>
               </div>
             </div>

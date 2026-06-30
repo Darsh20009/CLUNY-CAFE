@@ -6,17 +6,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Truck, Phone, ArrowLeft } from "lucide-react";
+import clunyLogoStaff from "@assets/cluny-logo-customer.png";
+import { useTranslate } from "@/lib/useTranslate";
 
 export default function DriverLogin() {
   const [, setLocation] = useLocation();
   const [phone, setPhone] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
+  const tc = useTranslate();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phone.trim()) {
-      toast({ title: "خطأ", description: "يرجى إدخال رقم الجوال", variant: "destructive" });
+      toast({ title: tc("خطأ", "Error"), description: tc("يرجى إدخال رقم الجوال", "Please enter your phone number"), variant: "destructive" });
       return;
     }
 
@@ -30,19 +33,19 @@ export default function DriverLogin() {
       });
 
       const data = await response.json();
-      
+
       if (!response.ok) {
-        throw new Error(data.error || "فشل تسجيل الدخول");
+        throw new Error(data.error || tc("فشل تسجيل الدخول", "Login failed"));
       }
 
       localStorage.setItem("currentDriver", JSON.stringify(data.driver));
-      toast({ title: "مرحباً", description: `أهلاً ${data.driver.fullName}` });
+      toast({ title: tc("مرحباً", "Welcome"), description: `${tc("أهلاً", "Hello")} ${data.driver.fullName}` });
       setLocation("/driver/portal");
     } catch (error: any) {
-      toast({ 
-        title: "خطأ", 
-        description: error.message || "فشل تسجيل الدخول", 
-        variant: "destructive" 
+      toast({
+        title: tc("خطأ", "Error"),
+        description: error.message || tc("فشل تسجيل الدخول", "Login failed"),
+        variant: "destructive"
       });
     } finally {
       setIsLoading(false);
@@ -50,19 +53,22 @@ export default function DriverLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-primary/5 flex items-center justify-center p-4" dir="rtl">
+    <div className="min-h-screen bg-gradient-to-b from-background to-primary/5 flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <div className="w-20 h-20 mx-auto bg-primary/10 rounded-full flex items-center justify-center mb-4">
-            <Truck className="w-10 h-10 text-primary" />
+          <div className="flex justify-center mb-3">
+            <img src={clunyLogoStaff} alt="CLUNY SYSTEMS" className="w-14 h-14 object-contain rounded-xl" />
           </div>
-          <CardTitle className="text-2xl">بوابة المندوب</CardTitle>
-          <CardDescription>سجل دخولك لإدارة طلبات التوصيل</CardDescription>
+          <div className="w-14 h-14 mx-auto bg-primary/10 rounded-full flex items-center justify-center mb-2">
+            <Truck className="w-7 h-7 text-primary" />
+          </div>
+          <CardTitle className="text-2xl">{tc("بوابة المندوب", "Driver Portal")}</CardTitle>
+          <CardDescription>{tc("سجل دخولك لإدارة طلبات التوصيل", "Sign in to manage your delivery orders")}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="phone">رقم الجوال</Label>
+              <Label htmlFor="phone">{tc("رقم الجوال", "Phone Number")}</Label>
               <div className="relative">
                 <Phone className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                 <Input
@@ -78,24 +84,24 @@ export default function DriverLogin() {
               </div>
             </div>
 
-            <Button 
-              type="submit" 
-              className="w-full" 
+            <Button
+              type="submit"
+              className="w-full"
               disabled={isLoading}
               data-testid="button-login"
             >
-              {isLoading ? "جاري الدخول..." : "تسجيل الدخول"}
+              {isLoading ? tc("جاري الدخول...", "Signing in...") : tc("تسجيل الدخول", "Sign In")}
             </Button>
           </form>
 
           <div className="mt-6 text-center">
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
               onClick={() => setLocation("/")}
               className="text-muted-foreground"
             >
               <ArrowLeft className="w-4 h-4 ml-2" />
-              العودة للرئيسية
+              {tc("العودة للرئيسية", "Back to Home")}
             </Button>
           </div>
         </CardContent>

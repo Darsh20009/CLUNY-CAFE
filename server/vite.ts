@@ -5,11 +5,43 @@ import { fileURLToPath } from "url";
 import { createServer as createViteServer, createLogger } from "vite";
 import { type Server } from "http";
 import viteConfig from "../vite.config";
+import { nanoid } from "nanoid";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const viteLogger = createLogger();
+
+const STAFF_PATHS = ['/employee', '/manager', '/kitchen', '/pos', '/cashier', '/admin', '/owner', '/executive', '/0'];
+
+function isStaffPath(url: string): boolean {
+  const pathname = url.split('?')[0];
+  return STAFF_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'));
+}
+
+function injectStaffManifest(html: string): string {
+  return html
+    .replace(
+      /href="\/manifest\.json[^"]*" id="main-manifest"/,
+      'href="/employee-manifest.json" id="main-manifest"'
+    )
+    .replace(
+      /<meta name="apple-mobile-web-app-title" content="[^"]*">/,
+      '<meta name="apple-mobile-web-app-title" content="CLUNY">'
+    )
+    .replace(
+      /<meta name="application-name" content="[^"]*">/,
+      '<meta name="application-name" content="CLUNY SYSTEMS">'
+    )
+    .replace(
+      /href="\/apple-touch-icon\.png[^"]*"/g,
+      'href="/employee-logo-512.png"'
+    )
+    .replace(
+      /href="\/logo\.png"(?= media=")/g,
+      'href="/employee-logo-512.png"'
+    );
+}
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -23,9 +55,12 @@ export function log(message: string, source = "express") {
 }
 
 export async function setupVite(app: Express, server: Server) {
+  const hmrHost = process.env.REPLIT_DEV_DOMAIN;
   const serverOptions = {
     middlewareMode: true,
-    hmr: { server },
+    hmr: process.env.REPL_ID
+      ? { server, host: hmrHost, clientPort: 443, protocol: "wss" as const }
+      : { server },
     allowedHosts: true as const,
   };
 
@@ -57,6 +92,13 @@ export async function setupVite(app: Express, server: Server) {
 
       // always reload the index.html file from disk incase it changes
       let template = await fs.promises.readFile(clientTemplate, "utf-8");
+      template = template.replace(
+        `src="/src/main.tsx"`,
+        `src="/src/main.tsx?v=${nanoid()}"`,
+      );
+      if (isStaffPath(url)) {
+        template = injectStaffManifest(template);
+      }
       const page = await vite.transformIndexHtml(url, template);
       res.status(200).set({ 
         "Content-Type": "text/html",
@@ -72,7 +114,7 @@ export async function setupVite(app: Express, server: Server) {
 }
 
 export function serveStatic(app: Express) {
-  const distPath = path.resolve(__dirname, "public");
+  const distPath = path.resolve(__dirname, "..", "dist", "public");
 
   if (!fs.existsSync(distPath)) {
     throw new Error(
@@ -110,13 +152,24 @@ export function serveStatic(app: Express) {
     }),
   );
 
-  app.use("*", (_req, res) => {
+  app.use("*", (req, res) => {
     res.set({
       "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
       "Pragma": "no-cache",
       "Expires": "0",
       "Surrogate-Control": "no-store"
     });
-    res.sendFile(path.resolve(distPath, "index.html"));
+    const indexPath = path.resolve(distPath, "index.html");
+    if (isStaffPath(req.originalUrl)) {
+      try {
+        let html = fs.readFileSync(indexPath, "utf-8");
+        html = injectStaffManifest(html);
+        res.set("Content-Type", "text/html").end(html);
+      } catch {
+        res.sendFile(indexPath);
+      }
+    } else {
+      res.sendFile(indexPath);
+    }
   });
 }

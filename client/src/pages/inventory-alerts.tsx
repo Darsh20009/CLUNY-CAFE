@@ -33,6 +33,7 @@ import {
   Eye
 } from "lucide-react";
 import { format } from "date-fns";
+import { useTranslate, tc } from "@/lib/useTranslate";
 import { ar } from "date-fns/locale";
 
 interface StockAlert {
@@ -62,11 +63,11 @@ interface Branch {
   nameAr: string;
 }
 
-const alertTypeConfig: Record<string, { label: string; icon: typeof AlertTriangle; color: string }> = {
-  low_stock: { label: "مخزون منخفض", icon: TrendingDown, color: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200" },
-  out_of_stock: { label: "نفاد المخزون", icon: AlertTriangle, color: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" },
-  expiring_soon: { label: "قارب على الانتهاء", icon: Clock, color: "bg-accent text-accent dark:bg-accent dark:text-accent" },
-  expired: { label: "منتهي الصلاحية", icon: AlertTriangle, color: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" },
+const alertTypeConfig: Record<string, { labelAr: string; labelEn: string; icon: typeof AlertTriangle; color: string }> = {
+  low_stock: { labelAr: "مخزون منخفض", labelEn: "Low Stock", icon: TrendingDown, color: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200" },
+  out_of_stock: { labelAr: "نفاد المخزون", labelEn: "Out of Stock", icon: AlertTriangle, color: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" },
+  expiring_soon: { labelAr: "قارب على الانتهاء", labelEn: "Expiring Soon", icon: Clock, color: "bg-accent text-accent dark:bg-accent dark:text-accent" },
+  expired: { labelAr: "منتهي الصلاحية", labelEn: "Expired", icon: AlertTriangle, color: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" },
 };
 
 const unitLabels: Record<string, string> = {
@@ -102,7 +103,7 @@ export default function InventoryAlertsPage() {
         if (data.type === 'stock_alert' || data.type === 'alert_resolved') {
           queryClient.invalidateQueries({ queryKey: ["/api/inventory/alerts"] });
           if (data.type === 'stock_alert') {
-            toast({ title: "تنبيه مخزون جديد", description: "تم استلام تنبيه مخزون جديد" });
+            toast({ title: tc("تنبيه مخزون جديد", "New Stock Alert"), description: tc("تم استلام تنبيه مخزون جديد", "A new stock alert has been received") });
           }
         }
       } catch (e) {
@@ -129,10 +130,10 @@ export default function InventoryAlertsPage() {
     mutationFn: (id: string) => apiRequest("PUT", `/api/inventory/alerts/${id}/resolve`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/alerts"] });
-      toast({ title: "تم حل التنبيه بنجاح" });
+      toast({ title: tc("تم حل التنبيه بنجاح", "Alert resolved successfully") });
     },
     onError: (error: any) => {
-      toast({ title: error.message || "فشل في حل التنبيه", variant: "destructive" });
+      toast({ title: error.message || tc("فشل في حل التنبيه", "Failed to resolve alert"), variant: "destructive" });
     },
   });
 
@@ -142,7 +143,7 @@ export default function InventoryAlertsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/alerts"] });
     },
     onError: (error: any) => {
-      toast({ title: error.message || "فشل في تحديث التنبيه", variant: "destructive" });
+      toast({ title: error.message || tc("فشل في تحديث التنبيه", "Failed to update alert"), variant: "destructive" });
     },
   });
 
@@ -173,12 +174,12 @@ export default function InventoryAlertsPage() {
     ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/inventory/alerts"] });
-      toast({ title: "تم تحديد جميع التنبيهات كمقروءة" });
+      toast({ title: tc("تم تحديد جميع التنبيهات كمقروءة", "All alerts marked as read") });
     },
     onError: (error: any) => {
       toast({ 
-        title: "فشل في تحديد التنبيهات كمقروءة", 
-        description: error.message || "حدث خطأ أثناء تحديث التنبيهات",
+        title: tc("فشل في تحديد التنبيهات كمقروءة", "Failed to mark alerts as read"), 
+        description: error.message || tc("حدث خطأ أثناء تحديث التنبيهات", "Error updating alerts"),
         variant: "destructive" 
       });
     },
@@ -198,13 +199,13 @@ export default function InventoryAlertsPage() {
   }
 
   return (
-    <div className="p-6 space-y-6" dir="rtl">
+    <div className="min-h-screen bg-white text-gray-900 p-6 space-y-6">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Bell className="h-8 w-8 text-primary" />
+          <Bell className="h-8 w-8 text-green-600" />
           <div>
-            <h1 className="text-2xl font-bold">تنبيهات المخزون</h1>
-            <p className="text-muted-foreground text-sm">متابعة تنبيهات نفاد وانخفاض المخزون</p>
+            <h1 className="text-2xl font-bold">{tc("تنبيهات المخزون", "Inventory Alerts")}</h1>
+            <p className="text-muted-foreground text-sm">{tc("متابعة تنبيهات نفاد وانخفاض المخزون", "Monitor stock depletion and low inventory alerts")}</p>
           </div>
         </div>
         <Button
@@ -220,45 +221,45 @@ export default function InventoryAlertsPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">نفاد المخزون</CardTitle>
+            <CardTitle className="text-sm font-medium">{tc("نفاد المخزون", "Out of Stock")}</CardTitle>
             <AlertTriangle className="h-4 w-4 text-red-600" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">{outOfStockCount}</div>
-            <p className="text-xs text-muted-foreground">تنبيه عاجل</p>
+            <p className="text-xs text-muted-foreground">{tc("تنبيه عاجل", "Urgent alert")}</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">مخزون منخفض</CardTitle>
+            <CardTitle className="text-sm font-medium">{tc("مخزون منخفض", "Low Stock")}</CardTitle>
             <TrendingDown className="h-4 w-4 text-yellow-600" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-yellow-600">{lowStockCount}</div>
-            <p className="text-xs text-muted-foreground">يحتاج إعادة طلب</p>
+            <p className="text-xs text-muted-foreground">{tc("يحتاج إعادة طلب", "Needs reorder")}</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">صلاحية منتهية</CardTitle>
+            <CardTitle className="text-sm font-medium">{tc("صلاحية منتهية", "Expired")}</CardTitle>
             <Clock className="h-4 w-4 text-accent" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-accent">{expiringCount}</div>
-            <p className="text-xs text-muted-foreground">تنبيه صلاحية</p>
+            <p className="text-xs text-muted-foreground">{tc("تنبيه صلاحية", "Expiry alert")}</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">غير مقروءة</CardTitle>
+            <CardTitle className="text-sm font-medium">{tc("غير مقروءة", "Unread")}</CardTitle>
             <Bell className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{unreadCount}</div>
-            <p className="text-xs text-muted-foreground">تنبيه جديد</p>
+            <p className="text-xs text-muted-foreground">{tc("تنبيه جديد", "New alert")}</p>
           </CardContent>
         </Card>
       </div>
@@ -268,10 +269,10 @@ export default function InventoryAlertsPage() {
           <div className="flex flex-wrap items-center gap-4">
             <Select value={branchFilter} onValueChange={setBranchFilter}>
               <SelectTrigger className="w-[180px]" data-testid="select-branch-filter">
-                <SelectValue placeholder="الفرع" />
+                <SelectValue placeholder={tc("الفرع", "Branch")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">جميع الفروع</SelectItem>
+                <SelectItem value="all">{tc("جميع الفروع", "All Branches")}</SelectItem>
                 {branches.map((branch) => (
                   <SelectItem key={branch.id} value={branch.id as string}>
                     {branch.nameAr}
@@ -282,24 +283,24 @@ export default function InventoryAlertsPage() {
             
             <Select value={typeFilter} onValueChange={setTypeFilter}>
               <SelectTrigger className="w-[180px]" data-testid="select-type-filter">
-                <SelectValue placeholder="نوع التنبيه" />
+                <SelectValue placeholder={tc("نوع التنبيه", "Alert Type")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">جميع الأنواع</SelectItem>
-                {Object.entries(alertTypeConfig).map(([key, { label }]) => (
-                  <SelectItem key={key} value={key}>{label}</SelectItem>
+                <SelectItem value="all">{tc("جميع الأنواع", "All Types")}</SelectItem>
+                {Object.entries(alertTypeConfig).map(([key, cfg]) => (
+                  <SelectItem key={key} value={key}>{tc(cfg.labelAr, cfg.labelEn)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
 
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-[180px]" data-testid="select-status-filter">
-                <SelectValue placeholder="الحالة" />
+                <SelectValue placeholder={tc("الحالة", "Status")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">جميع الحالات</SelectItem>
-                <SelectItem value="unresolved">غير محلولة</SelectItem>
-                <SelectItem value="resolved">محلولة</SelectItem>
+                <SelectItem value="all">{tc("جميع الحالات", "All Statuses")}</SelectItem>
+                <SelectItem value="unresolved">{tc("غير محلولة", "Unresolved")}</SelectItem>
+                <SelectItem value="resolved">{tc("محلولة", "Resolved")}</SelectItem>
               </SelectContent>
             </Select>
             
@@ -322,15 +323,15 @@ export default function InventoryAlertsPage() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead className="text-right">النوع</TableHead>
-                  <TableHead className="text-right">المادة</TableHead>
-                  <TableHead className="text-right">الفرع</TableHead>
-                  <TableHead className="text-right">الكمية الحالية</TableHead>
-                  <TableHead className="text-right">الحد الأدنى</TableHead>
-                  <TableHead className="text-right">النقص</TableHead>
-                  <TableHead className="text-right">التاريخ</TableHead>
-                  <TableHead className="text-right">الحالة</TableHead>
-                  <TableHead className="text-right">الإجراءات</TableHead>
+                  <TableHead className="text-right">{tc("النوع", "Type")}</TableHead>
+                  <TableHead className="text-right">{tc("المادة", "Material")}</TableHead>
+                  <TableHead className="text-right">{tc("الفرع", "Branch")}</TableHead>
+                  <TableHead className="text-right">{tc("الكمية الحالية", "Current Qty")}</TableHead>
+                  <TableHead className="text-right">{tc("الحد الأدنى", "Min. Threshold")}</TableHead>
+                  <TableHead className="text-right">{tc("النقص", "Deficit")}</TableHead>
+                  <TableHead className="text-right">{tc("التاريخ", "Date")}</TableHead>
+                  <TableHead className="text-right">{tc("الحالة", "Status")}</TableHead>
+                  <TableHead className="text-right">{tc("الإجراءات", "Actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -338,7 +339,7 @@ export default function InventoryAlertsPage() {
                   <TableRow>
                     <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                       <Bell className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                      <p>لا توجد تنبيهات</p>
+                      <p>{tc("لا توجد تنبيهات", "No alerts found")}</p>
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -355,7 +356,7 @@ export default function InventoryAlertsPage() {
                         <TableCell>
                           <Badge className={`${config.color} flex items-center gap-1 w-fit`}>
                             <AlertIcon className="h-3 w-3" />
-                            {config.label}
+                            {tc(config.labelAr, config.labelEn)}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -391,7 +392,7 @@ export default function InventoryAlertsPage() {
                               محلول
                             </Badge>
                           ) : (
-                            <Badge variant="secondary">قيد الانتظار</Badge>
+                            <Badge variant="secondary">{tc("قيد الانتظار", "Pending")}</Badge>
                           )}
                         </TableCell>
                         <TableCell>

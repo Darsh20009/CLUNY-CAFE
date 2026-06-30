@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import { fileURLToPath } from "url";
+import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,6 +10,7 @@ const __dirname = path.dirname(__filename);
 export default defineConfig({
   plugins: [
     react(),
+    runtimeErrorOverlay(),
     ...(process.env.NODE_ENV !== "production" &&
     process.env.REPL_ID !== undefined
       ? [
@@ -24,6 +26,7 @@ export default defineConfig({
       "@shared": path.resolve(__dirname, "shared"),
       "@assets": path.resolve(__dirname, "attached_assets"),
     },
+    dedupe: ['react', 'react-dom'],
   },
   root: path.resolve(__dirname, "client"),
   build: {
@@ -34,6 +37,19 @@ export default defineConfig({
     target: 'es2020',
     cssMinify: process.env.NODE_ENV === 'production',
     rollupOptions: {
+      // Capacitor packages only exist in the native iOS/Android runtime.
+      // Externalizing them prevents Vite from trying to bundle them during
+      // the web production build (Render, Vercel, etc.).
+      external: [
+        '@capacitor/browser',
+        '@capacitor/core',
+        '@capacitor/ios',
+        '@capacitor/app',
+        '@capacitor/haptics',
+        '@capacitor/keyboard',
+        '@capacitor/status-bar',
+        '@capacitor/push-notifications',
+      ],
       output: {
         manualChunks: {
           'vendor-react': ['react', 'react-dom'],
@@ -48,12 +64,15 @@ export default defineConfig({
     host: "0.0.0.0",
     port: 5000,
     allowedHosts: true,
-    hmr: process.env.REPL_ID ? { clientPort: 443 } : true,
+    hmr: process.env.REPL_ID
+      ? { host: process.env.REPLIT_DEV_DOMAIN, clientPort: 443, protocol: "wss" }
+      : { clientPort: 5000 },
     fs: {
       strict: false,
     },
   },
   optimizeDeps: {
-    include: ['react', 'react-dom', '@tanstack/react-query', 'wouter', 'lucide-react'],
+    include: ['react', 'react-dom', '@tanstack/react-query', 'wouter', 'lucide-react', 'i18next', 'react-i18next'],
+    exclude: ['@vladmandic/face-api', 'face-api.js', 'sharp'],
   },
 });

@@ -2,16 +2,36 @@ import { forwardRef, useEffect, useState } from "react";
 import QRCode from "qrcode";
 import JsBarcode from "jsbarcode";
 import clunyLogo from "@assets/cluny-logo-customer.png";
+import { brand } from "@/lib/brand";
 import SarIcon from "@/components/sar-icon";
+import { VAT_RATE } from "@/lib/constants";
 
 interface OrderItem {
   coffeeItem: {
     nameAr: string;
     nameEn?: string;
     price: string;
+    availableSizes?: Array<{ nameAr: string; price: number }>;
   };
   quantity: number;
+  selectedSize?: string;
   itemDiscount?: number;
+  customization?: {
+    selectedItemAddons?: Array<{ nameAr: string; nameEn?: string; price?: number }>;
+    [key: string]: any;
+  };
+}
+
+function getItemUnitPriceForReceipt(item: OrderItem): number {
+  const stored = parseNumber((item as any).price ?? (item as any).unitPrice);
+  if (stored > 0) return stored;
+  let base = parseNumber(item.coffeeItem.price);
+  if (item.selectedSize && item.coffeeItem.availableSizes) {
+    const sz = item.coffeeItem.availableSizes.find(s => s.nameAr === item.selectedSize);
+    if (sz) base = Number(sz.price) || base;
+  }
+  const addonsTotal = (item.customization?.selectedItemAddons || []).reduce((s, a) => s + (parseNumber(a.price) || 0), 0);
+  return base + addonsTotal;
 }
 
 interface ReceiptProps {
@@ -37,14 +57,13 @@ interface ReceiptProps {
   isKitchenCopy?: boolean;
 }
 
-const TAX_RATE = 0.15;
-const VAT_NUMBER = "311234567890003";
-const COMPANY_NAME = "كلوني كافيه";
-const COMPANY_NAME_EN = "CLUNY CAFE";
-const COMPANY_CR = "1010123456";
+const VAT_NUMBER = "312718675800003";
+const COMPANY_NAME = brand.shortNameAr;
+const COMPANY_NAME_EN = brand.nameEn;
+const COMPANY_CR = "1163184110";
 const COMPANY_VAT_NAME = "شركة كلوني للخدمات الغذائية"; // Added for ZATCA compliance
-const DEFAULT_BRANCH = "الفرع الرئيسي";
-const DEFAULT_ADDRESS = "الرياض، المملكة العربية السعودية";
+const DEFAULT_BRANCH = "الفرع الرئيسي - ينبع";
+const DEFAULT_ADDRESS = "ينبع، المملكة العربية السعودية";
 
 function generateZATCAQRCode(data: {
   sellerName: string;
@@ -123,10 +142,10 @@ export const ReceiptPrint = forwardRef<HTMLDivElement, ReceiptProps>(
     const itemDiscountsTotal = items.reduce((sum, item) => sum + parseNumber(item.itemDiscount), 0);
     const totalDiscounts = codeDiscountAmount + invDiscountAmount + itemDiscountsTotal;
 
-    const subtotalBeforeTax = totalAmount / (1 + TAX_RATE);
+    const subtotalBeforeTax = totalAmount / (1 + VAT_RATE);
     const vatAmount = totalAmount - subtotalBeforeTax;
 
-    const subtotalBeforeAllDiscounts = subtotalBeforeTax + (totalDiscounts / (1 + TAX_RATE));
+    const subtotalBeforeAllDiscounts = subtotalBeforeTax + (totalDiscounts / (1 + VAT_RATE));
 
     const { date: formattedDate, time: formattedTime } = formatDate(date);
     const displayBranchName = branchName || DEFAULT_BRANCH;
@@ -209,12 +228,19 @@ export const ReceiptPrint = forwardRef<HTMLDivElement, ReceiptProps>(
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item, index) => (
+                  {items.map((item, index) => {
+                    const addons = (item.customization?.selectedItemAddons || []).map((a: any) => a.nameAr).join('، ');
+                    return (
                     <tr key={index} className="border-b border-gray-300">
-                      <td className="text-right py-2 font-bold">{item.coffeeItem.nameAr}</td>
+                      <td className="text-right py-2 font-bold">
+                        <div>{item.coffeeItem.nameAr}</div>
+                        {item.selectedSize && <div className="text-base font-normal text-gray-600">الحجم: {item.selectedSize}</div>}
+                        {addons && <div className="text-base font-normal text-gray-600">+ {addons}</div>}
+                      </td>
                       <td className="text-center py-2 text-2xl font-black">{item.quantity}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -230,6 +256,11 @@ export const ReceiptPrint = forwardRef<HTMLDivElement, ReceiptProps>(
       <div ref={ref} className="hidden print:block">
         <div className="max-w-[80mm] mx-auto bg-white text-black p-3 font-sans" dir="rtl">
           <div className="text-center mb-4 pb-4 border-b-2 border-dashed border-gray-800">
+            <img
+              src={clunyLogo}
+              alt="CLUNY CAFE"
+              style={{ filter: 'invert(1)', mixBlendMode: 'multiply', width: '90px', height: '90px', objectFit: 'contain', margin: '0 auto 6px' }}
+            />
             <h1 className="text-2xl font-bold text-gray-900">{COMPANY_NAME}</h1>
             <p className="text-sm text-gray-600 font-medium">{COMPANY_NAME_EN}</p>
             <p className="text-xs text-gray-500 mt-1">{displayBranchName}</p>
@@ -314,16 +345,23 @@ export const ReceiptPrint = forwardRef<HTMLDivElement, ReceiptProps>(
               </thead>
               <tbody>
                 {items.map((item, index) => {
-                  const unitPrice = parseNumber(item.coffeeItem.price);
+                  const unitPrice = getItemUnitPriceForReceipt(item);
                   const lineTotal = unitPrice * item.quantity;
                   const itemDiscount = parseNumber(item.itemDiscount);
                   const lineAfterDiscount = lineTotal - itemDiscount;
+                  const addons = (item.customization?.selectedItemAddons || []).map((a: any) => a.nameAr).join('، ');
                   return (
                     <tr key={index} className="border-b border-gray-200">
                       <td className="py-2">
                         <div className="font-medium text-gray-900">{item.coffeeItem.nameAr}</div>
                         {item.coffeeItem.nameEn && (
                           <div className="text-[10px] text-gray-500">{item.coffeeItem.nameEn}</div>
+                        )}
+                        {item.selectedSize && (
+                          <div className="text-[10px] text-blue-600">الحجم: {item.selectedSize}</div>
+                        )}
+                        {addons && (
+                          <div className="text-[10px] text-gray-500">+ {addons}</div>
                         )}
                         {itemDiscount > 0 && (
                           <div className="text-[10px] text-green-600">خصم: {itemDiscount.toFixed(2)}-</div>
@@ -349,21 +387,21 @@ export const ReceiptPrint = forwardRef<HTMLDivElement, ReceiptProps>(
               {itemDiscountsTotal > 0 && (
                 <div className="flex justify-between text-green-700">
                   <span>خصومات الأصناف:</span>
-                  <span>({(itemDiscountsTotal / (1 + TAX_RATE)).toFixed(2)}) <SarIcon /></span>
+                  <span>({(itemDiscountsTotal / (1 + VAT_RATE)).toFixed(2)}) <SarIcon /></span>
                 </div>
               )}
               
               {discount && codeDiscountAmount > 0 && (
                 <div className="flex justify-between text-green-700">
                   <span>خصم {discount.code} ({discount.percentage}%):</span>
-                  <span>({(codeDiscountAmount / (1 + TAX_RATE)).toFixed(2)}) <SarIcon /></span>
+                  <span>({(codeDiscountAmount / (1 + VAT_RATE)).toFixed(2)}) <SarIcon /></span>
                 </div>
               )}
 
               {invDiscountAmount > 0 && (
                 <div className="flex justify-between text-green-700">
                   <span>خصم الفاتورة:</span>
-                  <span>({(invDiscountAmount / (1 + TAX_RATE)).toFixed(2)}) <SarIcon /></span>
+                  <span>({(invDiscountAmount / (1 + VAT_RATE)).toFixed(2)}) <SarIcon /></span>
                 </div>
               )}
 
@@ -436,11 +474,11 @@ export const ReceiptPrint = forwardRef<HTMLDivElement, ReceiptProps>(
             <div className="bg-gray-100 rounded-lg p-2 mb-3 text-xs">
               <p className="text-gray-600">جميع الأسعار شاملة ضريبة القيمة المضافة 15%</p>
               <p className="text-gray-500">All prices include 15% VAT</p>
-              <p className="font-bold text-amber-700 mt-1">www.cluny.cafe</p>
+              <p className="font-bold text-amber-700 mt-1">{brand.website}</p>
             </div>
             <div className="text-xs text-gray-500">
               <p>تابعونا على وسائل التواصل الاجتماعي</p>
-              <p className="font-mono font-bold text-amber-700">@CLUNY CAFE</p>
+              <p className="font-mono font-bold text-amber-700">{brand.social.instagram}</p>
             </div>
             <div className="mt-3 pt-2 border-t border-gray-300 text-[9px] text-gray-400">
               <p>تم إنشاء هذه الفاتورة إلكترونياً</p>

@@ -12,18 +12,21 @@ import { useCartStore } from "@/lib/cart-store";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import PaymentMethods from "@/components/payment-methods";
-import GeideaCheckoutWidget, { preloadGeideaSDK } from "@/components/geidea-checkout";
-import ExpressCheckoutWallet from "@/components/express-checkout-wallet";
+import GeideaCheckoutWidget from "@/components/geidea-checkout";
+import SimulatedCardPayment from "@/components/simulated-card-payment";
+import PaymobCheckoutWidget from "@/components/paymob-checkout";
+import { isCapacitorNative } from "@/lib/platform";
 import { customerStorage } from "@/lib/customer-storage";
 import { useCustomer } from "@/contexts/CustomerContext";
 import { useLoyaltyCard } from "@/hooks/useLoyaltyCard";
-import LoyaltyCardComponent from "@/components/loyalty-card";
 import { ErrorBoundary } from "@/components/error-boundary";
-import { User, Gift, CheckCircle, Sparkles, Loader2, Ticket, Tag, Wrench, Coffee, Award, CreditCard, Star, Coins, X, ChevronLeft, ShieldCheck, Lock, Printer, MapPin, Navigation, ClipboardList, Copy, Check } from "lucide-react";
+import { useTranslate, tc } from "@/lib/useTranslate";
+import { User, Gift, CheckCircle, Sparkles, Loader2, Ticket, Tag, Wrench, Coffee, Award, CreditCard, Star, Coins, X, ChevronLeft, Upload, Camera, Truck, Printer, Navigation, MapPin, PackageCheck, Bell, ClipboardList } from "lucide-react";
+import ClunyCard from "@/components/ClunyCard";
+import { printTaxInvoice, printReceiptSection, openReceiptPreviewWindow } from "@/lib/print-utils";
 import { useTranslation } from "react-i18next";
 import type { PaymentMethodInfo, PaymentMethod } from "@shared/schema";
 import SarIcon from "@/components/sar-icon";
-import { downloadInvoicePDF } from "@/lib/print-utils";
 
 
 function LoyaltyCheckoutCard({
@@ -35,6 +38,7 @@ function LoyaltyCheckoutCard({
   onApplyPoints,
   onCancelPoints,
   baseTotal,
+  pointsNeededForFree,
 }: {
   loyaltyCard: any;
   loyaltyPoints: number;
@@ -44,22 +48,29 @@ function LoyaltyCheckoutCard({
   onApplyPoints: (pts: number) => void;
   onCancelPoints: () => void;
   baseTotal: number;
+  pointsNeededForFree: number;
 }) {
   const isApplied = pointsToRedeem > 0;
   const totalPointsValue = parseFloat((loyaltyPoints / pointsPerSar).toFixed(2));
   const appliedDiscount = parseFloat((pointsToRedeem / pointsPerSar).toFixed(2));
 
   const canRedeem = loyaltyPoints >= minPointsForRedemption;
-  // Cap max redeemable points at what's needed to cover the order (no wasteful over-redemption)
-  const maxRedeemable = Math.min(loyaltyPoints, Math.ceil(baseTotal * pointsPerSar));
+  const canMakeOrderFree = loyaltyPoints >= pointsNeededForFree;
+  // Slider max: cap at points needed for free order (remaining stay with customer)
+  const sliderMax = canMakeOrderFree ? pointsNeededForFree : loyaltyPoints;
   const [inputVal, setInputVal] = useState(() =>
-    canRedeem ? Math.min(minPointsForRedemption, maxRedeemable) : 0
+    canRedeem ? minPointsForRedemption : 0
   );
 
   return (
     <div className="space-y-3" data-testid="loyalty-checkout-section">
-      {/* Card — new design */}
-      <LoyaltyCardComponent card={loyaltyCard} compact={true} showActions={false} />
+      {/* Main card — CLUNY Design */}
+      <ClunyCard
+        phone={loyaltyCard?.phoneNumber || loyaltyCard?.customerPhone}
+        points={loyaltyPoints}
+        sarValue={totalPointsValue}
+        customerName={loyaltyCard?.customerName}
+      />
 
       {/* Applied state */}
       {isApplied && (
@@ -67,9 +78,9 @@ function LoyaltyCheckoutCard({
           <div className="flex items-center gap-2 text-green-700 dark:text-green-400 flex-1 min-w-0">
             <CheckCircle className="w-5 h-5 flex-shrink-0" />
             <div className="min-w-0">
-              <p className="text-sm font-bold">تم تطبيق خصم النقاط ✓</p>
+              <p className="text-sm font-bold">{tc("تم تطبيق خصم النقاط ✓", "Points Discount Applied ✓")}</p>
               <p className="text-xs opacity-80">
-                {pointsToRedeem.toLocaleString()} نقطة = <span className="font-black">{appliedDiscount.toFixed(2)} ريال</span> خصم
+                {pointsToRedeem.toLocaleString()} نقطة = <span className="font-black">{appliedDiscount.toFixed(2)} <SarIcon size={12} /></span> خصم
                 {appliedDiscount >= baseTotal && <span className="text-green-600 font-bold mr-1">· يغطي المبلغ كاملاً!</span>}
               </p>
             </div>
@@ -92,7 +103,7 @@ function LoyaltyCheckoutCard({
         <div className="border-2 border-dashed border-amber-300 dark:border-amber-700 rounded-xl p-4 space-y-3 bg-amber-50/50 dark:bg-amber-900/10" data-testid="points-redeem-section">
           <div className="flex items-center gap-2">
             <Star className="w-4 h-4 text-amber-500" />
-            <p className="text-sm font-bold text-amber-800 dark:text-amber-300">استخدم نقاطك كخصم</p>
+            <p className="text-sm font-bold text-amber-800 dark:text-amber-300">{tc("استخدم نقاطك كخصم", "Use Your Points as Discount")}</p>
           </div>
 
           <div className="space-y-2">
@@ -100,33 +111,50 @@ function LoyaltyCheckoutCard({
               <input
                 type="range"
                 min={minPointsForRedemption}
-                max={maxRedeemable}
-                step={Math.max(1, Math.floor(maxRedeemable / 100))}
-                value={Math.min(inputVal, maxRedeemable)}
+                max={sliderMax}
+                step={Math.max(1, Math.floor(sliderMax / 100))}
+                value={Math.min(inputVal, sliderMax)}
                 onChange={e => setInputVal(Number(e.target.value))}
                 className="flex-1 accent-amber-500"
                 data-testid="slider-points"
               />
               <div className="text-right min-w-[80px]">
-                <p className="text-sm font-black text-amber-700 dark:text-amber-400">{inputVal.toLocaleString()}</p>
-                <p className="text-[10px] text-amber-600/70">نقطة</p>
+                <p className="text-sm font-black text-amber-700 dark:text-amber-400">{Math.min(inputVal, sliderMax).toLocaleString()}</p>
+                <p className="text-[10px] text-amber-600/70">{tc("نقطة", "pts")}</p>
               </div>
             </div>
             <div className="flex items-center justify-between text-xs px-1">
               <span className="text-muted-foreground">{minPointsForRedemption} (الحد الأدنى)</span>
               <span className="font-bold text-amber-700 dark:text-amber-400">
-                = {parseFloat((Math.min(inputVal, maxRedeemable) / pointsPerSar).toFixed(2)).toFixed(2)} ريال خصم
+                = {parseFloat((Math.min(inputVal, sliderMax) / pointsPerSar).toFixed(2)).toFixed(2)} <SarIcon size={11} /> خصم
               </span>
             </div>
+            {canMakeOrderFree && loyaltyPoints > pointsNeededForFree && (
+              <p className="text-[11px] text-center text-green-600 dark:text-green-400 font-medium">
+                يُخصم {pointsNeededForFree.toLocaleString()} نقطة فقط • يبقى لك {(loyaltyPoints - pointsNeededForFree).toLocaleString()} نقطة
+              </p>
+            )}
           </div>
 
+          {canMakeOrderFree && (
+            <Button
+              variant="outline"
+              className="w-full border-green-500 text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-950/30 font-bold h-9 gap-2 text-sm"
+              onClick={() => onApplyPoints(pointsNeededForFree)}
+              data-testid="button-free-order"
+            >
+              <Star className="w-4 h-4" />
+              اجعل الطلب مجانياً ({pointsNeededForFree.toLocaleString()} نقطة)
+            </Button>
+          )}
+
           <Button
-            className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-white font-bold h-10 gap-2"
-            onClick={() => onApplyPoints(Math.min(inputVal, maxRedeemable))}
+            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-bold h-10 gap-2"
+            onClick={() => onApplyPoints(Math.min(inputVal, sliderMax))}
             data-testid="button-apply-points"
           >
             <Coins className="w-4 h-4" />
-            طبّق خصم {parseFloat((Math.min(inputVal, maxRedeemable) / pointsPerSar).toFixed(2)).toFixed(2)} ريال
+            طبّق خصم {parseFloat((Math.min(inputVal, sliderMax) / pointsPerSar).toFixed(2)).toFixed(2)} <SarIcon size={11} />
           </Button>
         </div>
       )}
@@ -142,9 +170,9 @@ function LoyaltyCheckoutCard({
 
       {!isApplied && loyaltyPoints === 0 && (
         <div className="text-center px-3 py-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-dashed border-amber-300 dark:border-amber-700/50">
-          <p className="text-sm text-amber-700 dark:text-amber-300 font-medium">🎯 اكسب نقاطك عند إتمام طلبك!</p>
+          <p className="text-sm text-amber-700 dark:text-amber-300 font-medium">اكسب نقاطك عند إتمام طلبك!</p>
           <p className="text-[11px] text-amber-600/70 mt-1">
-            ابدأ باكتساب {minPointsForRedemption} نقطة للحصول على أول خصم بقيمة {(minPointsForRedemption / pointsPerSar).toFixed(2)} ريال
+            ابدأ باكتساب {minPointsForRedemption} نقطة للحصول على أول خصم بقيمة {(minPointsForRedemption / pointsPerSar).toFixed(2)} <SarIcon size={11} />
           </p>
         </div>
       )}
@@ -152,7 +180,26 @@ function LoyaltyCheckoutCard({
   );
 }
 
+// Helper: returns the correct unit price for a cart item, respecting the selected size and all addons
+function getCartItemUnitPrice(i: any): number {
+  let base = Number(i.coffeeItem?.price) || 0;
+  if (i.selectedSize && i.coffeeItem?.availableSizes) {
+    const size = i.coffeeItem.availableSizes.find((s: any) => s.nameAr === i.selectedSize);
+    if (size) base = Number(size.price) || 0;
+  }
+  const enrichedAddonsPrice = (i.selectedAddons || []).reduce((sum: number, addonId: string) => {
+    if (i.enrichedAddons) {
+      const addon = i.enrichedAddons.find((a: any) => a.id === addonId || a._id === addonId);
+      return sum + (Number(addon?.price) || 0);
+    }
+    return sum;
+  }, 0);
+  const inlineAddonsPrice = ((i as any).selectedItemAddons || []).reduce((s: number, a: any) => s + (Number(a.price) || 0), 0);
+  return base + enrichedAddonsPrice + inlineAddonsPrice;
+}
+
 export default function CheckoutPage() {
+  const tc = useTranslate();
   const { t, i18n } = useTranslation();
   const [, setLocation] = useLocation();
   const { cartItems, clearCart, getFinalTotal, deliveryInfo } = useCartStore();
@@ -160,20 +207,23 @@ export default function CheckoutPage() {
   const isAr = i18n.language === 'ar';
 
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod | null>(null);
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
+  const [isUploadingReceipt, setIsUploadingReceipt] = useState(false);
+  const receiptInputRef = useRef<HTMLInputElement>(null);
   const [cashDistanceError, setCashDistanceError] = useState<string | null>(null);
   const [cashDistanceChecking, setCashDistanceChecking] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [showInlineGeidea, setShowInlineGeidea] = useState(false);
-  useEffect(() => {
-    // Warm up the Geidea SDK in the background so the card-payment flow
-    // doesn't pay the script-download cost when the user clicks "Card".
-    // (The same SDK script also serves the Express Checkout wallets API.)
-    preloadGeideaSDK();
-  }, []);
+  const [showSimulatedCard, setShowSimulatedCard] = useState(false);
+  const [showPaymobCheckout, setShowPaymobCheckout] = useState(false);
+  const [paymobCheckoutUrl, setPaymobCheckoutUrl] = useState("");
+  const [paymobSessionId, setPaymobSessionId] = useState("");
+  const isPaymobFlow = useRef(false);
   const [orderDetails, setOrderDetails] = useState<any>(null);
   const [showSuccessPage, setShowSuccessPage] = useState(false);
-  const [copiedOrderNum, setCopiedOrderNum] = useState(false);
-  const [isPdfLoading, setIsPdfLoading] = useState(false);
+  const [wasReservationOrder, setWasReservationOrder] = useState(false);
+  const [pushSubscribed, setPushSubscribed] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
@@ -183,7 +233,9 @@ export default function CheckoutPage() {
   const [discountCode, setDiscountCode] = useState("");
   const [isValidatingDiscount, setIsValidatingDiscount] = useState(false);
   const [appliedDiscount, setAppliedDiscount] = useState<{code: string, percentage: number, isOffer?: boolean} | null>(null);
-  const [showCouponSuggestions, setShowCouponSuggestions] = useState(false);
+  const [giftCardCode, setGiftCardCode] = useState("");
+  const [appliedGiftCard, setAppliedGiftCard] = useState<{ code: string; balance: number; applied: number } | null>(null);
+  const [isCheckingGiftCard, setIsCheckingGiftCard] = useState(false);
   const [pointsToRedeem, setPointsToRedeem] = useState(0);
   const { card: loyaltyCard, refetch: refetchLoyaltyCard } = useLoyaltyCard();
 
@@ -192,23 +244,26 @@ export default function CheckoutPage() {
     staleTime: 60000,
   });
 
-  const { data: branches = [] } = useQuery<any[]>({
-    queryKey: ["/api/branches"],
-    staleTime: 300000,
+  const { data: businessConfig } = useQuery<any>({
+    queryKey: ["/api/business-config"],
+    staleTime: 60000,
+  });
+
+  const { data: publicSettings } = useQuery<any>({
+    queryKey: ["/api/public/settings"],
+    staleTime: 120000,
   });
 
   const pointsPerSar: number = loyaltySettings?.pointsPerSar ?? 50;
   const minPointsForRedemption: number = loyaltySettings?.minPointsForRedemption ?? 100;
   const loyaltyPoints: number = loyaltyCard?.points || 0;
 
-  const getServiceFee = () => 0;
-
   const getBaseTotal = () => {
     let total = getFinalTotal();
     if (appliedDiscount) {
       total = total * (1 - appliedDiscount.percentage / 100);
     }
-    return Math.max(0, total);
+    return total;
   };
 
   const usePointsAsDiscount = pointsToRedeem > 0;
@@ -216,16 +271,188 @@ export default function CheckoutPage() {
     ? parseFloat((pointsToRedeem / pointsPerSar).toFixed(2))
     : 0;
 
+  const orderDeliveryFee = deliveryInfo?.type === 'delivery' ? (deliveryInfo?.deliveryFee || 0) : 0;
+
+  const getServiceFee = () => {
+    if (!businessConfig?.serviceFeeEnabled) return 0;
+    const subtotal = getFinalTotal();
+    const threshold = businessConfig?.serviceFeeLowOrderThreshold ?? 5;
+    const lowFee = businessConfig?.serviceFeeLowOrderAmount ?? 0.35;
+    const normalFee = businessConfig?.serviceFeeAmount ?? 0.70;
+    return subtotal < threshold ? lowFee : normalFee;
+  };
+
+  const serviceFee = getServiceFee();
+
+  // Points can cover products + service fee (delivery is never covered by points)
+  const totalCoverableByPoints = parseFloat((getBaseTotal() + serviceFee).toFixed(2));
+  // Effective discount capped so we never deduct more points than needed
+  const effectivePointsDiscountSAR = Math.min(pointsDiscountSAR, totalCoverableByPoints);
+  // Actual points that will be deducted (may be less than selected if order is cheaper)
+  const effectivePointsUsed = Math.round(effectivePointsDiscountSAR * pointsPerSar);
+  // Points needed to make the whole order free (for smart button)
+  const pointsNeededForFree = Math.ceil(totalCoverableByPoints * pointsPerSar);
+
   const getFinalTotalWithPoints = () => {
     const base = getBaseTotal();
     if (usePointsAsDiscount && pointsDiscountSAR > 0) {
-      return Math.max(0, base - pointsDiscountSAR);
+      return Math.max(0, base + serviceFee - pointsDiscountSAR);
     }
-    return base;
+    return base + serviceFee;
+  };
+
+  const giftCardDiscount = appliedGiftCard ? Math.min(appliedGiftCard.applied, getFinalTotalWithPoints()) : 0;
+
+  const getFinalAmount = () => Math.max(0, getFinalTotalWithPoints() - giftCardDiscount) + orderDeliveryFee;
+
+  const handleCheckGiftCard = async (code?: string) => {
+    const codeToUse = code || giftCardCode.trim();
+    if (!codeToUse) return;
+    setIsCheckingGiftCard(true);
+    try {
+      const res = await fetch(`/api/gift-cards/check/${codeToUse.toUpperCase()}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || tc("بطاقة غير صالحة", "Invalid gift card"));
+      const currentTotal = getFinalTotalWithPoints();
+      const applied = Math.min(Number(data.balance), currentTotal);
+      setAppliedGiftCard({ code: data.code, balance: Number(data.balance), applied });
+      toast({ title: tc("✅ بطاقة هدية مقبولة", "✅ Gift Card Accepted"), description: `سيتم خصم ${applied.toFixed(2)} ريال (الرصيد الكامل: ${data.balance} ريال)` });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: tc("❌ خطأ", "❌ Error"), description: err.message });
+    } finally {
+      setIsCheckingGiftCard(false);
+    }
   };
   const [isRegistering, setIsRegistering] = useState(false);
   const { customer, setCustomer } = useCustomer();
   const isGuestMode = !customer && customerStorage.isGuestMode();
+
+  // Inline auth panel state (sign-in / register without leaving checkout)
+  const [authPanelOpen, setAuthPanelOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authIdentifier, setAuthIdentifier] = useState('');
+  const [authName, setAuthName] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+
+  // ── Guest phone registration check ────────────────────────────────────────
+  const [phoneCheckState, setPhoneCheckState] = useState<'idle' | 'checking' | 'exists' | 'free'>('idle');
+  const [guestLoginPassword, setGuestLoginPassword] = useState('');
+  const [guestLoginLoading, setGuestLoginLoading] = useState(false);
+
+  const handlePhoneBlur = async () => {
+    const phone = customerPhone.replace(/\s/g, '').trim();
+    if (!phone || phone.length < 9) { setPhoneCheckState('idle'); return; }
+    if (customer) return; // already logged in
+    setPhoneCheckState('checking');
+    try {
+      const res = await fetch('/api/customers/lookup-by-phone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone })
+      });
+      const data = await res.json();
+      setPhoneCheckState(data.found ? 'exists' : 'free');
+    } catch {
+      setPhoneCheckState('idle');
+    }
+  };
+
+  const handleGuestPhoneLogin = async () => {
+    if (!guestLoginPassword || guestLoginPassword.length < 4) {
+      toast({ variant: "destructive", title: tc("خطأ", "Error"), description: tc("كلمة المرور 4 أحرف على الأقل", "Password at least 4 chars") });
+      return;
+    }
+    setGuestLoginLoading(true);
+    try {
+      const res = await apiRequest("POST", "/api/customers/login", {
+        identifier: customerPhone.replace(/\s/g, '').trim(),
+        password: guestLoginPassword
+      });
+      const c = await res.json();
+      setCustomer(c);
+      customerStorage.clearGuestInfo();
+      customerStorage.setGuestMode(false);
+      setCustomerName(c.name);
+      setCustomerPhone(c.phone);
+      if (c.email) setCustomerEmail(c.email);
+      setPhoneCheckState('idle');
+      setGuestLoginPassword('');
+      toast({ title: tc("مرحباً بعودتك", "Welcome back") + " " + c.name });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: tc("كلمة المرور خاطئة", "Wrong password"), description: tc("تحقق من كلمة المرور وحاول مجدداً", "Check your password and try again") });
+    } finally {
+      setGuestLoginLoading(false);
+    }
+  };
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const handleInlineLogin = async () => {
+    const id = authIdentifier.replace(/\s/g, '').trim();
+    if (!id) {
+      toast({ variant: "destructive", title: tc("خطأ", "Error"), description: tc("أدخل رقم الجوال أو البريد", "Enter phone or email") });
+      return;
+    }
+    if (!authPassword || authPassword.length < 4) {
+      toast({ variant: "destructive", title: tc("خطأ", "Error"), description: tc("كلمة المرور 4 أحرف على الأقل", "Password must be at least 4 chars") });
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      const res = await apiRequest("POST", "/api/customers/login", { identifier: id, password: authPassword });
+      const c = await res.json();
+      setCustomer(c);
+      customerStorage.clearGuestInfo();
+      customerStorage.setGuestMode(false);
+      setCustomerName(c.name);
+      setCustomerPhone(c.phone);
+      if (c.email) setCustomerEmail(c.email);
+      setAuthPanelOpen(false);
+      setAuthPassword('');
+      toast({ title: tc("مرحباً بعودتك", "Welcome back"), description: c.name });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: tc("فشل تسجيل الدخول", "Login failed"), description: e?.message || tc("بيانات غير صحيحة", "Invalid credentials") });
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleInlineRegister = async () => {
+    // Use guest info if present, otherwise use form fields
+    const guestInfo = customerStorage.getGuestInfo();
+    const phone = (guestInfo?.phone || authIdentifier).replace(/\s/g, '').trim();
+    const fullName = (guestInfo?.name || authName).trim();
+    if (!phone || phone.length !== 9 || !phone.startsWith('5')) {
+      toast({ variant: "destructive", title: tc("خطأ", "Error"), description: tc("رقم الجوال 9 أرقام يبدأ بـ 5", "Phone must be 9 digits starting with 5") });
+      return;
+    }
+    if (!fullName || fullName.length < 2) {
+      toast({ variant: "destructive", title: tc("خطأ", "Error"), description: tc("الاسم حرفان على الأقل", "Name must be at least 2 chars") });
+      return;
+    }
+    if (!authPassword || authPassword.length < 4) {
+      toast({ variant: "destructive", title: tc("خطأ", "Error"), description: tc("كلمة المرور 4 أحرف على الأقل", "Password must be at least 4 chars") });
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      const res = await apiRequest("POST", "/api/customers/register", { phone, name: fullName, password: authPassword });
+      const c = await res.json();
+      setCustomer(c);
+      customerStorage.clearGuestInfo();
+      customerStorage.setGuestMode(false);
+      setCustomerName(c.name);
+      setCustomerPhone(c.phone);
+      setAuthPanelOpen(false);
+      setAuthPassword('');
+      setAuthName('');
+      toast({ title: tc("تم إنشاء حسابك ", "Account created ") + fullName, description: tc("تم ربط طلباتك السابقة", "Previous orders linked") });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: tc("فشل التسجيل", "Registration failed"), description: e?.message || tc("حاول مرة أخرى", "Please try again") });
+    } finally {
+      setAuthLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (customer) {
@@ -246,7 +473,56 @@ export default function CheckoutPage() {
     if (selectedPaymentMethod === 'qahwa-card') {
       setSelectedPaymentMethod(null);
     }
+    setReceiptFile(null);
+    setReceiptPreview(null);
   }, [selectedPaymentMethod]);
+
+  // Auto-apply pending coupon (saved from /promo/:code link)
+  const pendingCouponTriedRef = useRef(false);
+  useEffect(() => {
+    if (pendingCouponTriedRef.current) return;
+    if (appliedDiscount) return;
+    let pending: { code?: string } | null = null;
+    try {
+      const raw = localStorage.getItem("pendingCoupon");
+      if (raw) pending = JSON.parse(raw);
+    } catch (_) {}
+    if (!pending?.code) return;
+    pendingCouponTriedRef.current = true;
+    setDiscountCode(pending.code);
+    handleValidateDiscount(pending.code).finally(() => {
+      try {
+        localStorage.removeItem("pendingCoupon");
+      } catch (_) {}
+    });
+  }, [appliedDiscount]);
+
+  const handleReceiptFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setReceiptFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setReceiptPreview(ev.target?.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const uploadReceiptToServer = async (file: File): Promise<string | null> => {
+    try {
+      setIsUploadingReceipt(true);
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/upload-receipt', { method: 'POST', body: formData });
+      if (res.ok) {
+        const data = await res.json();
+        return data.url || null;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      setIsUploadingReceipt(false);
+    }
+  };
 
   const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
   const pendingGeideaOrderData = useRef<any>(null);
@@ -316,6 +592,7 @@ export default function CheckoutPage() {
             if (verifyData.verified) {
               const orderData = JSON.parse(storedOrderData);
               orderData.paymentStatus = 'paid';
+              orderData.status = 'payment_confirmed';
               orderData.transactionId = verifyData.transactionId || geideaOrderId || paymobTransactionId;
               createOrderMutation.mutate(orderData);
             } else {
@@ -391,7 +668,7 @@ export default function CheckoutPage() {
       return;
     }
     if (!navigator.geolocation) {
-      setCashDistanceError('متصفحك لا يدعم تحديد الموقع، لا يمكن التحقق من المسافة للدفع نقداً');
+      setCashDistanceError(tc('متصفحك لا يدعم تحديد الموقع، لا يمكن التحقق من المسافة للدفع نقداً', 'Your browser does not support location detection. Cash payment distance check unavailable.'));
       return;
     }
     setCashDistanceChecking(true);
@@ -407,7 +684,7 @@ export default function CheckoutPage() {
       },
       () => {
         setCashDistanceChecking(false);
-        setCashDistanceError('تعذّر تحديد موقعك. الرجاء السماح بالوصول للموقع للدفع نقداً.');
+        setCashDistanceError(tc('تعذّر تحديد موقعك. الرجاء السماح بالوصول للموقع للدفع نقداً.', 'Could not determine your location. Please allow location access for cash payment.'));
       },
       { timeout: 8000, maximumAge: 60000 }
     );
@@ -427,25 +704,36 @@ export default function CheckoutPage() {
       if (usePointsAsDiscount) {
         try { await refetchLoyaltyCard(); } catch {}
       }
+      const hasReservationItem = cartItems.some(ci => (ci.coffeeItem as any)?.isReservation);
+      setWasReservationOrder(hasReservationItem);
       setOrderDetails(data);
       clearCart();
       customerStorage.clearActiveOffer();
-      setShowSuccessPage(true);
       setPointsToRedeem(0);
+      setAppliedGiftCard(null);
+      setGiftCardCode("");
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/loyalty/cards/phone"] });
       refetchLoyaltyCard();
       const displayNum = data.orderNumber;
+      if (displayNum) {
+        localStorage.setItem("br-active-order", String(displayNum));
+      }
+      // PayMob flow: skip the big success page — navigate straight to "My Orders"
+      if (isPaymobFlow.current) {
+        isPaymobFlow.current = false;
+        toast({
+          title: "✅ تم الدفع بنجاح!",
+          description: displayNum ? `رقم طلبك: #${displayNum}` : "سيبدأ الفريق بتحضير طلبك فوراً",
+        });
+        setTimeout(() => setLocation("/my-orders"), 400);
+        return;
+      }
+      setShowSuccessPage(true);
       toast({ title: t("checkout.order_success"), description: `${t("tracking.order_number")}: ${displayNum}` });
     },
     onError: (error) => toast({ variant: "destructive", title: t("checkout.order_error"), description: error.message }),
   });
-
-  const { data: coupons = [] } = useQuery<any[]>({
-    queryKey: ["/api/discount-codes"],
-  });
-
-  const safeCoupons = Array.isArray(coupons) ? coupons.filter(c => c && c.code && typeof c.code === 'string') : [];
 
   const handleValidateDiscount = async (codeOverride?: string) => {
     const codeToUse = codeOverride || discountCode.trim();
@@ -466,7 +754,6 @@ export default function CheckoutPage() {
       if (response.ok && data.valid) {
         setAppliedDiscount({ code: data.code, percentage: data.discountPercentage });
         setDiscountCode(data.code);
-        setShowCouponSuggestions(false);
         toast({
           title: t("checkout.coupon_applied"),
           description: `${t("checkout.discount")}: ${data.discountPercentage}%`,
@@ -484,44 +771,31 @@ export default function CheckoutPage() {
     } finally { setIsValidatingDiscount(false); }
   };
 
-  // Apple Pay is now rendered via Geidea Express Checkout SDK (see ExpressCheckoutWallet).
-  // The SDK renders a native Apple Pay button that handles merchant validation,
-  // the Apple Pay sheet, and payment processing internally — no manual ApplePaySession.
-  const onApplePayExpressSuccess = (data: any, apAmount: number, apOrderId: string) => {
-    const geideaOrderId = data?.orderId || data?.reference || apOrderId;
-    createOrderMutation.mutate({
-      customerId: customer?.id, customerName, customerPhone, customerEmail,
-      items: cartItems.map(i => {
-        const inlineAddons = (i as any).selectedItemAddons || [];
-        const addonsExtra = inlineAddons.reduce((s: number, a: any) => s + (Number(a.price) || 0), 0);
-        return { coffeeItemId: i.coffeeItemId, quantity: i.quantity, price: (i.coffeeItem?.price || 0) + addonsExtra, nameAr: i.coffeeItem?.nameAr || "", nameEn: i.coffeeItem?.nameEn || "", customization: inlineAddons.length > 0 ? { selectedItemAddons: inlineAddons } : undefined };
-      }),
-      totalAmount: apAmount, serviceFee: getServiceFee(), paymentMethod: 'apple_pay' as any, status: 'payment_confirmed', paymentStatus: 'paid',
-      paymentReference: geideaOrderId, paymentSessionId: geideaOrderId,
-      branchId: deliveryInfo?.branchId || "default",
-      orderType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup' : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup' : (deliveryInfo?.type === 'pickup' && deliveryInfo?.dineIn ? 'dine-in' : 'regular'),
-      deliveryType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup' : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup' : deliveryInfo?.type || 'pickup',
-      customerNotes, discountCode: appliedDiscount?.code,
-      pointsRedeemed: usePointsAsDiscount ? pointsToRedeem : 0,
-      pointsValue: usePointsAsDiscount ? Math.min(pointsDiscountSAR, getBaseTotal()) : 0,
-      bypassPointsVerification: true,
-      ...(deliveryInfo?.type === 'car-pickup' && deliveryInfo?.carInfo ? { carType: deliveryInfo.carInfo.carType, carColor: deliveryInfo.carInfo.carColor, plateNumber: deliveryInfo.carInfo.plateNumber } : {}),
-      ...(deliveryInfo?.scheduledPickupTime ? { scheduledPickupTime: deliveryInfo.scheduledPickupTime, arrivalTime: deliveryInfo.scheduledPickupTime } : {}),
-      channel: "online",
-    });
-  };
-
   const handleProceedPayment = () => {
-    // If total is 0 (from points or 100% coupon), no payment method needed
-    if (getFinalTotalWithPoints() <= 0) {
+    const isFreeOrder = getFinalAmount() <= 0;
+
+    if (isFreeOrder) {
+      if (!selectedPaymentMethod) {
+        setSelectedPaymentMethod('cash');
+      }
       if (!customerName.trim()) {
         toast({ variant: "destructive", title: t("checkout.enter_customer_name") });
         return;
       }
-      const freeMethod = usePointsAsDiscount ? 'loyalty_points' : (selectedPaymentMethod || 'coupon');
-      confirmAndCreateOrder(freeMethod as any);
+      setShowConfirmation(true);
       return;
     }
+
+    // Block if guest entered a registered phone but hasn't logged in yet
+    if (!customer && phoneCheckState === 'exists') {
+      toast({
+        variant: "destructive",
+        title: tc("يجب تسجيل الدخول أولاً", "Sign in required"),
+        description: tc("هذا الرقم مسجّل بحساب موجود — أدخل كلمة المرور للمتابعة", "This phone belongs to an existing account — enter your password to continue")
+      });
+      return;
+    }
+
     if (!selectedPaymentMethod) {
       toast({ variant: "destructive", title: t("checkout.select_payment") });
       return;
@@ -534,30 +808,191 @@ export default function CheckoutPage() {
       toast({ variant: "destructive", title: 'جاري التحقق من موقعك...', description: 'الرجاء الانتظار' });
       return;
     }
+    const selectedMethodInfo = paymentMethods.find(m => m.id === selectedPaymentMethod);
+    if (selectedMethodInfo?.requiresReceipt && !receiptFile) {
+      toast({ variant: "destructive", title: tc("يرجى رفع إيصال التحويل", "Please upload the payment receipt") });
+      return;
+    }
     if (!customerName.trim()) {
       toast({ variant: "destructive", title: t("checkout.enter_customer_name") });
       return;
     }
-    // For online payments: skip confirmation dialog and go to Geidea HPP
-    if (selectedPaymentMethod === 'apple_pay' || isOnlinePaymentMethod(selectedPaymentMethod)) {
+    if (isPaymobMethod(selectedPaymentMethod)) {
+      initiatePaymobDirect();
+      return;
+    }
+    if (isCardPaymentMethod(selectedPaymentMethod) || isOnlinePaymentMethod(selectedPaymentMethod)) {
       confirmAndCreateOrder();
       return;
     }
     setShowConfirmation(true);
   };
 
-  const isOnlinePaymentMethod = (method: string | null) => {
+  const isCardPaymentMethod = (method: string | null) => {
     if (!method) return false;
-    const onlineMethods = ['neoleap', 'geidea', 'neoleap-apple-pay', 'apple_pay', 'bank_card', 'paymob-card', 'paymob-wallet'];
-    return onlineMethods.includes(method);
+    // paymob-card is handled separately with real PayMob flow
+    const cardMethods = ['geidea', 'bank_card', 'credit_card', 'card', 'stc-pay', 'apple_pay', 'neoleap-apple-pay'];
+    return cardMethods.includes(method);
   };
 
-  const confirmAndCreateOrder = async (overridePaymentMethod?: string) => {
-    const payMethod = (overridePaymentMethod || selectedPaymentMethod) as PaymentMethod;
-    const isFreeByPoints = payMethod === ('loyalty_points' as any) || (payMethod as any) === 'coupon' || getFinalTotalWithPoints() <= 0;
-    let finalTotal = isFreeByPoints ? 0 : getFinalTotalWithPoints();
+  const isPaymobMethod = (method: string | null) => {
+    if (!method) return false;
+    return ['paymob-card', 'paymob-wallet', 'paymob-apple-pay', 'neoleap'].includes(method);
+  };
 
-    if (payMethod === ('wallet' as any) && (customer?.walletBalance || 0) < finalTotal) {
+  const isOnlinePaymentMethod = (_method: string | null) => false;
+
+  const buildOrderData = async (): Promise<{ orderData: any; activeCustomerId: string | undefined }> => {
+    let activeCustomerId = customer?.id;
+    if (!activeCustomerId && wantToRegister) {
+      setIsRegistering(true);
+      const regRes = await fetch("/api/customers/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: customerName, phone: customerPhone, email: customerEmail, password: customerPassword })
+      });
+      if (regRes.ok) {
+        const newC = await regRes.json();
+        activeCustomerId = newC.id;
+        setCustomer(newC);
+      }
+      setIsRegistering(false);
+    }
+
+    const finalTotal = getFinalAmount();
+    const orderData: any = {
+      customerId: activeCustomerId,
+      customerName,
+      customerPhone,
+      customerEmail,
+      items: cartItems.map(i => {
+        const inlineAddons = (i as any).selectedItemAddons || [];
+        return {
+          coffeeItemId: i.coffeeItemId,
+          quantity: i.quantity,
+          price: getCartItemUnitPrice(i),
+          nameAr: i.coffeeItem?.nameAr || "",
+          nameEn: i.coffeeItem?.nameEn || "",
+          selectedSize: i.selectedSize,
+          customization: inlineAddons.length > 0 ? { selectedItemAddons: inlineAddons } : undefined,
+        };
+      }),
+      totalAmount: finalTotal,
+      paymentMethod: selectedPaymentMethod as PaymentMethod,
+      status: "pending",
+      branchId: deliveryInfo?.branchId || "default",
+      orderType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup'
+              : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup'
+              : deliveryInfo?.type === 'delivery' ? 'delivery'
+              : (deliveryInfo?.type === 'pickup' && deliveryInfo?.dineIn ? 'dine-in' : 'regular'),
+      deliveryType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup'
+               : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup'
+               : deliveryInfo?.type || 'pickup',
+      customerNotes,
+      discountCode: appliedDiscount?.code,
+      pointsRedeemed: usePointsAsDiscount ? effectivePointsUsed : 0,
+      pointsValue: usePointsAsDiscount ? effectivePointsDiscountSAR : 0,
+      bypassPointsVerification: true,
+      ...(appliedGiftCard && giftCardDiscount > 0 ? { giftCardCode: appliedGiftCard.code, giftCardAmount: giftCardDiscount } : {}),
+      ...(deliveryInfo?.type === 'car-pickup' && deliveryInfo?.carInfo ? {
+        carType: deliveryInfo.carInfo.carType,
+        carColor: deliveryInfo.carInfo.carColor,
+        plateNumber: deliveryInfo.carInfo.plateNumber,
+      } : {}),
+      ...(deliveryInfo?.scheduledPickupTime ? {
+        scheduledPickupTime: deliveryInfo.scheduledPickupTime,
+        arrivalTime: deliveryInfo.scheduledPickupTime,
+      } : {}),
+      ...(deliveryInfo?.type === 'delivery' && deliveryInfo?.deliveryAddress ? {
+        deliveryAddress: { fullAddress: deliveryInfo.deliveryAddress, lat: 0, lng: 0, zone: 'general' },
+      } : {}),
+      ...(deliveryInfo?.productReservationDate ? {
+        isProductReservation: true,
+        productReservationDate: deliveryInfo.productReservationDate,
+        productReservationFromTime: deliveryInfo.productReservationFromTime,
+        productReservationToTime: deliveryInfo.productReservationToTime,
+        productReservationStatus: 'pending_payment',
+      } : {}),
+      channel: "online",
+    };
+
+    if (receiptFile) {
+      const uploadedUrl = await uploadReceiptToServer(receiptFile);
+      orderData.paymentReceiptUrl = uploadedUrl || receiptPreview || undefined;
+    }
+
+    return { orderData, activeCustomerId };
+  };
+
+  const initiatePaymobDirect = async () => {
+    setIsVerifyingPayment(true);
+    try {
+      const { orderData, activeCustomerId } = await buildOrderData();
+
+      // ── Step 1: Create a server-side payment session token ──────────────────
+      // This token stores order data + customer identity so /payment-return can
+      // auto-login the customer and create the order even after a full-page
+      // redirect (iOS Safari, browser switch, etc.) where sessionStorage is empty.
+      const tokenRes = await fetch("/api/payments/create-session-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          customerPhone: customerPhone || orderData.customerPhone,
+          customerId: customer?.id || activeCustomerId || null,
+          customerName: customerName || orderData.customerName,
+          orderData,
+        }),
+      });
+      const tokenData = await tokenRes.json();
+      if (!tokenData.token) throw new Error("فشل إنشاء رمز الدفع الآمن");
+
+      const paymentToken = tokenData.token;
+      const returnUrl = `${window.location.origin}/payment-return?pt=${paymentToken}&provider=paymob`;
+
+      // ── Step 2: Also save to sessionStorage as a fallback ──────────────────
+      // Covers the case where the iframe stays in the same browser context.
+      sessionStorage.setItem('pendingOrderData', JSON.stringify(orderData));
+      sessionStorage.setItem('paymentProvider', 'paymob');
+      sessionStorage.setItem('paymentSessionToken', paymentToken);
+
+      // ── Step 3: Init PayMob with the new return URL ─────────────────────────
+      const tempRef = `PAY-${Date.now()}`;
+      const payRes = await apiRequest("POST", "/api/payments/init", {
+        orderId: tempRef,
+        amount: orderData.totalAmount,
+        currency: "SAR",
+        paymentMethod: selectedPaymentMethod,
+        customerName,
+        customerPhone,
+        customerEmail,
+        returnUrl,
+      });
+      const payData = await payRes.json();
+
+      if (payData.success && payData.redirectUrl) {
+        pendingGeideaOrderData.current = orderData;
+        isPaymobFlow.current = true;
+        setPaymobCheckoutUrl(payData.redirectUrl);
+        setPaymobSessionId(payData.sessionId || tempRef);
+        setIsVerifyingPayment(false);
+        setShowPaymobCheckout(true);
+      } else {
+        throw new Error(payData.error || payData.details || 'فشل تهيئة بوابة الدفع');
+      }
+    } catch (err: any) {
+      sessionStorage.removeItem('pendingOrderData');
+      sessionStorage.removeItem('paymentProvider');
+      sessionStorage.removeItem('paymentSessionToken');
+      setIsVerifyingPayment(false);
+      toast({ variant: "destructive", title: "خطأ في الدفع", description: err.message || "حدث خطأ أثناء تهيئة الدفع" });
+    }
+  };
+
+  const confirmAndCreateOrder = async () => {
+    let finalTotal = getFinalAmount();
+
+    if (selectedPaymentMethod === ('wallet' as any) && (customer?.walletBalance || 0) < finalTotal) {
       toast({ variant: "destructive", title: t("points.insufficient_wallet") });
       return;
     }
@@ -585,35 +1020,37 @@ export default function CheckoutPage() {
       customerEmail: customerEmail,
       items: cartItems.map(i => {
         const inlineAddons = (i as any).selectedItemAddons || [];
-        const addonsExtra = inlineAddons.reduce((s: number, a: any) => s + (Number(a.price) || 0), 0);
         return {
           coffeeItemId: i.coffeeItemId,
           quantity: i.quantity,
-          price: (i.coffeeItem?.price || 0) + addonsExtra,
+          price: getCartItemUnitPrice(i),
           nameAr: i.coffeeItem?.nameAr || "",
           nameEn: i.coffeeItem?.nameEn || "",
+          selectedSize: i.selectedSize,
           customization: inlineAddons.length > 0 ? { selectedItemAddons: inlineAddons } : undefined,
         };
       }),
       totalAmount: finalTotal,
-      serviceFee: isFreeByPoints ? 0 : getServiceFee(),
-      paymentMethod: isFreeByPoints
-        ? (payMethod === ('loyalty_points' as any) ? ('loyalty_points' as any) : ('coupon' as any))
-        : payMethod,
-      status: isFreeByPoints ? "payment_confirmed" : "pending",
-      paymentStatus: isFreeByPoints ? 'paid' : undefined,
+      paymentMethod: selectedPaymentMethod as PaymentMethod,
+      status: "pending",
       branchId: deliveryInfo?.branchId || "default",
-      orderType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup' : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup' : (deliveryInfo?.type === 'pickup' && deliveryInfo?.dineIn ? 'dine-in' : 'regular'),
-      deliveryType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup' : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup' : deliveryInfo?.type || 'pickup',
+      orderType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup'
+              : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup'
+              : deliveryInfo?.type === 'delivery' ? 'delivery'
+              : (deliveryInfo?.type === 'pickup' && deliveryInfo?.dineIn ? 'dine-in' : 'regular'),
+      deliveryType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup'
+               : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup'
+               : deliveryInfo?.type || 'pickup',
       customerNotes: customerNotes,
       discountCode: appliedDiscount?.code,
-      pointsRedeemed: usePointsAsDiscount
-        ? Math.min(Math.ceil(getBaseTotal() * pointsPerSar), loyaltyPoints)
-        : 0,
-      pointsValue: usePointsAsDiscount
-        ? Math.min(pointsDiscountSAR, getBaseTotal())
-        : 0,
+      pointsRedeemed: usePointsAsDiscount ? effectivePointsUsed : 0,
+      pointsValue: usePointsAsDiscount ? effectivePointsDiscountSAR : 0,
       bypassPointsVerification: true,
+      // Gift card — server will validate + deduct atomically
+      ...(appliedGiftCard && giftCardDiscount > 0 ? {
+        giftCardCode: appliedGiftCard.code,
+        giftCardAmount: giftCardDiscount,
+      } : {}),
       ...(deliveryInfo?.type === 'car-pickup' && deliveryInfo?.carInfo ? {
         carType: deliveryInfo.carInfo.carType,
         carColor: deliveryInfo.carInfo.carColor,
@@ -623,10 +1060,37 @@ export default function CheckoutPage() {
         scheduledPickupTime: deliveryInfo.scheduledPickupTime,
         arrivalTime: deliveryInfo.scheduledPickupTime,
       } : {}),
+      ...(deliveryInfo?.type === 'delivery' && deliveryInfo?.deliveryAddress ? {
+        deliveryAddress: { fullAddress: deliveryInfo.deliveryAddress, lat: 0, lng: 0, zone: 'general' },
+      } : {}),
+      ...(deliveryInfo?.productReservationDate ? {
+        isProductReservation: true,
+        productReservationDate: deliveryInfo.productReservationDate,
+        productReservationFromTime: deliveryInfo.productReservationFromTime,
+        productReservationToTime: deliveryInfo.productReservationToTime,
+        productReservationStatus: 'pending_payment',
+      } : {}),
       channel: "online",
     };
 
-    if (isOnlinePaymentMethod(payMethod)) {
+    if (receiptFile) {
+      const uploadedUrl = await uploadReceiptToServer(receiptFile);
+      if (uploadedUrl) {
+        (orderData as any).paymentReceiptUrl = uploadedUrl;
+      } else {
+        (orderData as any).paymentReceiptUrl = receiptPreview || undefined;
+      }
+    }
+
+    if (isCardPaymentMethod(selectedPaymentMethod)) {
+      pendingGeideaOrderData.current = orderData;
+      geideaOrderNum.current = `CLN-${Date.now()}`;
+      setShowConfirmation(false);
+      setShowSimulatedCard(true);
+      return;
+    }
+
+    if (isOnlinePaymentMethod(selectedPaymentMethod)) {
       pendingGeideaOrderData.current = orderData;
       geideaOrderNum.current = `CLN-${Date.now()}`;
       setShowConfirmation(false);
@@ -639,8 +1103,8 @@ export default function CheckoutPage() {
 
   if (isVerifyingPayment) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-8 bg-[#21302f]" dir={isAr ? 'rtl' : 'ltr'}>
-        <div className="max-w-sm w-full bg-white rounded-3xl p-10 shadow-2xl text-center space-y-6">
+      <div className="min-h-screen flex items-center justify-center p-8 bg-background" dir={isAr ? 'rtl' : 'ltr'}>
+        <div className="max-w-sm w-full bg-white dark:bg-card rounded-3xl p-10 shadow-2xl text-center space-y-6 border border-border">
           <Loader2 className="w-16 h-16 text-primary mx-auto animate-spin" />
           <h2 className="text-2xl font-bold">{t("checkout.verifying_payment")}</h2>
           <p className="text-muted-foreground text-sm">{t("checkout.verifying_payment_desc")}</p>
@@ -650,233 +1114,380 @@ export default function CheckoutPage() {
   }
 
   if (showSuccessPage) {
-    const orderBranch = branches.find((b: any) => b.id === orderDetails?.branchId);
-    const branchLat = orderBranch?.location?.lat;
-    const branchLng = orderBranch?.location?.lng;
-    const branchAddress = orderBranch?.address || "";
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const isStandalone = (window.navigator as any).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+    const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+    const notifPermission = 'Notification' in window ? Notification.permission : 'denied';
+    const successCustomerId = customer?.id || (customer as any)?._id;
+    const orderNum = orderDetails?.orderNumber || orderDetails?.dailyNumber || "—";
+    const orderItems = orderDetails?.items || cartItems;
+    const orderTotal = orderDetails?.totalAmount ?? getFinalAmount();
 
-    // Build Google Maps URL:
-    // 1. Use admin-pasted Google Maps link if available (most accurate)
-    // 2. Fall back to address text search
-    // 3. Last resort: GPS coordinates
-    const mapsUrl = (() => {
-      if (orderBranch?.mapUrl) {
-        return orderBranch.mapUrl;
-      }
-      if (branchAddress) {
-        return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(branchAddress)}`;
-      }
-      if (branchLat && branchLng) {
-        return `https://www.google.com/maps/dir/?api=1&destination=${branchLat},${branchLng}`;
-      }
-      return null;
-    })();
-
-    const handleCopyOrder = () => {
-      navigator.clipboard.writeText(orderDetails?.orderNumber || "");
-      setCopiedOrderNum(true);
-      setTimeout(() => setCopiedOrderNum(false), 2000);
+    // Build a single invoice payload reused by every print/preview action below.
+    const buildInvoiceData = () => {
+      const mappedItems = orderItems.map((i: any) => ({
+        coffeeItem: {
+          nameAr: i.nameAr || i.coffeeItem?.nameAr || "منتج",
+          nameEn: i.nameEn || i.coffeeItem?.nameEn || "",
+          price: String(i.price ?? i.coffeeItem?.price ?? 0),
+        },
+        quantity: i.quantity,
+        customization: i.customization,
+      }));
+      return {
+        orderNumber: orderNum,
+        items: mappedItems,
+        subtotal: orderTotal.toFixed(2),
+        total: orderTotal.toFixed(2),
+        customerName: customerName || orderDetails?.customerName || "عميل",
+        customerPhone: customerPhone || orderDetails?.customerPhone || "",
+        paymentMethod: selectedPaymentMethod || orderDetails?.paymentMethod || "نقدي",
+        employeeName: "طلب إلكتروني",
+        notes: orderDetails?.notes || "",
+        date: orderDetails?.createdAt || new Date().toISOString(),
+        orderType: (orderDetails?.orderType === 'dine-in' ? 'dine_in' : orderDetails?.orderType === 'delivery' ? 'delivery' : 'takeaway') as any,
+      } as any;
     };
 
     const handlePrintInvoice = async () => {
-      if (isPdfLoading) return;
-      setIsPdfLoading(true);
-      try {
-        const paymentLabel =
-          orderDetails?.paymentMethod === "geidea" ? "بطاقة إلكترونية" :
-          orderDetails?.paymentMethod === "cash" ? "نقداً" :
-          orderDetails?.paymentMethod === "loyalty_points" ? "نقاط الولاء" :
-          orderDetails?.paymentMethod === "coupon" ? "كوبون خصم" :
-          orderDetails?.paymentMethod || "نقداً";
-        await downloadInvoicePDF({
-          orderNumber: orderDetails?.orderNumber || "",
-          customerName: orderDetails?.customerName || customerName || "",
-          customerPhone: orderDetails?.customerPhone || customerPhone || "",
-          items: (orderDetails?.items || []).map((item: any) => ({
-            coffeeItem: {
-              nameAr: item.nameAr || item.coffeeItem?.nameAr || "",
-              nameEn: item.nameEn || item.coffeeItem?.nameEn || "",
-              price: String(item.price || item.coffeeItem?.price || 0),
-            },
-            quantity: item.quantity,
-          })),
-          subtotal: String(orderDetails?.totalAmount || 0),
-          total: String(orderDetails?.totalAmount || 0),
-          paymentMethod: paymentLabel,
-          date: new Date().toISOString(),
-          branchName: isAr ? (orderBranch?.nameAr || "كلوني كافيه") : (orderBranch?.nameEn || "Cluny Cafe"),
-          branchAddress: orderBranch?.address || "",
-        });
-      } catch (err) {
-        toast({ variant: "destructive", title: "تعذّر تحميل الفاتورة", description: "يرجى المحاولة مرة أخرى" });
-      } finally {
-        setIsPdfLoading(false);
-      }
+      try { await printTaxInvoice(buildInvoiceData(), { autoPrint: true }); }
+      catch (e) { console.error("Print error:", e); }
+    };
+
+    const handlePreviewInvoice = async () => {
+      try { await openReceiptPreviewWindow(buildInvoiceData()); }
+      catch (e) { console.error("Preview error:", e); }
+    };
+
+    const handlePrintCustomer = async () => {
+      try { await printReceiptSection(buildInvoiceData(), 'customer'); }
+      catch (e) { console.error("Print customer error:", e); }
+    };
+
+    const handlePrintKitchen = async () => {
+      try { await printReceiptSection(buildInvoiceData(), 'kitchen'); }
+      catch (e) { console.error("Print kitchen error:", e); }
+    };
+
+    const handlePrintBoth = async () => {
+      try { await printReceiptSection(buildInvoiceData(), 'both'); }
+      catch (e) { console.error("Print both error:", e); }
+    };
+
+    const handleEditOrder = () => {
+      // Clear success state and return the user to the cart to edit the order.
+      setShowSuccessPage(false);
+      setLocation("/cart");
+    };
+
+    const handleNavigateToBranch = () => {
+      window.open("https://maps.app.goo.gl/zhHFfQVjWRxVKEBn6?g_st=ic", "_blank");
+    };
+
+    const handleWhatsAppReservation = () => {
+      const rawPhone = businessConfig?.contactPhone || businessConfig?.socialLinks?.whatsapp?.replace(/\D/g, '') || '';
+      const phone = rawPhone.replace(/\D/g, '').replace(/^0/, '966');
+      const reservationItems = orderDetails?.items || [];
+      const itemsText = reservationItems.map((i: any) => {
+        const pkg = i.customization?.selectedReservationPackage;
+        return `• ${i.nameAr || i.coffeeItem?.nameAr || 'منتج'} x${i.quantity}${pkg ? ` (${pkg.packageName})` : ''}`;
+      }).join('\n');
+      const resDate = orderDetails?.productReservationDate
+        ? new Date(orderDetails.productReservationDate).toLocaleDateString('ar-SA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+        : '';
+      const resTime = (orderDetails?.productReservationFromTime && orderDetails?.productReservationToTime)
+        ? `من ${orderDetails.productReservationFromTime} إلى ${orderDetails.productReservationToTime}`
+        : '';
+      const resLine = resDate ? `\n📅 موعد الحجز: ${resDate}\n⏰ الوقت: ${resTime}` : '';
+      const msg = encodeURIComponent(
+        `🗓️ طلب تأكيد حجز\n\nرقم الطلب: ${orderNum}\n\n${itemsText}${resLine}\n\nالإجمالي: ${orderTotal.toFixed(2)} ر.س\n\nالاسم: ${customerName || orderDetails?.customerName || '—'}\nالجوال: ${customerPhone || orderDetails?.customerPhone || '—'}\n\nأرجو التأكيد على هذا الحجز`
+      );
+      window.open(`https://wa.me/${phone || '966566507666'}?text=${msg}`, '_blank');
     };
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-[#1a2c1a] via-[#21302f] to-[#1a2c1a] flex flex-col items-center justify-start pt-8 pb-16 px-4" dir={isAr ? 'rtl' : 'ltr'}>
-        <div className="w-full max-w-md space-y-4">
+      <div className="min-h-screen bg-background flex flex-col items-center py-10 px-4" dir={isAr ? 'rtl' : 'ltr'}>
+        <div className="max-w-md w-full space-y-4">
 
-          {/* Success header card */}
-          <div className="bg-white dark:bg-card rounded-3xl p-6 shadow-2xl text-center space-y-3">
-            <div className="w-20 h-20 rounded-full bg-green-100 dark:bg-green-950 flex items-center justify-center mx-auto">
-              <CheckCircle className="w-12 h-12 text-green-600" />
+          {/* Header card */}
+          <div className="bg-white dark:bg-card rounded-3xl shadow-2xl overflow-hidden">
+            {/* Green top band */}
+            <div className="bg-gradient-to-br from-green-500 to-emerald-600 p-8 text-white text-center space-y-2">
+              <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center mx-auto ring-4 ring-white/30">
+                <CheckCircle className="w-11 h-11 text-white" />
+              </div>
+              <h2 className="text-2xl font-black mt-3">تم استلام طلبك!</h2>
+              <p className="text-green-100 text-sm">سيبدأ الفريق بتحضيره فوراً</p>
             </div>
-            <h2 className="text-2xl font-black text-foreground">تم استلام طلبك!</h2>
-            <p className="text-muted-foreground text-sm">شكراً لك — طلبك قيد التحضير الآن</p>
 
             {/* Order number */}
-            <div className="bg-green-50 dark:bg-green-950/40 border border-green-200 dark:border-green-800 rounded-2xl p-4 flex items-center justify-between gap-3">
-              <div className="text-right">
-                <p className="text-xs text-muted-foreground mb-0.5">رقم الطلب</p>
-                <p className="text-2xl font-black font-mono text-green-700 dark:text-green-400" data-testid="text-order-number">
-                  {orderDetails?.orderNumber}
-                </p>
-              </div>
+            <div className="p-6 text-center border-b border-dashed">
+              <p className="text-xs text-muted-foreground mb-1">رقم طلبك</p>
+              <p className="text-5xl font-black text-primary tracking-wider" data-testid="text-order-number">{orderNum}</p>
+            </div>
+
+            {/* Action buttons */}
+            <div className="grid grid-cols-3 divide-x divide-x-reverse border-b">
               <button
-                onClick={handleCopyOrder}
-                className="w-10 h-10 rounded-xl bg-green-100 dark:bg-green-900 flex items-center justify-center hover:bg-green-200 dark:hover:bg-green-800 transition"
-                data-testid="button-copy-order-number"
+                onClick={() => setLocation("/tracking")}
+                className="flex flex-col items-center gap-1.5 py-4 px-2 hover:bg-muted/50 transition-colors"
+                data-testid="button-track-order"
               >
-                {copiedOrderNum ? <Check className="w-4 h-4 text-green-700" /> : <Copy className="w-4 h-4 text-green-700" />}
+                <div className="w-10 h-10 rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center">
+                  <PackageCheck className="w-5 h-5 text-blue-600" />
+                </div>
+                <span className="text-[11px] font-semibold text-center">تتبع الطلب</span>
               </button>
+              <button
+                onClick={handlePrintInvoice}
+                className="flex flex-col items-center gap-1.5 py-4 px-2 hover:bg-muted/50 transition-colors"
+                data-testid="button-print-invoice"
+              >
+                <div className="w-10 h-10 rounded-full bg-amber-50 dark:bg-amber-900/20 flex items-center justify-center">
+                  <Printer className="w-5 h-5 text-amber-600" />
+                </div>
+                <span className="text-[11px] font-semibold text-center">طباعة الفاتورة</span>
+              </button>
+              <button
+                onClick={handleNavigateToBranch}
+                className="flex flex-col items-center gap-1.5 py-4 px-2 hover:bg-muted/50 transition-colors"
+                data-testid="button-navigate-branch"
+              >
+                <div className="w-10 h-10 rounded-full bg-green-50 dark:bg-green-900/20 flex items-center justify-center">
+                  <Navigation className="w-5 h-5 text-green-600" />
+                </div>
+                <span className="text-[11px] font-semibold text-center">التوجه للفرع</span>
+              </button>
+            </div>
+
+            {/* Order items summary */}
+            <div className="p-4 space-y-2">
+              {orderItems.slice(0, 4).map((item: any, idx: number) => (
+                <div key={idx} className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0">{item.quantity}</span>
+                    <span className="text-foreground">{isAr ? (item.nameAr || item.coffeeItem?.nameAr) : (item.nameEn || item.coffeeItem?.nameEn)}</span>
+                  </span>
+                  <span className="font-semibold text-muted-foreground">{((item.price ?? item.coffeeItem?.price ?? 0) * item.quantity).toFixed(2)}</span>
+                </div>
+              ))}
+              {orderItems.length > 4 && (
+                <p className="text-xs text-muted-foreground text-center">+{orderItems.length - 4} منتجات أخرى</p>
+              )}
+              <div className="pt-2 border-t flex items-center justify-between font-bold text-base">
+                <span>الإجمالي</span>
+                <span className="text-primary">{orderTotal.toFixed(2)} <SarIcon /></span>
+              </div>
             </div>
           </div>
 
-          {/* Action buttons */}
-          <div className="grid grid-cols-3 gap-3">
-            <button
-              onClick={() => setLocation(`/tracking?order=${orderDetails?.orderNumber}`)}
-              className="bg-white dark:bg-card rounded-2xl p-4 shadow-md flex flex-col items-center gap-2 hover:shadow-lg transition"
-              data-testid="button-track-order"
-            >
-              <div className="w-11 h-11 rounded-xl bg-blue-100 dark:bg-blue-950 flex items-center justify-center">
-                <ClipboardList className="w-6 h-6 text-blue-600" />
+          {/* ─── Receipt actions panel ─── */}
+          <div className="bg-white dark:bg-card rounded-2xl shadow-md border border-border overflow-hidden">
+            <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-4 py-2.5 flex items-center gap-2">
+              <Printer className="w-4 h-4 text-white" />
+              <p className="font-bold text-white text-sm">خيارات الفاتورة</p>
+            </div>
+            <div className="p-3 space-y-2">
+              {/* Row 1: Preview (full width, highlighted) */}
+              <button
+                onClick={handlePreviewInvoice}
+                className="w-full flex items-center justify-center gap-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-xl py-2.5 px-3 font-bold text-sm border-2 border-slate-300 dark:border-slate-700 transition-colors"
+                data-testid="button-preview-invoice"
+              >
+                <span className="text-base">👁️</span>
+                <span>معاينة الفواتير</span>
+              </button>
+              {/* Row 2: Customer + Kitchen side-by-side */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handlePrintCustomer}
+                  className="flex flex-col items-center gap-1 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-800 dark:text-blue-200 rounded-xl py-2.5 px-2 font-bold text-xs border border-blue-200 dark:border-blue-800 transition-colors"
+                  data-testid="button-print-customer"
+                >
+                  <span className="text-lg">🧾</span>
+                  <span>فاتورة العميل</span>
+                </button>
+                <button
+                  onClick={handlePrintKitchen}
+                  className="flex flex-col items-center gap-1 bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/40 text-amber-800 dark:text-amber-200 rounded-xl py-2.5 px-2 font-bold text-xs border border-amber-200 dark:border-amber-800 transition-colors"
+                  data-testid="button-print-kitchen"
+                >
+                  <span className="text-lg">🍳</span>
+                  <span>طلب المطبخ</span>
+                </button>
               </div>
-              <span className="text-xs font-bold text-center text-foreground">تتبع الطلب</span>
-            </button>
-
-            <button
-              onClick={handlePrintInvoice}
-              disabled={isPdfLoading}
-              className="bg-white dark:bg-card rounded-2xl p-4 shadow-md flex flex-col items-center gap-2 hover:shadow-lg transition disabled:opacity-60"
-              data-testid="button-print-invoice"
-            >
-              <div className="w-11 h-11 rounded-xl bg-amber-100 dark:bg-amber-950 flex items-center justify-center">
-                {isPdfLoading ? <Loader2 className="w-6 h-6 text-amber-600 animate-spin" /> : <Printer className="w-6 h-6 text-amber-600" />}
+              {/* Row 3: Print both + Edit order */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handlePrintBoth}
+                  className="flex items-center justify-center gap-2 bg-slate-900 hover:bg-black text-white rounded-xl py-2.5 px-3 font-bold text-xs transition-colors shadow-sm"
+                  data-testid="button-print-both"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>طباعة الكل</span>
+                </button>
+                <button
+                  onClick={handleEditOrder}
+                  className="flex items-center justify-center gap-2 bg-rose-50 dark:bg-rose-900/20 hover:bg-rose-100 dark:hover:bg-rose-900/40 text-rose-800 dark:text-rose-200 rounded-xl py-2.5 px-3 font-bold text-xs border border-rose-200 dark:border-rose-800 transition-colors"
+                  data-testid="button-edit-order"
+                >
+                  <span className="text-base">✏️</span>
+                  <span>تعديل الطلب</span>
+                </button>
               </div>
-              <span className="text-xs font-bold text-center text-foreground">{isPdfLoading ? 'جاري التحميل...' : 'تنزيل الفاتورة'}</span>
-            </button>
+            </div>
+          </div>
 
-            {mapsUrl ? (
+          {/* Contact Card */}
+          <div className="bg-white dark:bg-card rounded-2xl shadow-sm border border-border overflow-hidden">
+            <div className="flex items-center divide-x divide-x-reverse divide-border">
               <a
-                href={mapsUrl}
+                href="tel:+966566507666"
+                className="flex-1 flex flex-col items-center gap-1.5 py-4 px-2 hover:bg-muted/50 transition-colors"
+                data-testid="link-call-cafe"
+              >
+                <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.63 3.45 2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 9a16 16 0 0 0 6 6l1.06-1.06a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 21.73 16z"/></svg>
+                </div>
+                <span className="text-[11px] font-semibold text-center">اتصل بنا</span>
+                <span className="text-[10px] text-muted-foreground ltr:direction-ltr" dir="ltr">+966 56 650 7666</span>
+              </a>
+              <a
+                href="https://maps.app.goo.gl/zhHFfQVjWRxVKEBn6?g_st=ic"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="bg-white dark:bg-card rounded-2xl p-4 shadow-md flex flex-col items-center gap-2 hover:shadow-lg transition"
-                data-testid="button-directions"
+                className="flex-1 flex flex-col items-center gap-1.5 py-4 px-2 hover:bg-muted/50 transition-colors"
+                data-testid="link-maps-cafe"
               >
-                <div className="w-11 h-11 rounded-xl bg-red-100 dark:bg-red-950 flex items-center justify-center">
-                  <Navigation className="w-6 h-6 text-red-600" />
+                <div className="w-10 h-10 rounded-full bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
                 </div>
-                <span className="text-xs font-bold text-center text-foreground">الاتجاهات</span>
+                <span className="text-[11px] font-semibold text-center">موقعنا</span>
+                <span className="text-[10px] text-muted-foreground text-center">عرض على الخريطة</span>
               </a>
-            ) : (
-              <button
-                onClick={() => setLocation("/menu")}
-                className="bg-white dark:bg-card rounded-2xl p-4 shadow-md flex flex-col items-center gap-2 hover:shadow-lg transition"
-                data-testid="button-back-menu"
-              >
-                <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center">
-                  <Coffee className="w-6 h-6 text-primary" />
-                </div>
-                <span className="text-xs font-bold text-center text-foreground">القائمة</span>
-              </button>
-            )}
+            </div>
           </div>
 
-          {/* Branch directions card */}
-          {orderBranch && (
-            <div className="bg-white dark:bg-card rounded-2xl p-4 shadow-md" dir="rtl">
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-xl bg-orange-100 dark:bg-orange-950 flex items-center justify-center shrink-0">
-                  <MapPin className="w-5 h-5 text-orange-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-bold text-sm text-foreground">{isAr ? orderBranch.nameAr : (orderBranch.nameEn || orderBranch.nameAr)}</p>
-                  {orderBranch.address && (
-                    <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{orderBranch.address}</p>
-                  )}
-                  <div className="mt-2 flex items-center gap-2 flex-wrap">
-                    <span className="text-xs bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full font-medium">
-                      توجّه للفرع برقم: {orderDetails?.orderNumber}
-                    </span>
+          {/* Reservation confirmation banner */}
+          {wasReservationOrder && (
+            <div className="bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-400 dark:border-amber-600 rounded-3xl overflow-hidden shadow-lg">
+              <div className="bg-gradient-to-r from-amber-500 to-amber-600 px-5 py-3 flex items-center gap-2">
+                <span className="text-xl">🗓️</span>
+                <p className="font-black text-white text-base">طلب حجز مسبق</p>
+              </div>
+              <div className="p-5 space-y-4">
+                {orderDetails?.productReservationDate && (
+                  <div className="bg-amber-100 dark:bg-amber-900/40 rounded-xl p-3 space-y-1">
+                    <p className="text-xs font-bold text-amber-800 dark:text-amber-200">📅 موعد حجزك</p>
+                    <p className="text-sm font-semibold text-amber-900 dark:text-amber-100">
+                      {new Date(orderDetails.productReservationDate).toLocaleDateString('ar-SA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                    </p>
+                    {orderDetails.productReservationFromTime && (
+                      <p className="text-sm text-amber-700 dark:text-amber-300">
+                        ⏰ من {orderDetails.productReservationFromTime} إلى {orderDetails.productReservationToTime}
+                      </p>
+                    )}
                   </div>
-                </div>
-                {mapsUrl && (
-                  <a
-                    href={mapsUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="shrink-0 text-xs font-bold text-blue-600 hover:underline"
-                    data-testid="link-maps"
-                  >
-                    خريطة
-                  </a>
                 )}
-              </div>
-            </div>
-          )}
-
-          {/* Order items summary */}
-          {orderDetails?.items?.length > 0 && (
-            <div className="bg-white dark:bg-card rounded-2xl p-4 shadow-md" dir="rtl">
-              <p className="font-bold text-sm text-foreground mb-3 flex items-center gap-2">
-                <Coffee className="w-4 h-4 text-primary" /> ملخص الطلب
-              </p>
-              <div className="space-y-2">
-                {orderDetails.items.map((item: any, idx: number) => (
-                  <div key={idx} className="flex justify-between items-center text-sm gap-2">
-                    <span className="text-foreground">{isAr ? (item.nameAr || item.coffeeItem?.nameAr) : (item.nameEn || item.coffeeItem?.nameEn || item.nameAr || item.coffeeItem?.nameAr)} × {item.quantity}</span>
-                    <span className="font-semibold text-muted-foreground">{((item.price || item.coffeeItem?.price || 0) * item.quantity).toFixed(2)} ر.س</span>
-                  </div>
-                ))}
-                <div className="pt-2 border-t flex justify-between font-black text-base">
-                  <span>الإجمالي</span>
-                  <span className="text-primary">{Number(orderDetails?.totalAmount || 0).toFixed(2)} ر.س</span>
+                <p className="text-sm text-amber-800 dark:text-amber-200">
+                  لإتمام حجزك يرجى اتخاذ الخطوتين التاليتين:
+                </p>
+                <div className="space-y-3">
+                  <button
+                    onClick={async () => { await handlePrintInvoice(); }}
+                    className="w-full flex items-center justify-center gap-3 bg-white dark:bg-card border-2 border-amber-300 dark:border-amber-600 rounded-xl py-3 px-4 font-bold text-amber-800 dark:text-amber-200 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors"
+                    data-testid="button-download-reservation-invoice"
+                  >
+                    <Printer className="w-5 h-5" />
+                    <span>١. تحميل الفاتورة</span>
+                  </button>
+                  <button
+                    onClick={handleWhatsAppReservation}
+                    className="w-full flex items-center justify-center gap-3 bg-green-500 hover:bg-green-600 text-white rounded-xl py-3 px-4 font-bold transition-colors shadow"
+                    data-testid="button-whatsapp-reservation"
+                  >
+                    <span className="text-xl">💬</span>
+                    <span>٢. تأكيد الحجز عبر واتساب</span>
+                  </button>
                 </div>
+                <p className="text-xs text-amber-600 dark:text-amber-400 text-center">سيتواصل معك فريقنا لتأكيد الحجز وتفاصيله</p>
               </div>
             </div>
           )}
 
-          {/* Guest registration prompt */}
+          {/* Push notification */}
+          {!pushSubscribed && notifPermission !== 'granted' && notifPermission !== 'denied' && (
+            pushSupported ? (
+              isIOS && !isStandalone ? (
+                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-2xl p-4 flex gap-3 items-start">
+                  <Bell className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-amber-900 dark:text-amber-300 text-sm">فعّل إشعارات حالة طلبك</p>
+                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">أضف التطبيق لشاشتك الرئيسية عبر زر المشاركة في Safari ثم افتحه منها</p>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={async () => {
+                    try {
+                      const { subscribeToPush } = await import('@/lib/push-utils');
+                      const pushUserId = successCustomerId || customerPhone || 'guest';
+                      const ok = await subscribeToPush({ userType: 'customer', userId: pushUserId });
+                      if (ok) {
+                        setPushSubscribed(true);
+                        toast({ title: "✅ تم تفعيل الإشعارات", description: "سنخبرك فوراً عند تحديث حالة طلبك" });
+                      } else {
+                        toast({ variant: "destructive", title: "تعذّر تفعيل الإشعارات", description: "يرجى التأكد من أذونات المتصفح" });
+                      }
+                    } catch (e) {
+                      console.error('[PUSH]', e);
+                      toast({ variant: "destructive", title: "تعذّر تفعيل الإشعارات", description: "يرجى التأكد من أذونات المتصفح" });
+                    }
+                  }}
+                  className="w-full flex items-center gap-3 bg-white dark:bg-card border rounded-2xl p-4 hover:bg-muted/50 active:scale-[0.98] transition-all text-right"
+                  data-testid="button-enable-push-success"
+                >
+                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Bell className="w-5 h-5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-sm">تفعيل إشعارات الطلب</p>
+                    <p className="text-xs text-muted-foreground">اعرف فوراً عندما يصبح طلبك جاهزاً</p>
+                  </div>
+                </button>
+              )
+            ) : null
+          )}
+          {pushSubscribed && (
+            <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-2xl p-4 flex gap-3 items-center">
+              <div className="w-8 h-8 rounded-full bg-green-100 dark:bg-green-900/40 flex items-center justify-center flex-shrink-0">
+                <Bell className="w-4 h-4 text-green-600" />
+              </div>
+              <p className="text-sm font-semibold text-green-800 dark:text-green-300">✅ الإشعارات مفعّلة — سنبلغك فور تحديث طلبك</p>
+            </div>
+          )}
+
+          {/* Guest register prompt */}
           {isGuestMode && (
-            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-2xl p-4" dir="rtl">
-              <p className="font-bold text-amber-900 dark:text-amber-300 text-sm">⭐ احصل على نقاط ولاء مع كل طلب</p>
-              <p className="text-xs text-amber-800 dark:text-amber-400 mt-1 leading-relaxed">
-                سجّل بنفس رقم جوالك ويتم ربط طلباتك تلقائياً
-              </p>
-              <Button
-                onClick={() => setLocation("/auth")}
-                className="w-full mt-3 bg-amber-600 hover:bg-amber-700 text-white font-bold h-10 text-sm"
-                data-testid="button-register-after-order"
-              >
-                سجّل الآن — مجاناً
+            <div className="bg-white dark:bg-card border rounded-2xl p-4 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/20 flex items-center justify-center flex-shrink-0">
+                <Star className="w-5 h-5 text-amber-500" />
+              </div>
+              <div className="flex-1 text-right">
+                <p className="font-bold text-sm">احصل على نقاط مكافآت</p>
+                <p className="text-xs text-muted-foreground">سجّل بنفس رقم جوالك لربط طلباتك</p>
+              </div>
+              <Button size="sm" onClick={() => { setAuthMode('register'); setAuthPanelOpen(true); }} data-testid="button-register-after-order" className="flex-shrink-0">
+                سجّل
               </Button>
             </div>
           )}
 
           {/* Back to menu */}
-          <Button
-            onClick={() => setLocation("/menu")}
-            variant="outline"
-            className="w-full h-12 border-white/30 text-white hover:bg-white/10 bg-white/5"
-            data-testid="button-back-to-menu"
-          >
-            <Coffee className="w-4 h-4 ml-2" />
-            {t("cart.continue_shopping")}
+          <Button onClick={() => setLocation("/menu")} className="w-full h-12" variant="outline" data-testid="button-back-to-menu">
+            العودة للقائمة
           </Button>
+
         </div>
       </div>
     );
@@ -884,9 +1495,9 @@ export default function CheckoutPage() {
 
 
   return (
-    <div className="min-h-screen py-12 bg-[#21302f]" dir={isAr ? 'rtl' : 'ltr'}>
+    <div className="min-h-screen py-12 bg-background" dir={isAr ? 'rtl' : 'ltr'}>
       <div className="max-w-6xl mx-auto px-4">
-        <h1 className="text-3xl font-bold text-white text-center mb-8">{t("nav.checkout")}</h1>
+        <h1 className="text-3xl font-bold text-foreground text-center mb-8">{t("nav.checkout")}</h1>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-1 space-y-6">
             <Card>
@@ -894,8 +1505,12 @@ export default function CheckoutPage() {
               <CardContent className="space-y-4">
                 {cartItems.map((item, index) => (
                   <div key={index} className="flex justify-between items-center gap-2 text-sm" data-testid={`cart-item-${index}`}>
-                    <span>{isAr ? item.coffeeItem?.nameAr : item.coffeeItem?.nameEn} × {item.quantity}</span>
-                    <span className="font-bold">{((item.coffeeItem?.price || 0) * item.quantity).toFixed(2)} <SarIcon /></span>
+                    <span>
+                      {isAr ? item.coffeeItem?.nameAr : item.coffeeItem?.nameEn}
+                      {item.selectedSize && item.selectedSize !== 'default' && <span className="text-muted-foreground text-xs"> ({item.selectedSize})</span>}
+                      {' '}× {item.quantity}
+                    </span>
+                    <span className="font-bold">{(getCartItemUnitPrice(item) * item.quantity).toFixed(2)} <SarIcon /></span>
                   </div>
                 ))}
                 {appliedDiscount && (
@@ -906,14 +1521,56 @@ export default function CheckoutPage() {
                 )}
                 {usePointsAsDiscount && pointsDiscountSAR > 0 && (
                   <div className="flex justify-between items-center gap-2 text-sm text-amber-700 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-2 rounded">
-                    <span className="flex items-center gap-1.5">⭐ خصم النقاط ({pointsToRedeem.toLocaleString()} نقطة)</span>
-                    <span className="font-bold">-{Math.min(pointsDiscountSAR, getBaseTotal()).toFixed(2)} <SarIcon /></span>
+                    <span className="flex items-center gap-1.5">خصم النقاط ({pointsToRedeem.toLocaleString()} نقطة)</span>
+                    <span className="font-bold">-{effectivePointsDiscountSAR.toFixed(2)} <SarIcon /></span>
+                  </div>
+                )}
+                {appliedGiftCard && giftCardDiscount > 0 && (
+                  <div className="flex justify-between items-center gap-2 text-sm text-primary bg-primary/5 border border-primary/20 p-2 rounded">
+                    <span className="flex items-center gap-1.5">
+                      <CreditCard className="w-3.5 h-3.5" />
+                      بطاقة هدية ({appliedGiftCard.code})
+                    </span>
+                    <span className="font-bold">-{giftCardDiscount.toFixed(2)} <SarIcon /></span>
+                  </div>
+                )}
+                {orderDeliveryFee > 0 && (
+                  <div className="flex justify-between items-center gap-2 text-sm text-green-700 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 p-2 rounded">
+                    <span className="flex items-center gap-1.5">
+                      <Truck className="w-3.5 h-3.5" />
+                      رسوم التوصيل
+                    </span>
+                    <span className="font-bold">+{orderDeliveryFee.toFixed(2)} <SarIcon /></span>
+                  </div>
+                )}
+                {serviceFee > 0 && (
+                  <div className="flex justify-between items-center gap-2 text-sm border rounded-lg p-2.5"
+                    style={{
+                      background: usePointsAsDiscount && effectivePointsDiscountSAR >= totalCoverableByPoints
+                        ? 'linear-gradient(135deg, rgba(34,197,94,0.1) 0%, rgba(34,197,94,0.05) 100%)'
+                        : 'linear-gradient(135deg, rgba(200,165,58,0.15) 0%, rgba(200,165,58,0.05) 100%)',
+                      borderColor: usePointsAsDiscount && effectivePointsDiscountSAR >= totalCoverableByPoints
+                        ? 'rgba(34,197,94,0.4)'
+                        : 'rgba(200,165,58,0.4)'
+                    }}>
+                    <span className="flex items-center gap-2 font-semibold"
+                      style={{ color: usePointsAsDiscount && effectivePointsDiscountSAR >= totalCoverableByPoints ? '#16a34a' : '#C8A53A' }}>
+                      <span className="text-base">⚙️</span>
+                      رسوم الخدمة
+                      {usePointsAsDiscount && effectivePointsDiscountSAR >= totalCoverableByPoints && (
+                        <span className="text-xs font-bold text-green-600">(مشمولة بالنقاط ✓)</span>
+                      )}
+                    </span>
+                    <span className="font-black text-base"
+                      style={{ color: usePointsAsDiscount && effectivePointsDiscountSAR >= totalCoverableByPoints ? '#16a34a' : '#C8A53A' }}>
+                      {usePointsAsDiscount && effectivePointsDiscountSAR >= totalCoverableByPoints ? '0.00' : `+${serviceFee.toFixed(2)}`} <SarIcon />
+                    </span>
                   </div>
                 )}
                 <div className="pt-4 border-t font-bold text-xl flex justify-between gap-2">
                   <span>{t("cart.total")}:</span>
-                  <span className={usePointsAsDiscount && getFinalTotalWithPoints() === 0 ? 'text-green-600' : 'text-primary'}>
-                    {getFinalTotalWithPoints().toFixed(2)} <SarIcon />
+                  <span className={getFinalAmount() === 0 ? 'text-green-600' : 'text-primary'}>
+                    {getFinalAmount().toFixed(2)} <SarIcon />
                   </span>
                 </div>
               </CardContent>
@@ -952,71 +1609,235 @@ export default function CheckoutPage() {
                       </button>
                     </div>
                     <div className="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg">
-                      <p className="text-xs text-amber-800 dark:text-amber-300">سجّل الآن واحصل على نقاط ولاء وتتبع طلباتك</p>
+                      <p className="text-xs text-amber-800 dark:text-amber-300">{tc("سجّل الآن واحصل على نقاط ولاء وتتبع طلباتك", "Register now to earn loyalty points and track your orders")}</p>
                       <button
                         type="button"
-                        onClick={() => setLocation("/auth")}
+                        onClick={() => { setAuthMode('register'); setAuthPanelOpen(v => !v); }}
                         className="text-xs font-bold text-accent hover:underline whitespace-nowrap mr-2"
                         data-testid="link-register-now"
                       >
-                        تسجيل ←
+                        {authPanelOpen ? tc("إخفاء", "Hide") : tc("تسجيل ←", "Register ←")}
                       </button>
                     </div>
+
+                    {/* Inline auth panel — sign-in / register without leaving page */}
+                    {authPanelOpen && (
+                      <div className="border rounded-lg p-4 space-y-3 bg-card" data-testid="panel-inline-auth">
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setAuthMode('login')}
+                            className={`flex-1 text-sm py-2 rounded-lg transition-colors ${authMode === 'login' ? 'bg-accent text-accent-foreground font-bold' : 'bg-muted text-muted-foreground'}`}
+                            data-testid="tab-auth-login"
+                          >
+                            {tc("تسجيل الدخول", "Sign In")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAuthMode('register')}
+                            className={`flex-1 text-sm py-2 rounded-lg transition-colors ${authMode === 'register' ? 'bg-accent text-accent-foreground font-bold' : 'bg-muted text-muted-foreground'}`}
+                            data-testid="tab-auth-register"
+                          >
+                            {tc("حساب جديد", "New Account")}
+                          </button>
+                        </div>
+
+                        {authMode === 'login' ? (
+                          <div className="space-y-2">
+                            <Input
+                              value={authIdentifier}
+                              onChange={e => setAuthIdentifier(e.target.value)}
+                              placeholder={tc("رقم الجوال أو البريد", "Phone or email")}
+                              data-testid="input-auth-identifier"
+                            />
+                            <Input
+                              type="password"
+                              value={authPassword}
+                              onChange={e => setAuthPassword(e.target.value)}
+                              placeholder={tc("كلمة المرور", "Password")}
+                              onKeyDown={e => e.key === 'Enter' && handleInlineLogin()}
+                              data-testid="input-auth-password"
+                            />
+                            <Button
+                              onClick={handleInlineLogin}
+                              disabled={authLoading}
+                              className="w-full"
+                              data-testid="button-inline-login"
+                            >
+                              {authLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : tc("دخول", "Sign In")}
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <p className="text-xs text-muted-foreground">
+                              {tc(`سيتم استخدام: ${customerName} / ${customerPhone}`, `Using: ${customerName} / ${customerPhone}`)}
+                            </p>
+                            <Input
+                              type="password"
+                              value={authPassword}
+                              onChange={e => setAuthPassword(e.target.value)}
+                              placeholder={tc("اختر كلمة مرور (4 أحرف+)", "Choose password (4+ chars)")}
+                              onKeyDown={e => e.key === 'Enter' && handleInlineRegister()}
+                              data-testid="input-auth-new-password"
+                            />
+                            <Button
+                              onClick={handleInlineRegister}
+                              disabled={authLoading}
+                              className="w-full"
+                              data-testid="button-inline-register"
+                            >
+                              {authLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : tc("إنشاء حساب", "Create Account")}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-4">
                     <Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder={t("checkout.full_name")} data-testid="input-customer-name" />
-                    <Input value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} placeholder={t("checkout.phone")} data-testid="input-customer-phone" />
-                    <div className="flex items-center gap-2">
-                      <Checkbox id="register" checked={wantToRegister} onCheckedChange={checked => setWantToRegister(!!checked)} data-testid="checkbox-register" />
-                      <Label htmlFor="register">{t("checkout.want_to_register")}</Label>
+
+                    {/* Phone field — triggers existence check on blur */}
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <Input
+                          value={customerPhone}
+                          onChange={e => { setCustomerPhone(e.target.value); setPhoneCheckState('idle'); }}
+                          onBlur={handlePhoneBlur}
+                          placeholder={t("checkout.phone")}
+                          data-testid="input-customer-phone"
+                          className={phoneCheckState === 'exists' ? 'border-orange-400 focus-visible:ring-orange-300' : ''}
+                        />
+                        {phoneCheckState === 'checking' && (
+                          <div className="absolute inset-y-0 left-3 flex items-center">
+                            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ⚠️ Phone already registered — must login */}
+                      {phoneCheckState === 'exists' && (
+                        <div className="rounded-xl border border-orange-300 bg-orange-50 dark:bg-orange-950/30 dark:border-orange-700 p-4 space-y-3" data-testid="panel-phone-exists">
+                          <div className="flex items-start gap-2">
+                            <span className="text-orange-500 text-lg leading-none mt-0.5">⚠️</span>
+                            <div>
+                              <p className="text-sm font-bold text-orange-800 dark:text-orange-300">
+                                {tc("هذا الرقم مسجّل بحساب موجود", "This phone is linked to an existing account")}
+                              </p>
+                              <p className="text-xs text-orange-600 dark:text-orange-400 mt-0.5">
+                                {tc("أدخل كلمة المرور للتحقق من هويتك والمتابعة", "Enter your password to verify and continue")}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <Input
+                              type="password"
+                              value={guestLoginPassword}
+                              onChange={e => setGuestLoginPassword(e.target.value)}
+                              onKeyDown={e => e.key === 'Enter' && handleGuestPhoneLogin()}
+                              placeholder={tc("كلمة المرور", "Password")}
+                              className="flex-1"
+                              data-testid="input-guest-phone-password"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleGuestPhoneLogin}
+                              disabled={guestLoginLoading}
+                              className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-bold disabled:opacity-50 flex items-center gap-1.5 whitespace-nowrap"
+                              data-testid="button-guest-phone-login"
+                            >
+                              {guestLoginLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                              {tc("دخول", "Sign In")}
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setLocation('/forgot-password')}
+                            className="text-xs text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+                          >
+                            {tc("نسيت كلمة المرور؟", "Forgot password?")}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* ✅ Phone is free — show register option */}
+                      {phoneCheckState === 'free' && (
+                        <div className="flex items-center gap-2">
+                          <Checkbox id="register" checked={wantToRegister} onCheckedChange={checked => setWantToRegister(!!checked)} data-testid="checkbox-register" />
+                          <Label htmlFor="register" className="text-sm">{t("checkout.want_to_register")}</Label>
+                        </div>
+                      )}
                     </div>
+
+                    {/* Register checkbox when phone not yet checked */}
+                    {phoneCheckState === 'idle' && (
+                      <div className="flex items-center gap-2">
+                        <Checkbox id="register" checked={wantToRegister} onCheckedChange={checked => setWantToRegister(!!checked)} data-testid="checkbox-register" />
+                        <Label htmlFor="register">{t("checkout.want_to_register")}</Label>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* When total is 0 (from points or 100% coupon): show free banner, hide payment methods */}
-                {getFinalTotalWithPoints() <= 0 ? (
-                  <div className="flex items-center gap-3 p-4 bg-green-50 dark:bg-green-950/30 border-2 border-green-300 dark:border-green-700 rounded-xl" data-testid="banner-free-by-points">
-                    <div className="text-2xl">🎉</div>
-                    <div>
-                      <p className="font-bold text-green-800 dark:text-green-300">طلبك مجاني بالكامل!</p>
-                      <p className="text-xs text-green-600 dark:text-green-400">
-                        {usePointsAsDiscount ? 'نقاطك تغطي المبلغ كاملاً' : 'الكوبون يغطي المبلغ كاملاً'}
-                      </p>
+                <PaymentMethods
+                  paymentMethods={paymentMethods.filter(m => m.id !== 'qahwa-card')}
+                  selectedMethod={selectedPaymentMethod}
+                  onSelectMethod={setSelectedPaymentMethod}
+                  comingSoon={false}
+                />
+
+                {/* Receipt Upload for bank transfer methods */}
+                {selectedPaymentMethod && paymentMethods.find(m => m.id === selectedPaymentMethod)?.requiresReceipt && (
+                  <div className="border border-border rounded-xl p-4 bg-amber-50 dark:bg-amber-950/20 space-y-3" data-testid="section-receipt-upload">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center">
+                        <Upload className="w-4 h-4 text-amber-700 dark:text-amber-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-amber-900 dark:text-amber-300">{tc("ارفع إيصال التحويل", "Upload Transfer Receipt")}</p>
+                        <p className="text-xs text-amber-700 dark:text-amber-400">{tc("مطلوب لتأكيد الدفع", "Required to confirm payment")}</p>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <>
-                    {/* Apple Pay via Geidea Express Checkout SDK.
-                        The wallet renders its own divider underneath when the
-                        button mounts, and renders nothing at all on browsers
-                        that don't support Apple Pay — so we don't need any
-                        extra wrapper or pre-check here. */}
-                    {customerName.trim() && getFinalTotalWithPoints() > 0 && (
-                      <ExpressCheckoutWallet
-                        amount={getFinalTotalWithPoints()}
-                        orderId={`CLN-${Date.now()}`}
-                        wallet="apple-pay"
-                        customerEmail={customerEmail || customer?.email}
-                        customerPhone={customerPhone || customer?.phone}
-                        containerId="apple-pay-express-page-container"
-                        onSuccess={(data) => onApplePayExpressSuccess(data, getFinalTotalWithPoints(), data?.orderId || `CLN-${Date.now()}`)}
-                        onError={(msg) => toast({ variant: "destructive", title: "فشل الدفع", description: msg })}
-                        onCancel={() => toast({ title: "تم إلغاء الدفع" })}
-                      />
-                    )}
-                    <PaymentMethods
-                      paymentMethods={paymentMethods.filter(m => m.id !== 'qahwa-card')}
-                      selectedMethod={selectedPaymentMethod}
-                      onSelectMethod={setSelectedPaymentMethod}
+                    <input
+                      ref={receiptInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleReceiptFileChange}
+                      data-testid="input-receipt-file"
                     />
-                  </>
+                    {receiptPreview ? (
+                      <div className="space-y-2">
+                        <img src={receiptPreview} alt="إيصال التحويل" className="w-full max-h-48 object-contain rounded-lg border border-border bg-white" />
+                        <button
+                          type="button"
+                          onClick={() => { setReceiptFile(null); setReceiptPreview(null); if (receiptInputRef.current) receiptInputRef.current.value = ''; }}
+                          className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1"
+                          data-testid="button-remove-receipt"
+                        >
+                          <X className="w-3 h-3" />
+                          {tc("إزالة الإيصال", "Remove receipt")}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => receiptInputRef.current?.click()}
+                        className="w-full flex flex-col items-center justify-center gap-2 py-5 border-2 border-dashed border-amber-300 dark:border-amber-700 rounded-xl bg-white dark:bg-amber-950/10 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
+                        data-testid="button-upload-receipt"
+                      >
+                        <Camera className="w-8 h-8 text-amber-400" />
+                        <span className="text-sm font-semibold text-amber-800 dark:text-amber-300">{tc("انقر لرفع صورة الإيصال", "Tap to upload receipt image")}</span>
+                        <span className="text-xs text-amber-600 dark:text-amber-500">{tc("JPG, PNG مقبولة", "JPG, PNG accepted")}</span>
+                      </button>
+                    )}
+                  </div>
                 )}
 
                 {selectedPaymentMethod === 'cash' && cashDistanceChecking && (
                   <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg text-blue-700 dark:text-blue-300 text-sm" data-testid="status-cash-distance-checking">
                     <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
-                    <span>جاري التحقق من موقعك للدفع نقداً...</span>
+                    <span>{tc("جاري التحقق من موقعك للدفع نقداً...", "Checking your location for cash payment...")}</span>
                   </div>
                 )}
 
@@ -1071,40 +1892,6 @@ export default function CheckoutPage() {
                     <Label className="font-semibold">{t("checkout.have_discount")}</Label>
                   </div>
 
-                  {/* Available coupon codes */}
-                  {safeCoupons.length > 0 && !appliedDiscount && !usePointsAsDiscount && (
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-                        <Ticket className="w-3.5 h-3.5" />
-                        {t("checkout.available_coupons")}
-                      </p>
-                      <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-                        {safeCoupons.map((coupon) => (
-                          <button
-                            key={coupon.id || coupon._id || coupon.code}
-                            onClick={() => {
-                              setDiscountCode(coupon.code);
-                              handleValidateDiscount(coupon.code);
-                            }}
-                            data-testid={`button-coupon-${coupon.code}`}
-                            className="flex-shrink-0 flex flex-col items-center gap-1.5 p-3 rounded-2xl border-2 border-dashed border-primary/30 bg-primary/5 hover:bg-primary/10 hover:border-primary/60 transition-all group min-w-[100px]"
-                          >
-                            <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center group-hover:scale-110 transition-transform">
-                              <Tag className="w-4 h-4 text-primary" />
-                            </div>
-                            <span className="font-mono font-black text-xs tracking-wider text-foreground">{coupon.code}</span>
-                            <Badge className="bg-primary text-white border-0 font-black text-[10px] px-1.5 py-0">
-                              -{coupon.discountPercentage}%
-                            </Badge>
-                            {coupon.reason && (
-                              <span className="text-[9px] text-muted-foreground text-center line-clamp-1 max-w-[90px]">{coupon.reason}</span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
                   {/* Coupon code input — disabled when using points */}
                   {!usePointsAsDiscount && (
                     <>
@@ -1143,6 +1930,50 @@ export default function CheckoutPage() {
                 </div>
                 </ErrorBoundary>
 
+                {/* Gift Card Section */}
+                <div className="border rounded-lg p-4 bg-card space-y-3">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-5 h-5 text-primary" />
+                    <Label className="font-semibold">{tc("بطاقة الهدية", "Gift Card")}</Label>
+                  </div>
+                  {appliedGiftCard ? (
+                    <div className="flex items-center justify-between bg-primary/5 rounded-lg px-3 py-2">
+                      <div>
+                        <p className="text-sm font-bold text-primary">{appliedGiftCard.code}</p>
+                        <p className="text-xs text-muted-foreground">خصم {appliedGiftCard.applied.toFixed(2)} <SarIcon size={11} /> من رصيد {appliedGiftCard.balance.toFixed(2)} <SarIcon size={11} /></p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-red-500 hover:text-red-700 p-0"
+                        onClick={() => { setAppliedGiftCard(null); setGiftCardCode(""); }}
+                        data-testid="button-remove-gift-card"
+                      >
+                        إزالة
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder={tc("أدخل رمز بطاقة الهدية", "Enter gift card code")}
+                        value={giftCardCode}
+                        onChange={e => setGiftCardCode(e.target.value.toUpperCase())}
+                        onKeyDown={e => e.key === "Enter" && handleCheckGiftCard()}
+                        className="font-mono uppercase tracking-widest"
+                        data-testid="input-gift-card-code"
+                      />
+                      <Button
+                        onClick={() => handleCheckGiftCard()}
+                        disabled={!giftCardCode.trim() || isCheckingGiftCard}
+                        data-testid="button-apply-gift-card"
+                        className="shrink-0"
+                      >
+                        {isCheckingGiftCard ? tc("جاري التحقق...", "Checking...") : tc("تطبيق", "Apply")}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
                 {customer && loyaltyCard && (
                   <LoyaltyCheckoutCard
                     loyaltyCard={loyaltyCard}
@@ -1156,112 +1987,161 @@ export default function CheckoutPage() {
                       setDiscountCode("");
                     }}
                     onCancelPoints={() => setPointsToRedeem(0)}
-                    baseTotal={getBaseTotal()}
+                    baseTotal={totalCoverableByPoints}
+                    pointsNeededForFree={pointsNeededForFree}
                   />
                 )}
 
-                <Button
-                  onClick={handleProceedPayment}
-                  className={`w-full h-14 text-lg ${getFinalTotalWithPoints() <= 0 ? 'bg-green-600 hover:bg-green-700' : ''}`}
-                  data-testid="button-proceed-payment"
-                  disabled={
-                    getFinalTotalWithPoints() > 0 && (
-                      (selectedPaymentMethod === 'cash' && !!cashDistanceError) ||
-                      (selectedPaymentMethod === 'cash' && cashDistanceChecking)
-                    )
-                  }
-                >
-                  {getFinalTotalWithPoints() <= 0 ? (
-                    <>🎉 تأكيد الطلب مجاناً</>
-                  ) : selectedPaymentMethod === 'cash' && cashDistanceChecking ? (
-                    <><Loader2 className="w-5 h-5 animate-spin ml-2" />جاري التحقق من الموقع...</>
-                  ) : selectedPaymentMethod === 'apple_pay' ? (
-                    <span className="flex items-center justify-center gap-2 font-bold tracking-tight">
-                      <svg viewBox="0 0 24 24" className="w-5 h-5 fill-current" xmlns="http://www.w3.org/2000/svg"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-                      التوجه للدفع عبر Apple Pay
-                    </span>
-                  ) : isOnlinePaymentMethod(selectedPaymentMethod) ? (
-                    <><CreditCard className="w-5 h-5 ml-2" />ادفع الآن</>
-                  ) : t("checkout.confirm_order")}
-                </Button>
+                {/* Real PayMob checkout bottom sheet */}
+                {showPaymobCheckout && paymobCheckoutUrl && (
+                  <PaymobCheckoutWidget
+                    orderNumber={paymobSessionId}
+                    amount={pendingGeideaOrderData.current?.totalAmount || getFinalTotalWithPoints()}
+                    checkoutUrl={paymobCheckoutUrl}
+                    onSuccess={() => {
+                      setShowPaymobCheckout(false);
+                      const od = pendingGeideaOrderData.current;
+                      if (od) {
+                        createOrderMutation.mutate({
+                          ...od,
+                          paymentStatus: 'paid',
+                          status: 'payment_confirmed',
+                          paymentReference: `PAYMOB-${Date.now()}`,
+                        });
+                      } else {
+                        clearCart();
+                        setShowSuccessPage(true);
+                        queryClient.invalidateQueries({ queryKey: ["/api/cart"] });
+                      }
+                    }}
+                    onError={(msg) => {
+                      toast({ variant: "destructive", title: "فشلت عملية الدفع", description: msg });
+                      setShowPaymobCheckout(false);
+                    }}
+                    onCancel={() => {
+                      setShowPaymobCheckout(false);
+                      toast({ title: "تم إلغاء الدفع", description: "لم يتم إنشاء أي طلب. يمكنك المحاولة مرة أخرى." });
+                    }}
+                  />
+                )}
+
+                {/* Simulated card payment widget (for non-PayMob legacy methods only) */}
+                {showSimulatedCard && (
+                  <div className="rounded-2xl border border-border bg-card p-5 shadow-md" data-testid="section-simulated-card">
+                    <SimulatedCardPayment
+                      amount={pendingGeideaOrderData.current?.totalAmount || getFinalTotalWithPoints()}
+                      paymentMethod={selectedPaymentMethod || "card"}
+                      onSuccess={() => {
+                        const od = pendingGeideaOrderData.current;
+                        if (od) {
+                          const confirmedOrder = { ...od, status: 'payment_confirmed', paymentReference: `CARD-SIM-${Date.now()}` };
+                          createOrderMutation.mutate(confirmedOrder);
+                        } else {
+                          confirmAndCreateOrder();
+                        }
+                        setShowSimulatedCard(false);
+                      }}
+                      onCancel={() => setShowSimulatedCard(false)}
+                    />
+                  </div>
+                )}
+
+                {/* Inline Geidea payment widget — same page, no separate screen */}
+                {!showSimulatedCard && showInlineGeidea ? (
+                  <div className="space-y-3" data-testid="section-geidea-inline">
+                    <div className="bg-primary rounded-xl px-4 py-3 text-white text-center">
+                      <p className="text-xs opacity-75">{tc("إجمالي الطلب", "Order Total")}</p>
+                      <p className="text-2xl font-black" data-testid="text-geidea-amount">
+                        {pendingGeideaOrderData.current?.totalAmount?.toFixed(2)} <SarIcon size={16} />
+                      </p>
+                      <p className="text-[10px] opacity-60 mt-0.5">🔒 دفع آمن مشفّر بواسطة Geidea</p>
+                    </div>
+                    <GeideaCheckoutWidget
+                      orderNumber={geideaOrderNum.current}
+                      amount={pendingGeideaOrderData.current?.totalAmount || 0}
+                      customerPhone={pendingGeideaOrderData.current?.customerPhone}
+                      customerEmail={pendingGeideaOrderData.current?.customerEmail}
+                      onSuccess={() => {
+                        const od = pendingGeideaOrderData.current;
+                        const confirmedOrder = { ...od, status: 'payment_confirmed', paymentReference: geideaOrderNum.current };
+                        createOrderMutation.mutate(confirmedOrder);
+                        setShowInlineGeidea(false);
+                      }}
+                      onError={(msg) => {
+                        toast({ variant: "destructive", title: t("checkout.payment_error"), description: msg });
+                      }}
+                      onCancel={() => {
+                        setShowInlineGeidea(false);
+                        toast({ title: "تم إلغاء الدفع", description: "يمكنك المحاولة مرة أخرى" });
+                      }}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full text-muted-foreground text-xs"
+                      onClick={() => setShowInlineGeidea(false)}
+                      data-testid="button-cancel-geidea"
+                    >
+                      ← العودة للطلب
+                    </Button>
+                  </div>
+                ) : !showSimulatedCard && !showPaymobCheckout ? (
+                  (() => {
+                    const isApplePaySelected = (selectedPaymentMethod as string) === 'paymob-apple-pay' || (selectedPaymentMethod as string) === 'apple_pay' || (selectedPaymentMethod as string) === 'neoleap-apple-pay';
+                    if (isApplePaySelected) {
+                      return (
+                        <button
+                          onClick={handleProceedPayment}
+                          data-testid="button-proceed-payment"
+                          style={{
+                            width: "100%",
+                            height: "56px",
+                            borderRadius: "14px",
+                            background: "#000",
+                            border: "none",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "8px",
+                            fontFamily: "-apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif",
+                          }}
+                        >
+                          <svg viewBox="0 0 170 170" style={{ height: "22px", width: "22px", fill: "#fff", flexShrink: 0 }}>
+                            <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.197-2.12-9.973-3.17-14.34-3.17-4.58 0-9.492 1.05-14.746 3.17-5.262 2.13-9.501 3.24-12.742 3.35-4.929 0.21-9.842-1.96-14.746-6.52-3.13-2.73-7.045-7.41-11.735-14.04-5.032-7.08-9.169-15.29-12.41-24.65-3.471-10.11-5.211-19.9-5.211-29.378 0-10.857 2.346-20.21 7.045-28.143 3.687-6.52 8.594-11.672 14.73-15.466 6.136-3.294 12.759-5.277 19.88-5.375 3.906 0 9.022 1.211 15.366 3.597 6.326 2.394 10.387 3.605 12.172 3.605 1.331 0 5.838-1.419 13.49-4.247 7.23-2.618 13.326-3.701 18.31-3.273 13.54 1.093 23.71 6.43 30.52 16.05-12.1 7.33-18.09 17.6-17.96 30.78 0.12 10.26 3.83 18.79 11.12 25.55 3.31 3.14 7.01 5.57 11.12 7.29-0.89 2.58-1.83 5.05-2.83 7.42zM119.11 7.24c0 8.042-2.94 15.551-8.81 22.507-7.079 8.273-15.644 13.05-24.92 12.294-0.119-0.965-0.18-1.98-0.18-3.047 0-7.72 3.361-15.994 9.336-22.752 2.984-3.43 6.772-6.288 11.185-8.577 4.401-2.255 8.566-3.502 12.488-3.711 0.12 1.033 0.17 2.065 0.17 3.088z"/>
+                          </svg>
+                          <span style={{ color: "#fff", fontSize: "20px", fontWeight: 600, letterSpacing: "-0.3px", lineHeight: 1 }}>
+                            Pay
+                          </span>
+                        </button>
+                      );
+                    }
+                    return (
+                      <Button
+                        onClick={handleProceedPayment}
+                        className="w-full h-14 text-lg"
+                        data-testid="button-proceed-payment"
+                        disabled={
+                          (selectedPaymentMethod === 'cash' && !!cashDistanceError) ||
+                          (selectedPaymentMethod === 'cash' && cashDistanceChecking)
+                        }
+                      >
+                        {selectedPaymentMethod === 'cash' && cashDistanceChecking ? (
+                          <><Loader2 className="w-5 h-5 animate-spin ml-2" />جاري التحقق من الموقع...</>
+                        ) : isPaymobMethod(selectedPaymentMethod) ? (
+                          <><CreditCard className="w-5 h-5 ml-2" />اذهب للدفع</>
+                        ) : (isCardPaymentMethod(selectedPaymentMethod) || isOnlinePaymentMethod(selectedPaymentMethod)) ? (
+                          <><CreditCard className="w-5 h-5 ml-2" />ادفع الآن</>
+                        ) : t("checkout.confirm_order")}
+                      </Button>
+                    );
+                  })()
+                ) : null}
               </CardContent>
             </Card>
           </div>
         </div>
       </div>
-
-      {/* ── Geidea Drop-in Payment Page ────────────────────────────── */}
-      {showInlineGeidea && (
-        <div
-          className="fixed inset-0 z-50 flex flex-col bg-background"
-          dir={isAr ? 'rtl' : 'ltr'}
-        >
-          {/* Header */}
-          <div className="flex items-center gap-3 px-4 py-3 border-b bg-background/95 backdrop-blur sticky top-0">
-            <button
-              onClick={() => {
-                setShowInlineGeidea(false);
-                toast({ title: "تم إلغاء الدفع", description: "يمكنك المحاولة مرة أخرى" });
-              }}
-              className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted transition"
-              data-testid="button-cancel-geidea"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <div className="flex-1 text-center">
-              <p className="font-bold text-base">الدفع الآمن</p>
-              <p className="text-xs text-muted-foreground">
-                المبلغ: {pendingGeideaOrderData.current?.totalAmount?.toFixed(2)} ر.س
-              </p>
-            </div>
-            <div className="flex items-center gap-1 text-xs text-green-600">
-              <ShieldCheck className="w-4 h-4" />
-              <span>آمن</span>
-            </div>
-          </div>
-
-          {/* Drop-in container: Geidea injects its iframe here */}
-          <div className="flex-1 overflow-y-auto min-h-0">
-            <GeideaCheckoutWidget
-              orderNumber={geideaOrderNum.current}
-              amount={pendingGeideaOrderData.current?.totalAmount || 0}
-              customerPhone={pendingGeideaOrderData.current?.customerPhone}
-              customerEmail={pendingGeideaOrderData.current?.customerEmail}
-              containerId="geidea-dropin-container"
-              onSuccess={async (data) => {
-                const od = pendingGeideaOrderData.current;
-                const confirmedOrder = {
-                  ...od,
-                  status: 'payment_confirmed',
-                  paymentStatus: 'paid',
-                  paymentReference: geideaOrderNum.current,
-                  paymentSessionId: data?.session?.id || data?.orderId || undefined,
-                };
-                setShowInlineGeidea(false);
-                createOrderMutation.mutate(confirmedOrder);
-              }}
-              onError={(msg) => {
-                setShowInlineGeidea(false);
-                toast({ variant: "destructive", title: t("checkout.payment_error"), description: msg });
-              }}
-              onCancel={() => {
-                setShowInlineGeidea(false);
-                toast({ title: "تم إلغاء الدفع", description: "يمكنك المحاولة مرة أخرى" });
-              }}
-            />
-            <div id="geidea-dropin-container" className="min-h-[500px] w-full" />
-          </div>
-
-          {/* Footer security row */}
-          <div className="flex items-center justify-center gap-4 py-3 border-t text-xs text-muted-foreground bg-muted/30">
-            <div className="flex items-center gap-1"><Lock className="w-3 h-3" /><span>SSL مشفّر</span></div>
-            <div className="w-1 h-1 rounded-full bg-muted-foreground/30" />
-            <div className="flex items-center gap-1"><ShieldCheck className="w-3 h-3" /><span>3D Secure</span></div>
-            <div className="w-1 h-1 rounded-full bg-muted-foreground/30" />
-            <span className="font-semibold text-[#c8a97e]">GEIDEA</span>
-          </div>
-        </div>
-      )}
 
       <Dialog open={showConfirmation} onOpenChange={setShowConfirmation}>
         <DialogContent dir={isAr ? 'rtl' : 'ltr'}>
@@ -1270,15 +2150,29 @@ export default function CheckoutPage() {
           </DialogHeader>
           <div className="py-4 text-center space-y-2">
             <p className="text-lg">{t("checkout.confirm_question")}</p>
-            {usePointsAsDiscount && pointsDiscountSAR > 0 ? (
+            {(usePointsAsDiscount && pointsDiscountSAR > 0) || (appliedGiftCard && giftCardDiscount > 0) || orderDeliveryFee > 0 || serviceFee > 0 ? (
               <>
-                <p className="text-sm text-muted-foreground">قبل الخصم: {getBaseTotal().toFixed(2)} <SarIcon /></p>
-                <p className="text-sm text-amber-600 font-semibold">⭐ خصم النقاط: -{Math.min(pointsDiscountSAR, getBaseTotal()).toFixed(2)} <SarIcon /></p>
-                <p className="text-3xl font-black text-primary">{getFinalTotalWithPoints().toFixed(2)} <SarIcon /></p>
-                {getFinalTotalWithPoints() === 0 && <p className="text-sm text-green-600 font-bold">🎉 نقاطك تغطي المبلغ كاملاً!</p>}
+                <p className="text-sm text-muted-foreground">{(usePointsAsDiscount && pointsDiscountSAR > 0) || (appliedGiftCard && giftCardDiscount > 0) ? 'قبل الخصم' : 'إجمالي الطلب'}: {(getBaseTotal() + (serviceFee > 0 && !(usePointsAsDiscount && effectivePointsDiscountSAR >= totalCoverableByPoints) ? serviceFee : 0)).toFixed(2)} <SarIcon /></p>
+                {usePointsAsDiscount && pointsDiscountSAR > 0 && (
+                  <p className="text-sm text-amber-600 font-semibold">
+                    خصم النقاط ({effectivePointsUsed.toLocaleString()} نقطة): -{effectivePointsDiscountSAR.toFixed(2)} <SarIcon />
+                    {effectivePointsDiscountSAR >= totalCoverableByPoints && <span className="text-green-600 font-bold mr-1">· شامل رسوم الخدمة</span>}
+                  </p>
+                )}
+                {appliedGiftCard && giftCardDiscount > 0 && (
+                  <p className="text-sm text-primary font-semibold">بطاقة هدية: -{giftCardDiscount.toFixed(2)} <SarIcon /></p>
+                )}
+                {orderDeliveryFee > 0 && (
+                  <p className="text-sm text-green-600 font-semibold">رسوم التوصيل: +{orderDeliveryFee.toFixed(2)} <SarIcon /></p>
+                )}
+                {serviceFee > 0 && !(usePointsAsDiscount && effectivePointsDiscountSAR >= totalCoverableByPoints) && (
+                  <p className="text-sm font-bold" style={{ color: '#C8A53A' }}>⚙️ رسوم الخدمة: +{serviceFee.toFixed(2)} <SarIcon /></p>
+                )}
+                <p className="text-3xl font-black text-primary">{getFinalAmount().toFixed(2)} <SarIcon /></p>
+                {getFinalAmount() === 0 && <p className="text-sm text-green-600 font-bold">🎉 تغطية كاملة بالنقاط!</p>}
               </>
             ) : (
-              <p className="text-2xl font-bold text-primary">{getFinalTotalWithPoints().toFixed(2)} <SarIcon /></p>
+              <p className="text-2xl font-bold text-primary">{getFinalAmount().toFixed(2)} <SarIcon /></p>
             )}
           </div>
           <DialogFooter className="gap-2">

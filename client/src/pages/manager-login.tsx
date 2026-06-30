@@ -4,9 +4,10 @@ import { useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { User, Lock, Loader2, Eye, EyeOff } from "lucide-react";
+import { AtSign, Lock, Loader2, Eye, EyeOff } from "lucide-react";
 import type { Employee } from "@shared/schema";
-import clunyLogoStaff from "@assets/cluny-logo-staff.png";
+import clunyLogoStaff from "@assets/cluny-logo-customer.png";
+import { useTranslate } from "@/lib/useTranslate";
 
 export default function ManagerLogin() {
   const [, setLocation] = useLocation();
@@ -14,6 +15,23 @@ export default function ManagerLogin() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const tc = useTranslate();
+
+  // Auto-redirect if already logged in
+  useState(() => {
+    const stored = localStorage.getItem("currentEmployee");
+    if (stored) {
+      try {
+        const emp = JSON.parse(stored);
+        const managerRoles = ["admin", "owner", "manager", "branch_manager"];
+        if (managerRoles.includes(emp.role)) {
+          if (emp.role === "admin") setLocation("/admin/dashboard");
+          else if (emp.role === "owner") setLocation("/owner/dashboard");
+          else setLocation("/manager/dashboard");
+        }
+      } catch {}
+    }
+  });
 
   const loginMutation = useMutation({
     mutationFn: async (credentials: { username: string; password: string }) => {
@@ -31,24 +49,29 @@ export default function ManagerLogin() {
       return response.json() as Promise<Employee>;
     },
     onSuccess: (employee: any) => {
-      if (employee.role !== "manager" && employee.role !== "admin") {
-        setError("هذا الحساب ليس حساب مدير");
+      const managerRoles = ["admin", "owner", "manager", "branch_manager"];
+      if (!managerRoles.includes(employee.role)) {
+        setError(tc("هذا الحساب ليس حساب مدير", "This account does not have manager access"));
         setPassword("");
         return;
       }
 
       if (employee.restoreKey) {
-        localStorage.setItem("cluny-restore-key", employee.restoreKey);
+        localStorage.setItem("qirox-restore-key", employee.restoreKey);
         delete employee.restoreKey;
       }
       localStorage.setItem("currentEmployee", JSON.stringify(employee));
-      const dest = (employee.role === "admin" || employee.role === "owner")
-        ? "/admin/dashboard"
-        : "/manager/dashboard";
-      setLocation(dest);
+
+      if (employee.role === "admin") {
+        setLocation("/admin/dashboard");
+      } else if (employee.role === "owner") {
+        setLocation("/owner/dashboard");
+      } else {
+        setLocation("/manager/dashboard");
+      }
     },
     onError: () => {
-      setError("اسم المستخدم أو كلمة المرور غير صحيحة ");
+      setError(tc("اسم المستخدم أو كلمة المرور غير صحيحة", "Invalid username or password"));
       setPassword("");
     },
   });
@@ -58,7 +81,7 @@ export default function ManagerLogin() {
     setError("");
 
     if (!username || !password) {
-      setError("الرجاء إدخال اسم المستخدم وكلمة المرور");
+      setError(tc("الرجاء إدخال اسم المستخدم وكلمة المرور", "Please enter your username and password"));
       return;
     }
 
@@ -66,38 +89,38 @@ export default function ManagerLogin() {
   };
 
   return (
-    <div dir="rtl" className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-40 h-28 mb-4">
+        <div className="text-center mb-4 sm:mb-6">
+          <div className="inline-flex items-center justify-center w-20 h-14 sm:w-32 sm:h-20 mb-2 sm:mb-3">
             <img src={clunyLogoStaff} alt="CLUNY SYSTEMS" className="w-full h-full object-contain" />
           </div>
-          <h1 className="text-3xl font-bold font-playfair text-foreground mb-2">CLUNY CAFE</h1>
-          <p className="text-muted-foreground font-cairo">تسجيل دخول المدير</p>
+          <h1 className="text-xl sm:text-2xl font-bold font-playfair text-foreground mb-1">CLUNY CAFE</h1>
+          <p className="text-muted-foreground text-sm font-cairo">{tc("تسجيل دخول المدير", "Manager Login")}</p>
         </div>
 
         <Card className="bg-card border-border/50 shadow-lg">
-          <CardHeader>
-            <CardTitle className="text-2xl text-center font-playfair text-foreground">
-              لوحة تحكم المدير
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg sm:text-xl text-center font-playfair text-foreground">
+              {tc("لوحة تحكم المدير", "Manager Dashboard")}
             </CardTitle>
             <CardDescription className="text-center text-muted-foreground">
-              أدخل بيانات حساب المدير للوصول
+              {tc("أدخل بيانات حساب المدير للوصول", "Enter your manager credentials to access")}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <div className="relative">
-                  <User className="absolute right-3 top-3 h-5 w-5 text-muted-foreground" />
+                  <AtSign className="absolute right-3 top-3 h-5 w-5 text-muted-foreground" />
                   <Input
                     type="text"
-                    placeholder="اسم المستخدم"
+                    placeholder={tc("اسم المستخدم أو البريد الإلكتروني", "Username or Email")}
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     className="pr-10"
                     data-testid="input-username"
-                    autoComplete="username"
+                    autoComplete="username email"
                     autoFocus
                     disabled={loginMutation.isPending}
                   />
@@ -109,7 +132,7 @@ export default function ManagerLogin() {
                   <Lock className="absolute right-3 top-3 h-5 w-5 text-muted-foreground" />
                   <Input
                     type={showPassword ? "text" : "password"}
-                    placeholder="كلمة المرور"
+                    placeholder={tc("كلمة المرور", "Password")}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="pr-10 pl-10"
@@ -133,7 +156,7 @@ export default function ManagerLogin() {
                     className="text-xs text-primary hover:text-primary/80 underline"
                     data-testid="link-forgot-password"
                   >
-                    نسيت كلمة المرور؟
+                    {tc("نسيت كلمة المرور؟", "Forgot password?")}
                   </button>
                 </div>
                 {error && (
@@ -152,15 +175,15 @@ export default function ManagerLogin() {
                 {loginMutation.isPending ? (
                   <>
                     <Loader2 className="ml-2 h-4 w-4 animate-spin" />
-                    جاري تسجيل الدخول...
+                    {tc("جاري تسجيل الدخول...", "Signing in...")}
                   </>
                 ) : (
-                  "دخول"
+                  tc("دخول", "Sign In")
                 )}
               </Button>
 
               <div className="pt-4 border-t border-border">
-                <p className="text-sm text-muted-foreground text-center mb-2">موظف عادي؟</p>
+                <p className="text-sm text-muted-foreground text-center mb-2">{tc("موظف عادي؟", "Regular employee?")}</p>
                 <Button
                   type="button"
                   variant="outline"
@@ -168,7 +191,7 @@ export default function ManagerLogin() {
                   className="w-full"
                   data-testid="button-employee-login"
                 >
-                  تسجيل دخول الموظف
+                  {tc("تسجيل دخول الموظف", "Employee Login")}
                 </Button>
               </div>
             </form>
@@ -181,7 +204,7 @@ export default function ManagerLogin() {
             onClick={() => setLocation("/")}
             data-testid="link-back"
           >
-            رجوع
+            {tc("رجوع", "Back")}
           </Button>
         </div>
       </div>

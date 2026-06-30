@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslate } from "@/lib/useTranslate";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,7 @@ interface Table {
 }
 
 export default function TableReservation() {
+  const tc = useTranslate();
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [selectedBranch, setSelectedBranch] = useState("none");
@@ -90,7 +92,7 @@ export default function TableReservation() {
       });
 
       if (!appointmentResponse.ok) {
-        throw new Error("فشل تسجيل الموعد في النظام الجديد");
+        throw new Error(tc("فشل تسجيل الموعد في النظام الجديد", "Failed to register appointment in new system"));
       }
 
       // Then call the legacy table reservation for compatibility
@@ -109,20 +111,20 @@ export default function TableReservation() {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        const errorMsg = errorData.error || "فشل حجز الطاولة. حاول مرة أخرى";
+        const errorMsg = errorData.error || tc("فشل حجز الطاولة. حاول مرة أخرى", "Failed to reserve table. Try again.");
         throw new Error(errorMsg);
       }
       const result = await response.json();
       if (!result.success) {
-        throw new Error(result.message || "فشل حجز الطاولة. حاول مرة أخرى");
+        throw new Error(result.message || tc("فشل حجز الطاولة. حاول مرة أخرى", "Failed to reserve table. Try again."));
       }
       return result;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/tables"] });
       toast({
-        title: "تم الحجز بنجاح",
-        description: data.message || "تم حجز طاولتك بنجاح",
+        title: tc("تم الحجز بنجاح", "Reservation Successful"),
+        description: data.message || tc("تم حجز طاولتك بنجاح", "Your table has been reserved successfully"),
         className: "bg-green-600 text-white border-green-700",
       });
       setShowSuccess(true);
@@ -138,10 +140,10 @@ export default function TableReservation() {
       }, 3000);
     },
     onError: (error: Error) => {
-      const errorMsg = error.message || "فشل حجز الطاولة. حاول مرة أخرى";
+      const errorMsg = error.message || tc("فشل حجز الطاولة. حاول مرة أخرى", "Failed to reserve table. Try again.");
       console.error("Reservation error:", errorMsg);
       toast({
-        title: "خطأ في الحجز",
+        title: tc("خطأ في الحجز", "Reservation Error"),
         description: errorMsg,
         variant: "destructive",
       });
@@ -151,8 +153,8 @@ export default function TableReservation() {
   const handleReserve = () => {
     if (!selectedBranch || !selectedTable || !customerName || !customerPhone || !reservationDate || !reservationTime || !numberOfGuests) {
       toast({
-        title: "معلومات ناقصة",
-        description: "الرجاء ملء جميع الحقول",
+        title: tc("معلومات ناقصة", "Missing Information"),
+        description: tc("الرجاء ملء جميع الحقول", "Please fill all fields"),
         variant: "destructive",
       });
       return;
@@ -160,8 +162,8 @@ export default function TableReservation() {
 
     if (customerPhone.length !== 9 || !customerPhone.startsWith("5")) {
       toast({
-        title: "رقم جوال غير صحيح",
-        description: "الرجاء إدخال رقم جوال صحيح يبدأ بـ 5 ويتكون من 9 أرقام",
+        title: tc("رقم جوال غير صحيح", "Invalid Phone Number"),
+        description: tc("الرجاء إدخال رقم جوال صحيح يبدأ بـ 5 ويتكون من 9 أرقام", "Please enter a valid phone number starting with 5 and 9 digits"),
         variant: "destructive",
       });
       return;
@@ -170,8 +172,8 @@ export default function TableReservation() {
     const guests = parseInt(numberOfGuests);
     if (isNaN(guests) || guests < 1 || guests > 20) {
       toast({
-        title: "عدد الضيوف غير صحيح",
-        description: "الرجاء إدخال عدد صحيح من 1 إلى 20",
+        title: tc("عدد الضيوف غير صحيح", "Invalid Guest Count"),
+        description: tc("الرجاء إدخال عدد صحيح من 1 إلى 20", "Please enter a valid number between 1 and 20"),
         variant: "destructive",
       });
       return;
@@ -190,7 +192,7 @@ export default function TableReservation() {
 
   if (showSuccess) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 flex items-center justify-center p-4" dir="rtl">
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <Card className="w-full max-w-md shadow-2xl animate-in fade-in zoom-in duration-500">
           <CardContent className="pt-12 pb-8 text-center">
             <div className="mb-6">
@@ -198,7 +200,7 @@ export default function TableReservation() {
                 <CheckCircle2 className="w-12 h-12 text-green-600" />
               </div>
             </div>
-            <h2 className="text-3xl font-bold text-green-700 mb-3">تم الحجز بنجاح!</h2>
+            <h2 className="text-3xl font-bold text-green-700 mb-3">{tc("تم الحجز بنجاح!", "Reservation Successful!")}</h2>
             <p className="text-lg text-muted-foreground mb-6">
               تم حجز طاولتك بنجاح. سنتواصل معك قريباً للتأكيد.
             </p>
@@ -214,13 +216,13 @@ export default function TableReservation() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 via-primary/5 to-yellow-50 py-8 px-4" dir="rtl">
+    <div className="min-h-screen bg-background py-8 px-4">
       <div className="max-w-3xl mx-auto">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-20 h-20 bg-primary/10 rounded-full mb-4">
             <Calendar className="w-10 h-10 text-primary" />
           </div>
-          <h1 className="text-4xl font-bold text-foreground mb-2">حجز طاولة</h1>
+          <h1 className="text-4xl font-bold text-foreground mb-2">{tc("حجز طاولة", "Table Reservation")}</h1>
           <p className="text-lg text-muted-foreground">
             احجز طاولتك المفضلة في أقرب فرع واستمتع بتجربة قهوة لا تُنسى
           </p>
@@ -244,7 +246,7 @@ export default function TableReservation() {
               </Label>
               <Select value={selectedBranch} onValueChange={setSelectedBranch}>
                 <SelectTrigger className="h-12 text-lg">
-                  <SelectValue placeholder="اختر الفرع" />
+                  <SelectValue placeholder={tc("اختر الفرع", "Select Branch")} />
                 </SelectTrigger>
                 <SelectContent>
                   {branches.map((branch) => (
@@ -271,7 +273,7 @@ export default function TableReservation() {
                 ) : (
                   <Select value={selectedTable} onValueChange={setSelectedTable}>
                     <SelectTrigger className="h-12 text-lg">
-                      <SelectValue placeholder="اختر رقم الطاولة" />
+                      <SelectValue placeholder={tc("اختر رقم الطاولة", "Select Table Number")} />
                     </SelectTrigger>
                     <SelectContent>
                       {availableTables.map((table) => (

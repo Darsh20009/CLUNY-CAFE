@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { brand } from "@/lib/brand";
 import { useQuery } from "@tanstack/react-query";
 import { SiInstagram, SiX, SiFacebook, SiSnapchat, SiTiktok, SiWhatsapp } from "react-icons/si";
 
@@ -18,7 +19,7 @@ export function CustomerFooter() {
   };
 
   return (
-    <footer className="bg-muted/30 py-12 border-t mb-16 relative overflow-hidden">
+    <footer className="bg-muted/30 pt-12 pb-28 border-t relative overflow-hidden">
       {/* Decorative background element */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
       
@@ -50,31 +51,32 @@ export function CustomerFooter() {
           )}
         </div>
 
-        {/* Legal & Info Grid */}
+        {/* Logo & Info Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-12 w-full max-w-4xl border-y border-primary/5 py-10 my-4">
           <div className="flex flex-col items-center gap-4">
-            <div className="p-3 bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-primary/5">
-              <img 
-                src="https://assets.zid.store/themes/f9f0914d-3c58-493b-bd83-260ed3cb4e82/business_center.png" 
-                loading="lazy" 
-                alt="Saudi Business Center Certification" 
-                className="h-10 w-auto grayscale opacity-70 hover:grayscale-0 hover:opacity-100 transition-all" 
+            <div className="p-3 bg-black rounded-2xl shadow-sm border border-white/5 w-16 h-16 flex items-center justify-center">
+              <img
+                src={brand.logoCustomer}
+                alt={brand.nameEn}
+                className="w-full h-full object-contain"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
               />
             </div>
             <a 
-              href="https://qr.saudibusiness.gov.sa/viewcr?nCrNumber=9AhyCS491ZPTmJxSxD96YA==" 
+              href="https://qr.saudibusiness.gov.sa/viewcr?nCrNumber=opQsRLgqEFrL8PpAgImEew==" 
               target="_blank" 
               rel="noreferrer" 
               className="text-xs text-muted-foreground hover:text-primary transition-colors font-ibm-arabic"
+              data-testid="link-cr-saudi-business"
             >
               {t("legal.cr")}
             </a>
           </div>
 
           <div className="flex flex-col items-center justify-center gap-2 text-center">
-            <div className="text-xl font-bold text-primary tracking-tighter">CLUNY CAFE</div>
+            <div className="text-xl font-bold text-primary tracking-tighter">{brand.nameEn}</div>
             <div className="text-xs text-muted-foreground/60 font-ibm-arabic max-w-[200px]">
-              {t("footer.tagline") || "نقدم لك تجربة قهوة لا تُنسى في قلب الرياض"}
+              {t("footer.tagline") || "نقدم لك تجربة قهوة لا تُنسى في ينبع"}
             </div>
           </div>
 
@@ -83,7 +85,7 @@ export function CustomerFooter() {
               <div className="text-xs font-bold text-primary font-ibm-arabic">{t("legal.vat")}</div>
             </div>
             <div className="text-[10px] text-muted-foreground/60 text-center font-ibm-arabic leading-relaxed">
-              جميع الأسعار تشمل ضريبة القيمة المضافة<br/>رقم التسجيل: 311099187300003
+              جميع الأسعار تشمل ضريبة القيمة المضافة<br/>رقم التسجيل: 312718675800003
             </div>
           </div>
         </div>
@@ -91,9 +93,16 @@ export function CustomerFooter() {
         {/* Copyright */}
         <div className="flex flex-col items-center gap-2">
           <div className="text-[11px] font-medium text-muted-foreground/40 text-center uppercase tracking-[0.2em]">
-            &copy; {new Date().getFullYear()} CLUNY SYSTEMS . ALL RIGHTS RESERVED
+            {brand.copyrightEn.toUpperCase()}
           </div>
           <div className="h-1 w-8 bg-primary/20 rounded-full" />
+          <a
+            href="/employee/gateway"
+            className="text-[10px] text-muted-foreground/25 hover:text-muted-foreground/60 transition-colors duration-300 mt-1 font-ibm-arabic"
+            data-testid="link-employee-login"
+          >
+            دخول الموظفين
+          </a>
         </div>
       </div>
     </footer>

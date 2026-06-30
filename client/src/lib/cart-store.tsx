@@ -13,6 +13,7 @@ interface EnrichedCartItem {
   selectedSize?: string;
   selectedAddons?: string[];
   enrichedAddons?: any[];
+  selectedReservationPackage?: { packageName: string; description?: string; price: number; duration?: string; maxGuests?: number; } | null;
 }
 
 export interface DeliveryInfo {
@@ -20,6 +21,9 @@ export interface DeliveryInfo {
   branchId?: string;
   branchName?: string;
   branchAddress?: string;
+  productReservationDate?: string;
+  productReservationFromTime?: string;
+  productReservationToTime?: string;
   dineIn?: boolean;
   tableId?: string;
   tableNumber?: string;
@@ -30,6 +34,7 @@ export interface DeliveryInfo {
     carType: string;
     carColor: string;
     plateNumber: string;
+    parkingSlot?: string;
   };
   address?: {
     fullAddress: string;
@@ -38,6 +43,7 @@ export interface DeliveryInfo {
     zone: string;
   };
   deliveryFee?: number;
+  deliveryAddress?: string;
 }
 
 interface CartContextType {
@@ -50,7 +56,7 @@ interface CartContextType {
   deliveryInfo: DeliveryInfo | null;
 
   // Actions
-  addToCart: (coffeeItemId: string, quantity?: number, selectedSize?: string | null, selectedAddons?: string[], selectedItemAddons?: Array<{nameAr: string; nameEn?: string; price: number}>) => void;
+  addToCart: (coffeeItemId: string, quantity?: number, selectedSize?: string | null, selectedAddons?: string[], selectedItemAddons?: Array<{nameAr: string; nameEn?: string; price: number}>, selectedReservationPackage?: { packageName: string; description?: string; price: number; duration?: string; maxGuests?: number; } | null) => void;
   removeFromCart: (cartItemId: string) => void;
   updateQuantity: (cartItemId: string, quantity: number) => void;
   clearCart: () => void;
@@ -121,7 +127,7 @@ export const CartProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Add to cart mutation
   const addToCartMutation = useMutation({
-    mutationFn: async ({ coffeeItemId, quantity, selectedSize, selectedAddons, selectedItemAddons }: { coffeeItemId: string; quantity: number; selectedSize?: string | null; selectedAddons?: string[]; selectedItemAddons?: Array<{nameAr: string; nameEn?: string; price: number}> }) => {
+    mutationFn: async ({ coffeeItemId, quantity, selectedSize, selectedAddons, selectedItemAddons, selectedReservationPackage }: { coffeeItemId: string; quantity: number; selectedSize?: string | null; selectedAddons?: string[]; selectedItemAddons?: Array<{nameAr: string; nameEn?: string; price: number}>; selectedReservationPackage?: { packageName: string; description?: string; price: number; duration?: string; maxGuests?: number; } | null }) => {
       console.log(`[CART] Adding to cart: item=${coffeeItemId}, size=${selectedSize}, addons=${selectedAddons}`);
       const response = await apiRequest("POST", "/api/cart", {
         sessionId,
@@ -130,6 +136,7 @@ export const CartProvider = ({ children }: { children: React.ReactNode }) => {
         selectedSize: selectedSize || "default",
         selectedAddons: selectedAddons || [],
         selectedItemAddons: selectedItemAddons || [],
+        selectedReservationPackage: selectedReservationPackage || null,
       });
       return response.json();
     },
@@ -180,10 +187,10 @@ export const CartProvider = ({ children }: { children: React.ReactNode }) => {
   });
 
   // Cart actions
-  const addToCart = (coffeeItemId: string, quantity: number = 1, selectedSize?: string | null, selectedAddons?: string[], selectedItemAddons?: Array<{nameAr: string; nameEn?: string; price: number}>) => {
+  const addToCart = (coffeeItemId: string, quantity: number = 1, selectedSize?: string | null, selectedAddons?: string[], selectedItemAddons?: Array<{nameAr: string; nameEn?: string; price: number}>, selectedReservationPackage?: { packageName: string; description?: string; price: number; duration?: string; maxGuests?: number; } | null) => {
     // FIX: Ensure addons are properly formatted
     const formattedAddons = Array.isArray(selectedAddons) ? selectedAddons.map(id => String(id)) : [];
-    addToCartMutation.mutate({ coffeeItemId, quantity, selectedSize, selectedAddons: formattedAddons, selectedItemAddons: selectedItemAddons || [] });
+    addToCartMutation.mutate({ coffeeItemId, quantity, selectedSize, selectedAddons: formattedAddons, selectedItemAddons: selectedItemAddons || [], selectedReservationPackage: selectedReservationPackage || null });
   };
 
   const removeFromCart = (cartItemId: string) => {
@@ -262,7 +269,8 @@ export const CartProvider = ({ children }: { children: React.ReactNode }) => {
         // Include inline item addon prices
         const inlineAddonsPrice = ((item as any).selectedItemAddons || []).reduce((sum: number, a: any) => sum + (Number(a.price) || 0), 0);
         
-        return total + ((isNaN(price) ? 0 : price) + addonsPrice + inlineAddonsPrice) * item.quantity;
+        const lineTotal = ((isNaN(price) ? 0 : price) + addonsPrice + inlineAddonsPrice) * item.quantity;
+        return total + Math.round(lineTotal * 100) / 100;
       }, 0);
     };
 

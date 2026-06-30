@@ -14,6 +14,7 @@ import LocationPreparationCheck from "@/components/location-preparation-check";
 import type { Order } from "@shared/schema";
 import { useTranslation } from 'react-i18next';
 import SarIcon from "@/components/sar-icon";
+import { fmtOrderNum } from "@/lib/print-utils";
 
 function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, '');
@@ -45,7 +46,7 @@ function CountdownTimer({ estimatedMinutes, startTime, t }: { estimatedMinutes: 
       const elapsed = (now - start) / 1000;
       
       setTimeLeft(remaining);
-      setProgress(Math.max(0, Math.min(100, 100 - (elapsed / totalSeconds) * 100)));
+      setProgress(totalSeconds > 0 ? Math.max(0, Math.min(100, 100 - (elapsed / totalSeconds) * 100)) : 100);
     };
 
     calculateTime();
@@ -89,7 +90,7 @@ export default function OrderTrackingPage() {
  }
  }, [location]);
 
- const { data: order, isLoading } = useQuery<Order>({
+ const { data: order, isLoading, refetch } = useQuery<Order>({
  queryKey: ["/api/orders/number", trackingOrderNumber],
  queryFn: async () => {
  if (!trackingOrderNumber) return null;
@@ -98,9 +99,27 @@ export default function OrderTrackingPage() {
  return res.json();
  },
  enabled: !!trackingOrderNumber,
- refetchInterval: 30000,
- staleTime: 15000,
+ refetchInterval: 15000,
  });
+
+ // WebSocket: instant order status updates without waiting for poll
+ useEffect(() => {
+   if (!trackingOrderNumber) return;
+   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+   const ws = new WebSocket(`${protocol}//${window.location.host}/ws/orders`);
+   ws.onmessage = (e) => {
+     try {
+       const msg = JSON.parse(e.data);
+       if (
+         (msg.type === 'order_status_update' || msg.type === 'new_order' || msg.type === 'order_update') &&
+         (msg.orderNumber === trackingOrderNumber || msg.data?.orderNumber === trackingOrderNumber || msg.order?.orderNumber === trackingOrderNumber)
+       ) {
+         refetch();
+       }
+     } catch {}
+   };
+   return () => { try { ws.close(); } catch {} };
+ }, [trackingOrderNumber, refetch]);
  
  const { data: branch } = useQuery<any>({
  queryKey: ["/api/branches", order?.branchId],
@@ -136,6 +155,8 @@ export default function OrderTrackingPage() {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
+      case 'awaiting_payment':
+        return <Clock className="w-8 h-8 text-orange-500" />;
       case 'pending':
       case 'payment_confirmed':
         return <Clock className="w-8 h-8 text-yellow-500" />;
@@ -157,7 +178,7 @@ export default function OrderTrackingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 py-12 px-4" dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}>
+    <div className="min-h-screen bg-background py-12 px-4" dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}>
       <div className="max-w-4xl mx-auto">
         <div className="text-center mb-8">
           <h1 className="font-amiri text-4xl font-bold text-primary mb-2">
@@ -217,7 +238,7 @@ export default function OrderTrackingPage() {
                   <div className="space-y-4">
                     <div className="flex justify-between items-center p-3 bg-muted/50 rounded-lg">
                       <span className="text-muted-foreground">{t("tracking.order_number")}:</span>
-                      <span className="font-bold text-primary" dir="ltr">{order.orderNumber}</span>
+                      <span className="font-bold text-primary" dir="ltr">{fmtOrderNum(order.orderNumber)}</span>
                     </div>
                     <div className="flex justify-between items-center p-3 bg-muted/50 rounded-lg">
                       <span className="text-muted-foreground">{t("tracking.total_amount")}:</span>
@@ -227,8 +248,15 @@ export default function OrderTrackingPage() {
                   <div className="space-y-4">
                     <div className="flex justify-between items-center p-3 bg-muted/50 rounded-lg">
                       <span className="text-muted-foreground">{t("tracking.drink_status")}:</span>
-                      <Badge variant={order.status === 'ready' ? 'default' : 'secondary'} className="text-sm px-3 py-1">
-                        {order.status === 'ready' ? `✨ ${t("tracking.ready_badge")}` : order.status === 'in_progress' ? `☕ ${t("tracking.preparing_badge")}` : `⏳ ${t("tracking.pending_badge")}`}
+                      <Badge
+                        variant={order.status === 'ready' || order.status === 'completed' ? 'default' : 'secondary'}
+                        className={`text-sm px-3 py-1 ${order.status === 'out_for_delivery' ? 'bg-orange-500 text-white' : ''}`}
+                      >
+                        {order.status === 'ready' ? t("tracking.ready_badge")
+                          : order.status === 'in_progress' ? t("tracking.preparing_badge")
+                          : order.status === 'out_for_delivery' ? t("status.out_for_delivery")
+                          : order.status === 'completed' ? t("status.completed")
+                          : t("tracking.pending_badge")}
                       </Badge>
                     </div>
                     <div className="flex justify-between items-center p-3 bg-muted/50 rounded-lg">
@@ -240,25 +268,12 @@ export default function OrderTrackingPage() {
                   </div>
                 </div>
 
-                {order.status === 'in_progress' && order.estimatedPrepTimeInMinutes && (
+                {['pending', 'payment_confirmed', 'confirmed', 'in_progress'].includes(order.status) && order.estimatedPrepTimeInMinutes && (
                   <CountdownTimer 
                     estimatedMinutes={order.estimatedPrepTimeInMinutes} 
-                    startTime={order.prepTimeSetAt || order.updatedAt || order.createdAt} 
+                    startTime={(order as any).prepTimeSetAt || order.updatedAt || order.createdAt} 
                     t={t}
                   />
-                )}
-
-                {(order.status === 'pending' || order.status === 'confirmed' || order.status === 'payment_confirmed') && order.estimatedPrepTimeInMinutes && (
-                  <div className="mt-4 p-4 bg-primary/5 border border-primary/20 rounded-xl space-y-2">
-                    <div className="flex items-center gap-2 text-primary font-semibold text-sm">
-                      <Clock className="w-4 h-4" />
-                      <span>الوقت المتوقع للتحضير</span>
-                    </div>
-                    <p className="text-2xl font-bold font-mono text-primary" dir="ltr">
-                      {String(order.estimatedPrepTimeInMinutes).padStart(2,'0')}:00
-                    </p>
-                    <p className="text-xs text-muted-foreground">سيبدأ العداد التنازلي عند بدء التحضير</p>
-                  </div>
                 )}
               </CardContent>
             </Card>
@@ -361,7 +376,7 @@ export default function OrderTrackingPage() {
             {branch && order.deliveryType === 'pickup' && ['in_progress', 'ready'].includes(order.status) && (
               <LocationPreparationCheck 
                 branch={branch}
-                preparationRadius={300}
+                preparationRadius={5}
                 onPreparationReady={() => {
                   toast({
                     title: t("tracking.proximity_toast_title"),

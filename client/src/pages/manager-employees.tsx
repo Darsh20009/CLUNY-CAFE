@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { useTranslate } from "@/lib/useTranslate";
+import SarIcon from "@/components/sar-icon";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -21,6 +23,7 @@ interface Branch {
 }
 
 export default function ManagerEmployees() {
+  const tc = useTranslate();
   const { t, i18n } = useTranslation();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -43,34 +46,55 @@ export default function ManagerEmployees() {
 
   useEffect(() => {
     if (editingEmployee) {
+      setSelectedRole(editingEmployee.role || 'cashier');
       setSelectedPermissions(editingEmployee.permissions || []);
       setSelectedPages(editingEmployee.allowedPages || []);
     } else {
+      setSelectedRole('cashier');
       setSelectedPermissions([]);
       setSelectedPages([]);
     }
   }, [editingEmployee]);
 
   const PERMISSIONS_OPTIONS = [
-    { id: 'create_order', label: 'إنشاء طلبات' },
-    { id: 'cancel_order', label: 'إلغاء طلبات' },
-    { id: 'manage_inventory', label: 'إدارة المخزون' },
-    { id: 'view_reports', label: 'عرض التقارير' },
-    { id: 'manage_employees', label: 'إدارة الموظفين' },
-    { id: 'manage_branches', label: 'إدارة الفروع' },
-    { id: 'manage_settings', label: 'إعدادات النظام' },
+    { id: 'order.create', label: tc('إنشاء طلبات', 'Create Orders') },
+    { id: 'order.view', label: tc('عرض الطلبات', 'View Orders') },
+    { id: 'order.void', label: tc('إلغاء طلبات', 'Cancel Orders') },
+    { id: 'order.refund', label: tc('استرجاع طلبات', 'Refund Orders') },
+    { id: 'order.apply_discount', label: tc('تطبيق خصم', 'Apply Discount') },
+    { id: 'kitchen.view_queue', label: tc('عرض المطبخ', 'View Kitchen') },
+    { id: 'kitchen.update_status', label: tc('تحديث حالة الطلب', 'Update Order Status') },
+    { id: 'inventory.view', label: tc('عرض المخزون', 'View Inventory') },
+    { id: 'inventory.stock_in', label: tc('إدخال مخزون', 'Stock In') },
+    { id: 'inventory.stock_out', label: tc('إخراج مخزون', 'Stock Out') },
+    { id: 'menu.view', label: tc('عرض القائمة', 'View Menu') },
+    { id: 'menu.create', label: tc('إضافة صنف', 'Add Item') },
+    { id: 'menu.edit', label: tc('تعديل صنف', 'Edit Item') },
+    { id: 'reports.daily', label: tc('تقرير يومي', 'Daily Report') },
+    { id: 'reports.branch', label: tc('تقرير الفرع', 'Branch Report') },
+    { id: 'reports.export', label: tc('تصدير التقارير', 'Export Reports') },
+    { id: 'employees.view', label: tc('عرض الموظفين', 'View Employees') },
+    { id: 'employees.create', label: tc('إضافة موظف', 'Add Employee') },
+    { id: 'employees.edit', label: tc('تعديل موظف', 'Edit Employee') },
+    { id: 'shift.open', label: tc('فتح وردية', 'Open Shift') },
+    { id: 'shift.close', label: tc('إغلاق وردية', 'Close Shift') },
+    { id: 'pos.open_drawer', label: tc('فتح درج النقود', 'Open Cash Drawer') },
+    { id: 'delivery.manage', label: tc('إدارة التوصيل', 'Manage Delivery') },
+    { id: 'tables.manage', label: tc('إدارة الطاولات', 'Manage Tables') },
+    { id: 'accounting.view', label: tc('عرض المحاسبة', 'View Accounting') },
+    { id: 'settings.branch', label: tc('إعدادات الفرع', 'Branch Settings') },
   ];
 
   const PAGES_OPTIONS = [
-    { id: '/employee/pos', label: 'نقطة البيع' },
-    { id: '/employee/orders', label: 'الطلبات' },
-    { id: '/employee/inventory', label: 'المخزون' },
-    { id: '/employee/accounting', label: 'المحاسبة' },
-    { id: '/employee/attendance', label: 'التحضير' },
-    { id: '/employee/availability', label: 'التوفر' },
-    { id: '/employee/cashier', label: 'الكاشير' },
-    { id: '/manager/dashboard', label: 'لوحة التحكم' },
-    { id: '/manager/employees', label: 'إدارة الموظفين' },
+    { id: '/employee/pos', label: tc('نقطة البيع', 'POS') },
+    { id: '/employee/orders', label: tc('الطلبات', 'Orders') },
+    { id: '/employee/inventory', label: tc('المخزون', 'Inventory') },
+    { id: '/employee/accounting', label: tc('المحاسبة', 'Accounting') },
+    { id: '/employee/attendance', label: tc('التحضير', 'Attendance') },
+    { id: '/employee/availability', label: tc('التوفر', 'Availability') },
+    { id: '/employee/cashier', label: tc('الكاشير', 'Cashier') },
+    { id: '/manager/dashboard', label: tc('لوحة التحكم', 'Dashboard') },
+    { id: '/manager/employees', label: tc('إدارة الموظفين', 'Manage Employees') },
   ];
 
 
@@ -139,9 +163,11 @@ export default function ManagerEmployees() {
  const createEmployeeMutation = useMutation({
  mutationFn: async (data: any) => {
  const res = await apiRequest("POST", "/api/employees", data);
- return await res.json();
+ const json = await res.json();
+ if (!res.ok) throw new Error(json.error || "فشل إضافة الموظف");
+ return json;
  },
- onSuccess: () => {
+ onSuccess: (data: any) => {
  queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
  setIsAddDialogOpen(false);
  setSelectedRole("cashier");
@@ -149,16 +175,20 @@ export default function ManagerEmployees() {
  setImagePreview(null);
  setSelectedImage(null);
  setUploadedImageUrl(null);
+ const activated = data?.isActivated === 1;
  toast({
- title: "تم إضافة الموظف",
- description: "تم إضافة الموظف بنجاح. يمكنه الآن إنشاء كلمة المرور الخاصةبه.",
+ title: tc("تم إضافة الموظف ✅", "Employee Added ✅"),
+ description: activated
+   ? tc("تم إضافة الموظف وتفعيل حسابه فوراً", "Employee added and account activated immediately")
+   : tc("تم إضافة الموظف. يمكنه تفعيل حسابه لاحقاً", "Employee added. They can activate their account later"),
  });
  },
  onError: (error: any) => {
+ const msg = error?.message || '';
  toast({
  variant: "destructive",
- title: "فشل إضافة الموظف",
- description: error.message || "حدث خطأ أثناء إضافة الموظف",
+ title: tc("فشل إضافة الموظف", "Failed to Add Employee"),
+ description: msg || tc("حدث خطأ أثناء إضافة الموظف", "An error occurred while adding the employee"),
  });
  },
  });
@@ -172,15 +202,15 @@ export default function ManagerEmployees() {
  queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
  setEditingEmployee(null);
  toast({
- title: "تم تحديث الموظف",
- description: "تم تحديث بيانات الموظف بنجاح",
+ title: tc("تم تحديث الموظف", "Employee Updated"),
+ description: tc("تم تحديث بيانات الموظف بنجاح", "Employee data updated successfully"),
  });
  },
  onError: (error: any) => {
  toast({
  variant: "destructive",
- title: "فشل التحديث",
- description: error.message || "حدث خطأ أثناء تحديث الموظف",
+ title: tc("فشل التحديث", "Update Failed"),
+ description: error.message || tc("حدث خطأ أثناء تحديث الموظف", "Error updating employee"),
  });
  },
  });
@@ -206,6 +236,7 @@ export default function ManagerEmployees() {
  username: username,
  fullName: formData.get("fullName") as string,
  phone: formData.get("phone") as string,
+ email: (formData.get("email") as string)?.trim().toLowerCase() || undefined,
  jobTitle: formData.get("jobTitle") as string,
  role: selectedRole,
  branchId: branchId,
@@ -216,6 +247,7 @@ export default function ManagerEmployees() {
  shiftEndTime: shiftEndTime || undefined,
  workDays: workDaysData.length > 0 ? workDaysData : undefined,
  deviceBalance: parseInt(formData.get("deviceBalance") as string) || 0,
+ salary: parseFloat(formData.get("salary") as string) || 0,
  commissionPercentage: parseFloat(formData.get("commissionPercentage") as string) || 0,
  imageUrl: uploadedImageUrl || undefined,
  };
@@ -229,17 +261,22 @@ export default function ManagerEmployees() {
 
  const formData = new FormData(e.currentTarget);
  const workDaysData = formData.getAll("workDays") as string[];
+ const shiftStartTime = formData.get("shiftStartTime") as string;
+ const shiftEndTime = formData.get("shiftEndTime") as string;
  const employeeData = {
  fullName: formData.get("fullName") as string,
  phone: formData.get("phone") as string,
+ email: (formData.get("email") as string)?.trim().toLowerCase() || undefined,
  jobTitle: formData.get("jobTitle") as string,
+ role: selectedRole,
  permissions: selectedPermissions,
  allowedPages: selectedPages,
- shiftTime: formData.get("shiftTime") as string,
- shiftStartTime: formData.get("shiftStartTime") as string || undefined,
- shiftEndTime: formData.get("shiftEndTime") as string || undefined,
+ shiftTime: shiftStartTime && shiftEndTime ? `${shiftStartTime}-${shiftEndTime}` : undefined,
+ shiftStartTime: shiftStartTime || undefined,
+ shiftEndTime: shiftEndTime || undefined,
  workDays: workDaysData.length > 0 ? workDaysData : undefined,
  deviceBalance: parseInt(formData.get("deviceBalance") as string) || 0,
+ salary: parseFloat(formData.get("salary") as string) || 0,
  commissionPercentage: parseFloat(formData.get("commissionPercentage") as string) || 0,
  imageUrl: editUploadedImageUrl || editingEmployee.imageUrl || undefined,
  };
@@ -268,16 +305,16 @@ export default function ManagerEmployees() {
  const data = await response.json();
  setUploadedImageUrl(data.url);
  toast({
- title: "تم رفع الصورة",
- description: "تم رفع صورة الموظف بنجاح"
+ title: tc("تم رفع الصورة", "Photo Uploaded"),
+ description: tc("تم رفع صورة الموظف بنجاح", "Employee photo uploaded successfully")
  });
  } else {
- throw new Error('فشل الرفع');
+ throw new Error(tc('فشل الرفع', 'Upload failed'));
  }
  } catch (error) {
  toast({
- title: "خطأ",
- description: "فشل رفع الصورة",
+ title: tc("خطأ", "Error"),
+ description: tc("فشل رفع الصورة", "Failed to upload photo"),
  variant: "destructive"
  });
  setImagePreview(null);
@@ -307,16 +344,16 @@ export default function ManagerEmployees() {
  const data = await response.json();
  setEditUploadedImageUrl(data.url);
  toast({
- title: "تم رفع الصورة",
- description: "تم رفع صورة الموظف بنجاح"
+ title: tc("تم رفع الصورة", "Photo Uploaded"),
+ description: tc("تم رفع صورة الموظف بنجاح", "Employee photo uploaded successfully")
  });
  } else {
- throw new Error('فشل الرفع');
+ throw new Error(tc('فشل الرفع', 'Upload failed'));
  }
  } catch (error) {
  toast({
- title: "خطأ",
- description: "فشل رفع الصورة",
+ title: tc("خطأ", "Error"),
+ description: tc("فشل رفع الصورة", "Failed to upload photo"),
  variant: "destructive"
  });
  setEditImagePreview(null);
@@ -330,7 +367,7 @@ export default function ManagerEmployees() {
       <div className="max-w-7xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-amber-500 to-amber-700 rounded-full flex items-center justify-center">
+            <div className="w-12 h-12 bg-primary rounded-full flex items-center justify-center">
               <Coffee className="w-6 h-6 text-white" />
             </div>
             <div>
@@ -340,7 +377,7 @@ export default function ManagerEmployees() {
           </div>
  <div className="flex gap-2">
  <Button
- onClick={() => setLocation("/employee/dashboard")}
+ onClick={() => setLocation("/manager/dashboard")}
  variant="outline"
  className="border-primary/50 text-accent"
  data-testid="button-dashboard"
@@ -359,11 +396,28 @@ export default function ManagerEmployees() {
  </div>
  </div>
 
+ <button
+   onClick={() => setLocation("/manager/employees/hub")}
+   data-testid="link-employees-hub"
+   className="w-full mb-6 group bg-gradient-to-l from-primary/10 via-primary/5 to-white border border-primary/30 hover:border-primary rounded-2xl p-4 flex items-center justify-between transition-all hover:shadow-md"
+ >
+   <div className="flex items-center gap-3 text-right">
+     <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
+       <svg className="h-6 w-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+     </div>
+     <div>
+       <p className="font-bold text-base text-gray-900">المركز الموحد للموظفين</p>
+       <p className="text-xs text-gray-600">حضور · مهام · مخالفات · أداء · صدارة المبيعات · صلاحيات · رواتب</p>
+     </div>
+   </div>
+   <svg className="h-5 w-5 text-primary group-hover:-translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
+ </button>
+
  <div className="mb-6">
  <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
  <DialogTrigger asChild>
  <Button
- className="bg-gradient-to-r from-amber-500 to-amber-700 hover:from-amber-600 hover:to-amber-800"
+ className="bg-primary hover:bg-primary/90"
  data-testid="button-add-employee"
  >
  <Plus className="w-4 h-4 ml-2" />
@@ -372,12 +426,12 @@ export default function ManagerEmployees() {
  </DialogTrigger>
  <DialogContent className="bg-[#2d1f1a] border-primary/20 text-white w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-2xl max-h-[90vh] overflow-y-auto">
  <DialogHeader>
- <DialogTitle className="text-accent">إضافة موظف جديد</DialogTitle>
+ <DialogTitle className="text-accent">{tc("إضافة موظف جديد", "Add New Employee")}</DialogTitle>
  </DialogHeader>
  <form onSubmit={handleSubmitNew} className="space-y-3 sm:space-y-4">
  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
  <div>
- <Label htmlFor="fullName" className="text-gray-300">الاسم الكامل *</Label>
+ <Label htmlFor="fullName" className="text-gray-300">{tc("الاسم الكامل *", "Full Name *")}</Label>
  <Input
  id="fullName"
  name="fullName"
@@ -387,7 +441,7 @@ export default function ManagerEmployees() {
  />
  </div>
  <div>
- <Label htmlFor="username" className="text-gray-300">اسم المستخدم *</Label>
+ <Label htmlFor="username" className="text-gray-300">{tc("اسم المستخدم *", "Username *")}</Label>
  <Input
  id="username"
  name="username"
@@ -410,6 +464,19 @@ export default function ManagerEmployees() {
  data-testid="input-phone"
  />
  </div>
+ <div>
+ <Label htmlFor="email" className="text-gray-300">البريد الإلكتروني</Label>
+ <Input
+ id="email"
+ name="email"
+ type="email"
+ className="bg-[#1a1410] border-primary/30 text-white"
+ data-testid="input-email"
+ placeholder="example@email.com"
+ />
+ </div>
+ </div>
+ <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
  <div>
  <Label htmlFor="jobTitle" className="text-gray-300">الوظيفة*</Label>
  <Select name="jobTitle" required>
@@ -440,11 +507,14 @@ export default function ManagerEmployees() {
  <SelectValue placeholder="اختر الدور" />
  </SelectTrigger>
  <SelectContent className="bg-[#2d1f1a] border-primary/20 text-white">
- <SelectItem value="cashier">كاشير</SelectItem>
- <SelectItem value="accountant">محاسب</SelectItem>
+ <SelectItem value="cleaner">عامل نظافة</SelectItem>
  <SelectItem value="driver">سائق توصيل</SelectItem>
+ <SelectItem value="accountant">محاسب</SelectItem>
+ <SelectItem value="cashier">كاشير</SelectItem>
+ <SelectItem value="barista">باريستا</SelectItem>
+ <SelectItem value="supervisor">مشرف</SelectItem>
  {isAdminOrOwner && <SelectItem value="manager">مدير فرع</SelectItem>}
- {currentManager?.role === "admin" && <SelectItem value="admin">مدير عام</SelectItem>}
+ {(currentManager?.role === "admin" || currentManager?.role === "owner") && <SelectItem value="admin">مدير عام</SelectItem>}
  </SelectContent>
  </Select>
  </div>
@@ -565,7 +635,7 @@ export default function ManagerEmployees() {
  />
  </div>
  <div>
- <Label htmlFor="commissionPercentage" className="text-gray-300">نسبةالعمولة(%)</Label>
+ <Label htmlFor="commissionPercentage" className="text-gray-300">نسبة العمولة (%)</Label>
  <Input
  id="commissionPercentage"
  name="commissionPercentage"
@@ -576,6 +646,20 @@ export default function ManagerEmployees() {
  defaultValue="0"
  className="bg-[#1a1410] border-primary/30 text-white"
  data-testid="input-commission"
+ />
+ </div>
+ <div>
+ <Label htmlFor="salary" className="text-gray-300">الراتب الأساسي (ريال)</Label>
+ <Input
+ id="salary"
+ name="salary"
+ type="number"
+ step="1"
+ min="0"
+ defaultValue="0"
+ className="bg-[#1a1410] border-primary/30 text-white"
+ data-testid="input-salary"
+ placeholder="0"
  />
  </div>
  </div>
@@ -630,10 +714,21 @@ export default function ManagerEmployees() {
  )}
  </div>
 
- <div className="bg-background0/10 border border-primary/30 rounded-lg p-4">
- <p className="text-sm text-accent/90">
-  سيتم إنشاء الموظف بدون كلمة مرور. يجب على الموظف الذهاب إلى صفحة "موظف جديد" لإنشاء كلمة المرور الخاصةبه.
- </p>
+ <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+  <div>
+    <Label htmlFor="newPassword" className="text-gray-300">كلمة المرور (اختياري)</Label>
+    <Input
+      id="newPassword"
+      name="password"
+      type="password"
+      placeholder="اتركها فارغة لتفعيل لاحقاً"
+      className="bg-[#1a1410] border-primary/30 text-white"
+      data-testid="input-password"
+    />
+  </div>
+  <div className="flex items-end">
+    <p className="text-xs text-gray-400 pb-2">إذا أدخلت كلمة مرور سيُفعَّل الحساب فوراً</p>
+  </div>
  </div>
 
       <div className="flex flex-col-reverse sm:flex-row justify-end gap-2">
@@ -654,7 +749,7 @@ export default function ManagerEmployees() {
         <Button
           type="submit"
           disabled={createEmployeeMutation.isPending}
-          className="bg-gradient-to-r from-amber-500 to-amber-700 w-full sm:w-auto hover-elevate active-elevate-2"
+          className="bg-primary w-full sm:w-auto hover-elevate active-elevate-2"
           data-testid="button-submit-add"
         >
           {createEmployeeMutation.isPending ? "جاري الإضافة..." : "إضافة الموظف"}
@@ -675,7 +770,7 @@ export default function ManagerEmployees() {
               className="bg-gradient-to-br from-background to-background border-primary/20 overflow-hidden hover-elevate"
               data-testid={`card-employee-${employee.id}`}
             >
- <CardHeader className="bg-gradient-to-r from-amber-500/20 to-amber-700/20">
+ <CardHeader className="bg-gradient-to-r from-primary/10 to-primary/20">
  <div className="flex items-center justify-between">
  <CardTitle className="text-accent flex items-center gap-2">
  {employee.imageUrl ? (
@@ -685,7 +780,7 @@ export default function ManagerEmployees() {
  className="w-10 h-10 rounded-full object-cover"
  />
  ) : (
- <div className="w-10 h-10 bg-gradient-to-br from-amber-500 to-amber-700 rounded-full flex items-center justify-center">
+ <div className="w-10 h-10 bg-primary rounded-full flex items-center justify-center">
  <User className="w-6 h-6 text-white" />
  </div>
  )}
@@ -695,7 +790,7 @@ export default function ManagerEmployees() {
  size="sm"
  variant="ghost"
  onClick={() => setEditingEmployee(employee)}
- className="text-accent hover:bg-background0/10"
+ className="text-accent hover:bg-primary/10"
  data-testid={`button-edit-${employee.id}`}
  >
  <Edit className="w-4 h-4" />
@@ -723,6 +818,13 @@ export default function ManagerEmployees() {
  <div className="flex items-center gap-2 text-gray-300">
  <Clock className="w-4 h-4 text-accent" />
  <span className="text-sm">{employee.shiftTime}</span>
+ </div>
+ )}
+
+ {(employee as any).salary !== undefined && (employee as any).salary > 0 && (
+ <div className="flex items-center gap-2 text-gray-300">
+ <SarIcon size={11} />
+ <span className="text-sm">الراتب: {(employee as any).salary.toLocaleString()} <SarIcon size={11} /></span>
  </div>
  )}
 
@@ -776,6 +878,18 @@ export default function ManagerEmployees() {
  </div>
 
  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+ <div>
+ <Label htmlFor="edit-email" className="text-gray-300">البريد الإلكتروني</Label>
+ <Input
+ id="edit-email"
+ name="email"
+ type="email"
+ defaultValue={(editingEmployee as any).email || ""}
+ className="bg-[#1a1410] border-primary/30 text-white"
+ data-testid="input-edit-email"
+ placeholder="example@email.com"
+ />
+ </div>
  <div>
  <Label htmlFor="edit-jobTitle" className="text-gray-300">الوظيفة*</Label>
  <Select name="jobTitle" defaultValue={editingEmployee.jobTitle} required>
@@ -890,7 +1004,7 @@ export default function ManagerEmployees() {
  />
  </div>
  <div>
- <Label htmlFor="edit-commissionPercentage" className="text-gray-300">نسبةالعمولة(%)</Label>
+ <Label htmlFor="edit-commissionPercentage" className="text-gray-300">نسبة العمولة (%)</Label>
  <Input
  id="edit-commissionPercentage"
  name="commissionPercentage"
@@ -901,6 +1015,20 @@ export default function ManagerEmployees() {
  defaultValue={editingEmployee.commissionPercentage || 0}
  className="bg-[#1a1410] border-primary/30 text-white"
  data-testid="input-edit-commission"
+ />
+ </div>
+ <div>
+ <Label htmlFor="edit-salary" className="text-gray-300">الراتب الأساسي (ريال)</Label>
+ <Input
+ id="edit-salary"
+ name="salary"
+ type="number"
+ step="1"
+ min="0"
+ defaultValue={(editingEmployee as any).salary || 0}
+ className="bg-[#1a1410] border-primary/30 text-white"
+ data-testid="input-edit-salary"
+ placeholder="0"
  />
  </div>
  </div>
@@ -977,7 +1105,7 @@ export default function ManagerEmployees() {
  <Button
  type="submit"
  disabled={updateEmployeeMutation.isPending}
- className="bg-gradient-to-r from-amber-500 to-amber-700"
+ className="bg-primary"
  data-testid="button-submit-edit"
  >
  {updateEmployeeMutation.isPending ? "جاري التحديث..." : "حفظ التغييرات"}

@@ -1,13 +1,81 @@
 import { useLocation } from 'wouter';
 import { useTranslation } from 'react-i18next';
-import { LayoutDashboard, ShoppingCart, ClipboardList, Settings, LogOut, User, BarChart3, Warehouse, Wallet, ChefHat, Table, Eye, Coffee, Utensils, Languages } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { LayoutDashboard, ShoppingCart, ClipboardList, Settings, LogOut, User, BarChart3, Warehouse, Wallet, ChefHat, Table, Coffee, Utensils, Languages, Clock, Truck, Building2, Brain, FileSpreadsheet, Tag, Monitor, Bell, BookOpen, Sparkles, CreditCard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { Employee } from '@shared/schema';
-import clunyLogoStaff from "@assets/cluny-logo-staff.png";
+import clunyLogoStaff from "@assets/cluny-logo-customer.png";
+import { brand } from "@/lib/brand";
 
 interface EmployeeSidebarProps {
   employee: Employee | null;
   onLogout: () => void;
+}
+
+type PageId = string;
+
+const PAGE_ID_TO_PATH: Record<PageId, { path: string; label: string; labelEn: string; icon: any; section: 'base' | 'manager'; isNotifications?: boolean }> = {
+  brand_ai: { path: '/employee/ai', label: 'المساعد الذكي', labelEn: 'AI Assistant', icon: Sparkles, section: 'base' },
+  dashboard: { path: '/employee/dashboard', label: 'لوحة التحكم', labelEn: 'Dashboard', icon: LayoutDashboard, section: 'base' },
+  cashier: { path: '/employee/cashier', label: 'الكاشير', labelEn: 'Cashier', icon: ShoppingCart, section: 'base' },
+  pos: { path: '/employee/pos', label: 'نقاط البيع', labelEn: 'POS', icon: BarChart3, section: 'base' },
+  shifts: { path: '/employee/shifts', label: 'الورديات', labelEn: 'Shifts', icon: Clock, section: 'base' },
+  kiosk_qr: { path: '/employee/kiosk-qr', label: 'QR الكيوسك', labelEn: 'Kiosk QR', icon: Monitor, section: 'base' },
+  orders: { path: '/employee/orders', label: 'الطلبات', labelEn: 'Orders', icon: ClipboardList, section: 'base' },
+  kitchen: { path: '/employee/kitchen', label: 'المطبخ', labelEn: 'Kitchen', icon: ChefHat, section: 'base' },
+  tables: { path: '/employee/table-orders', label: 'الطاولات', labelEn: 'Tables', icon: Table, section: 'base' },
+  notifications: { path: '/notifications', label: 'الإشعارات', labelEn: 'Notifications', icon: Bell, section: 'base', isNotifications: true },
+  menu_management: { path: '/employee/menu-management', label: 'إدارة القائمة', labelEn: 'Menu', icon: Coffee, section: 'manager' },
+  inventory: { path: '/manager/inventory', label: 'المخزون', labelEn: 'Inventory', icon: Warehouse, section: 'manager' },
+  reports: { path: '/admin/reports', label: 'التقارير', labelEn: 'Reports', icon: BarChart3, section: 'manager' },
+  accounting: { path: '/manager/accounting', label: 'المحاسبة', labelEn: 'Accounting', icon: Wallet, section: 'manager' },
+  erp_accounting: { path: '/erp/accounting', label: 'نظام ERP', labelEn: 'ERP System', icon: BookOpen, section: 'manager' },
+  employees: { path: '/admin/employees', label: 'إدارة الموظفين', labelEn: 'Employees', icon: User, section: 'manager' },
+  settings: { path: '/admin/settings', label: 'الإعدادات', labelEn: 'Settings', icon: Settings, section: 'manager' },
+  delivery: { path: '/manager/delivery', label: 'إدارة التوصيل', labelEn: 'Delivery', icon: Truck, section: 'manager' },
+  unified_reports: { path: '/manager/unified-reports', label: 'التقارير الموحدة', labelEn: 'Unified Reports', icon: Building2, section: 'manager' },
+  bi_analytics: { path: '/manager/bi-analytics', label: 'تحليلات BI', labelEn: 'BI Analytics', icon: Brain, section: 'manager' },
+  promotions: { path: '/manager/promotions', label: 'العروض الترويجية', labelEn: 'Promotions', icon: Tag, section: 'manager' },
+  kiosk: { path: '/kiosk', label: 'الكشك (كيوسك)', labelEn: 'Kiosk', icon: Monitor, section: 'manager' },
+  payment_tracking: { path: '/manager/payment-tracking', label: 'متابعة الدفع الأونلاين', labelEn: 'Payment Tracking', icon: CreditCard, section: 'manager' },
+};
+
+const ADMIN_ROLES = ['manager', 'owner', 'admin', 'branch_manager'];
+
+function getAccessiblePages(employee: Employee | null): PageId[] {
+  if (!employee) return ['dashboard'];
+  const role = employee.role || 'cashier';
+
+  if (['owner', 'admin'].includes(role)) {
+    return Object.keys(PAGE_ID_TO_PATH);
+  }
+
+  const allowedPages = (employee as any).allowedPages;
+  if (allowedPages && Array.isArray(allowedPages) && allowedPages.length > 0) {
+    // Always include notifications
+    return allowedPages.includes('notifications') ? allowedPages : [...allowedPages, 'notifications'];
+  }
+
+  const roleDefaults: Record<string, PageId[]> = {
+    cashier: ['brand_ai', 'dashboard', 'cashier', 'pos', 'shifts', 'kiosk_qr', 'orders', 'notifications'],
+    barista: ['brand_ai', 'dashboard', 'orders', 'kitchen', 'shifts', 'kiosk_qr', 'notifications'],
+    cook: ['brand_ai', 'dashboard', 'orders', 'kitchen', 'shifts', 'kiosk_qr', 'notifications'],
+    waiter: ['brand_ai', 'dashboard', 'cashier', 'orders', 'tables', 'shifts', 'kiosk_qr', 'notifications'],
+    supervisor: ['brand_ai', 'dashboard', 'cashier', 'pos', 'shifts', 'kiosk_qr', 'orders', 'kitchen', 'tables', 'menu_management', 'reports', 'notifications'],
+    manager: ['brand_ai', 'dashboard', 'cashier', 'pos', 'shifts', 'orders', 'kitchen', 'tables', 'menu_management', 'inventory', 'reports', 'accounting', 'erp_accounting', 'employees', 'settings', 'delivery', 'unified_reports', 'bi_analytics', 'promotions', 'kiosk', 'payment_tracking', 'notifications'],
+    branch_manager: ['brand_ai', 'dashboard', 'cashier', 'pos', 'shifts', 'orders', 'kitchen', 'tables', 'menu_management', 'inventory', 'reports', 'accounting', 'erp_accounting', 'employees', 'settings', 'delivery', 'unified_reports', 'bi_analytics', 'promotions', 'kiosk', 'payment_tracking', 'notifications'],
+  };
+
+  return roleDefaults[role] || ['dashboard', 'cashier', 'orders', 'notifications'];
+}
+
+function NotifBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span className="ml-auto min-w-[20px] h-5 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
+      {count > 99 ? '99+' : count}
+    </span>
+  );
 }
 
 export function EmployeeSidebar({ employee, onLogout }: EmployeeSidebarProps) {
@@ -19,35 +87,33 @@ export function EmployeeSidebar({ employee, onLogout }: EmployeeSidebarProps) {
     i18n.changeLanguage(newLang);
   };
 
-  const baseMenuItems = [
-    { label: t('sidebar.dashboard'), icon: LayoutDashboard, path: '/employee/dashboard' },
-    { label: t('sidebar.cashier'), icon: ShoppingCart, path: '/employee/cashier' },
-    { label: t('sidebar.pos'), icon: BarChart3, path: '/employee/pos' },
-    { label: t('sidebar.orders'), icon: ClipboardList, path: '/employee/orders' },
-    { label: t('sidebar.kitchen'), icon: ChefHat, path: '/employee/kitchen' },
-    { label: t('sidebar.tables'), icon: Table, path: '/employee/table-orders' },
-  ];
+  // Fetch unread notification count — poll every 30s
+  const { data: unreadData } = useQuery<{ count: number }>({
+    queryKey: ['/api/notifications/unread-count'],
+    refetchInterval: 30_000,
+    retry: false,
+    enabled: !!employee,
+  });
+  const unreadCount = unreadData?.count ?? 0;
 
-  const managerMenuItems = [
-    { label: t('sidebar.system_management'), icon: Settings, path: '/admin/settings' },
-    { label: t('sidebar.employee_management'), icon: User, path: '/admin/employees' },
-    { label: t('sidebar.reports'), icon: BarChart3, path: '/admin/reports' },
-    { label: t('sidebar.accounting'), icon: Wallet, path: '/manager/accounting' },
-    { label: t('sidebar.inventory'), icon: Warehouse, path: '/manager/inventory' },
-  ];
+  const accessiblePages = getAccessiblePages(employee);
+  const isAr = i18n.language === 'ar';
+  
+  const baseItems = accessiblePages
+    .filter(pageId => PAGE_ID_TO_PATH[pageId]?.section === 'base')
+    .map(pageId => {
+      const config = PAGE_ID_TO_PATH[pageId];
+      return { label: isAr ? config.label : config.labelEn, icon: config.icon, path: config.path, isNotifications: config.isNotifications };
+    });
 
-  const showManagerItems = ['manager', 'owner', 'admin'].includes(employee?.role || '');
-  const isBothModes = true;
+  const managerItems = accessiblePages
+    .filter(pageId => PAGE_ID_TO_PATH[pageId]?.section === 'manager')
+    .map(pageId => {
+      const config = PAGE_ID_TO_PATH[pageId];
+      return { label: isAr ? config.label : config.labelEn, icon: config.icon, path: config.path, isNotifications: config.isNotifications };
+    });
 
-  const menuManagementItems = showManagerItems ? [
-    { label: t('sidebar.drinks_management'), icon: Coffee, path: '/employee/menu-management' },
-    ...(isBothModes ? [{ label: t('sidebar.food_management'), icon: Utensils, path: '/employee/menu-management?type=food' }] : []),
-  ] : [];
-
-  const menuItems = [
-    ...baseMenuItems,
-    ...menuManagementItems,
-  ];
+  const showManagerSection = managerItems.length > 0;
 
   return (
     <div className="hidden lg:flex w-64 bg-background border-l border-border flex-col h-screen sticky top-0">
@@ -55,11 +121,11 @@ export function EmployeeSidebar({ employee, onLogout }: EmployeeSidebarProps) {
         <div className="flex items-center gap-3 mb-2">
           <img 
             src={clunyLogoStaff} 
-            alt="CLUNY SYSTEMS" 
+            alt={brand.platformNameEn}
             className="w-10 h-10 object-contain rounded-lg"
           />
           <div>
-            <h2 className="text-lg font-bold text-foreground">CLUNY SYSTEMS</h2>
+            <h2 className="text-lg font-bold text-foreground">{brand.platformNameAr}</h2>
             <p className="text-xs text-muted-foreground">{t('sidebar.employee_system')}</p>
           </div>
         </div>
@@ -67,12 +133,13 @@ export function EmployeeSidebar({ employee, onLogout }: EmployeeSidebarProps) {
       </div>
 
       <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-        {menuItems.map((item) => {
+        {baseItems.map((item) => {
           const Icon = item.icon;
           const fullPath = location + window.location.search;
           const isActive = item.path.includes('?')
             ? fullPath === item.path
             : location === item.path && !window.location.search;
+          const showBadge = item.isNotifications && unreadCount > 0;
           return (
             <button
               key={item.path}
@@ -84,18 +151,30 @@ export function EmployeeSidebar({ employee, onLogout }: EmployeeSidebarProps) {
               }`}
               data-testid={`sidebar-link-${item.path.split('/').pop()}`}
             >
-              <Icon className="w-5 h-5" />
-              <span className="font-medium">{item.label}</span>
+              <div className="relative shrink-0">
+                <Icon className="w-5 h-5" />
+                {showBadge && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-0.5 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center leading-none ring-1 ring-background">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
+              </div>
+              <span className="font-medium flex-1 text-right">{item.label}</span>
+              {showBadge && (
+                <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
             </button>
           );
         })}
 
-        {showManagerItems && (
+        {showManagerSection && (
           <>
             <div className="my-4 border-t border-border pt-4">
-              <p className="px-4 text-xs font-bold text-[#B58B5A] uppercase">{t('sidebar.admin_menu')}</p>
+              <p className="px-4 text-xs font-bold text-[#2D9B6E] uppercase">{t('sidebar.admin_menu')}</p>
             </div>
-            {managerMenuItems.map((item) => {
+            {managerItems.map((item) => {
               const Icon = item.icon;
               const isActive = location === item.path;
               return (

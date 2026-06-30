@@ -1,9 +1,9 @@
 import crypto from "crypto";
 import mongoose from "mongoose";
 import type { Express } from "express";
-import { getSaudiDayBounds, getSaudiToday, getSaudiTomorrow, getSaudiDaysAgo, getSaudiMonthStart, getSaudiYearStart, getSaudiDateString } from "./utils/timezone";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { cache, cacheKey, CACHE_TTL } from "./cache";
 import { 
   insertOrderSchema, 
   insertCartItemSchema, 
@@ -30,7 +30,9 @@ import {
   WarehouseModel, 
   WarehouseStockModel, 
   WarehouseTransferModel, 
-  DeliveryIntegrationModel, 
+  DeliveryIntegrationModel,
+  DeliveryOrderModel,
+  DeliveryDriverModel,
   CartItemModel,
   EmployeeModel,
   PointTransferModel,
@@ -42,7 +44,12 @@ import {
   ExpenseErpModel,
   VendorModel,
   TaxInvoiceModel,
-  OrderCounterModel
+  CashierShiftModel,
+  StocktakeSessionModel,
+  WastageModel,
+  PaymentLogModel,
+  BusinessConfigModel,
+  AppointmentModel,
 } from "@shared/schema";
 import { RecipeEngine } from "./recipe-engine";
 import { UnitsEngine } from "./units-engine";
@@ -51,8 +58,10 @@ import { AccountingEngine } from "./accounting-engine";
 import { ErpAccountingService } from "./erp-accounting-service";
 import { deliveryService } from "./delivery-service";
 import { requireAuth, requireManager, requireAdmin, filterByBranch, requireKitchenAccess, requireCashierAccess, requireDeliveryAccess, requirePermission, requireCustomerAuth, type AuthRequest, type CustomerAuthRequest } from "./middleware/auth";
+import { logFromRequest, logAudit } from "./audit-logger";
 import { PermissionsEngine, PERMISSIONS } from "./permissions-engine";
 import { requireTenant, getTenantIdFromRequest } from "./middleware/tenant";
+import { TenantModel } from "@shared/tenant-schema";
 import { wsManager } from "./websocket";
 import bcrypt from "bcryptjs";
 import multer from "multer";
@@ -62,6 +71,130 @@ import fs from "fs";
 import { Types } from "mongoose";
 import { nanoid } from "nanoid";
 const isValidObjectId = (id: string) => Types.ObjectId.isValid(id);
+
+// ─── Default Tenant Resolver ─────────────────────────────────────────────────
+// For unauthenticated requests (online customers, PayMob webhooks) there is no
+// session tenantId. We look up the first active tenant in the DB so that online
+// orders land under the real tenant instead of the 'demo-tenant' fallback.
+let _cachedDefaultTenantId: string | null = null;
+async function getDefaultTenantId(): Promise<string> {
+  if (_cachedDefaultTenantId) return _cachedDefaultTenantId;
+  try {
+    const tenant = await TenantModel.findOne({ status: 'active' }).lean();
+    if (tenant) {
+      _cachedDefaultTenantId = (tenant as any).id || (tenant as any)._id?.toString() || 'demo-tenant';
+      return _cachedDefaultTenantId!;
+    }
+  } catch {}
+  return 'demo-tenant';
+}
+
+// ─── Centralized VAT Rate ────────────────────────────────────────────────────
+// Saudi Arabia standard VAT rate (15%). Change here to update all calculations.
+// The value in BusinessConfigModel.taxRate is authoritative; this constant is
+// used as a fallback for synchronous calculations.
+const VAT_RATE = 0.15;
+
+// ─── Saudi Arabia Timezone Utilities (UTC+3) ─────────────────────────────────
+// All "today" calculations must use Saudi Arabia time (Asia/Riyadh, UTC+3)
+// so that midnight rolls over at 00:00 Riyadh time, not 00:00 UTC (which
+// would be 03:00 Riyadh time — 3 hours late).
+function getSaudiStartOfDay(date?: Date): Date {
+  const d = date || new Date();
+  // Add 3 hours to get the current date in Riyadh time
+  const saudiDate = new Date(d.getTime() + 3 * 60 * 60 * 1000);
+  // Zero out to midnight in Riyadh (using UTC methods on the shifted date)
+  const midnight = new Date(Date.UTC(
+    saudiDate.getUTCFullYear(),
+    saudiDate.getUTCMonth(),
+    saudiDate.getUTCDate(),
+    0, 0, 0, 0
+  ));
+  // Shift back to UTC: Saudi midnight 00:00 = UTC 21:00 previous day
+  return new Date(midnight.getTime() - 3 * 60 * 60 * 1000);
+}
+function getSaudiEndOfDay(date?: Date): Date {
+  const start = getSaudiStartOfDay(date);
+  return new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+}
+// Returns a custom 24-hour business-day window starting at `dayStartHour` (Saudi time) on the given date.
+// e.g. dayStartHour=6 means the business day runs 6 AM → 6 AM next day in Riyadh time.
+function getBusinessDayBoundaries(date?: Date, dayStartHour: number = 0): { start: Date; end: Date } {
+  const safeHour = Math.max(0, Math.min(23, Math.floor(Number(dayStartHour) || 0)));
+  const start = new Date(getSaudiStartOfDay(date).getTime() + safeHour * 60 * 60 * 1000);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+  return { start, end };
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Global Async Route Guard ─────────────────────────────────────────────────
+// Wraps an async Express route handler so that any thrown error (or rejected
+// promise) is forwarded to Express's global error middleware via next(err).
+// Apply to any route that is async but lacks its own try/catch.
+//
+// Usage:  app.get("/api/foo", wrap(async (req, res) => { ... }))
+//
+import type { Request, Response, NextFunction, RequestHandler } from "express";
+type AsyncHandler = (req: any, res: Response, next: NextFunction) => Promise<any>;
+export function wrap(fn: AsyncHandler): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
+
+// ─── High-Performance Coffee Items Cache ─────────────────────────────────────
+// getCoffeeItems() is called in 11+ hot paths. This cached version eliminates
+// repeated DB round-trips, returning a Map<id, item> for O(1) lookups.
+// Cache is per-tenantId and auto-invalidated on item mutations.
+async function getCachedCoffeeItemMap(tenantId: string): Promise<Map<string, any>> {
+  const ck = cacheKey('coffee-items-map', tenantId);
+  const cached = cache.get<Map<string, any>>(ck);
+  if (cached) return cached;
+  const { CoffeeItemModel } = await import("@shared/schema");
+  const items = await CoffeeItemModel.find({ tenantId })
+    .select('id nameAr nameEn price imageUrl category isAvailable')
+    .lean();
+  const map = new Map<string, any>();
+  for (const item of items) {
+    const s = serializeDoc(item as any);
+    map.set(s.id, s);
+  }
+  cache.set(ck, map, CACHE_TTL.COFFEE_ITEM_MAP);
+  return map;
+}
+
+async function getCachedCoffeeItems(tenantId: string): Promise<any[]> {
+  const ck = cacheKey('coffee-items', tenantId);
+  const cached = cache.get<any[]>(ck);
+  if (cached) return cached;
+  const { CoffeeItemModel } = await import("@shared/schema");
+  const items = await CoffeeItemModel.find({ tenantId }).lean();
+  const serialized = (items as any[]).map(serializeDoc);
+  cache.set(ck, serialized, CACHE_TTL.COFFEE_ITEMS);
+  return serialized;
+}
+
+function invalidateCoffeeItemsCache(tenantId: string) {
+  cache.invalidate('coffee-items:' + tenantId);
+  cache.invalidate('coffee-items-map:' + tenantId);
+  cache.invalidate('menu-items');
+  cache.invalidate('product-addons:' + tenantId);
+}
+
+async function calcOrderPrepTime(tenantId: string, items: any[]): Promise<number> {
+  try {
+    const config = await BusinessConfigModel.findOne({ tenantId }).lean();
+    const base = (config as any)?.prepBaseMinutes ?? 10;
+    const extra = (config as any)?.prepExtraMinutesPerItem ?? 3;
+    const freeCount = (config as any)?.prepFreeItemCount ?? 2;
+    const totalQty = Array.isArray(items)
+      ? items.reduce((s: number, i: any) => s + (Number(i.quantity) || 1), 0)
+      : 1;
+    const extraMins = totalQty > freeCount ? (totalQty - freeCount) * extra : 0;
+    return base + extraMins;
+  } catch { return 10; }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -78,16 +211,7 @@ import {
 } from "./mail-service";
 import { appendOrderToSheet } from "./google-sheets";
 import { getVapidPublicKey, saveSubscription, removeSubscription, sendPushToEmployee, sendPushToCustomer } from "./push-service";
-
-const APPLE_PAY_DOMAIN = (process.env.APPLE_PAY_DOMAIN || "cluny.cafe").replace(/^https?:\/\//, "").replace(/\/$/, "");
-const APPLE_PAY_MERCHANT_ID = process.env.APPLE_PAY_MERCHANT_ID || "merchant.cluny.cafe";
-const APPLE_PAY_DOMAIN_ASSOCIATION_PATH = path.resolve(process.cwd(), "public/.well-known/apple-developer-merchantid-domain-association");
-
-function resolveApplePayMerchantId(configured?: string) {
-  if (configured && configured !== "merchant.net.geidea.ksamerchant") return configured;
-  return APPLE_PAY_MERCHANT_ID;
-}
-import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
+import { registerObjectStorageRoutes } from "./qirox_studio_integrations/object_storage";
 
   // Ensure upload directories exist
   const uploadDirs = [
@@ -234,23 +358,38 @@ async function deductInventoryForOrder(orderId: string, branchId: string, employ
       })) || []
     }));
 
-    // Reward points for order items — 10 points per item priced above 1 SAR
-    // Skip entirely if the order used loyalty points to pay (pointsUsed flag)
-    const orderUsedPoints = !!(order as any).pointsUsed;
+    // Reward points for order items — use pointsPerDrink from business config, default 10
+    let pointsPerDrink = 10;
+    try {
+      const { BusinessConfigModel } = await import("@shared/schema");
+      const bizConfig = await BusinessConfigModel.findOne({ tenantId: order.tenantId || 'demo-tenant' }).lean();
+      if (bizConfig?.loyaltyConfig?.pointsPerDrink !== undefined) {
+        pointsPerDrink = Number(bizConfig.loyaltyConfig.pointsPerDrink) || 10;
+      }
+    } catch (e) {
+      console.warn("[LOYALTY] Could not read business config for pointsPerDrink, using default 10");
+    }
 
-    const totalPointsToAward = orderUsedPoints ? 0 : orderItems.reduce((acc: any, item: any) => {
-      const itemPrice = Number(item.price || item.unitPrice || 0);
-      if (itemPrice <= 1) return acc; // Only earn points for items above 1 SAR
-      return acc + ((item.quantity || 1) * 10);
-    }, 0);
+    const totalPointsToAward = orderItems.reduce((acc: any, item: any) => acc + (item.quantity * pointsPerDrink), 0);
     
-    // Award points — search by customerId first, then by customer phone as fallback
-    // Guard against duplicate awarding: skip if points were already awarded for this order
-    if (totalPointsToAward > 0 && !(order as any).pointsAwarded) {
+    // Award points — atomic lock prevents duplicate awarding in concurrent requests
+    // findOneAndUpdate with condition is atomic in MongoDB — only one concurrent call will get updated doc back
+    let pointsActuallyAwarded = false;
+    if (totalPointsToAward > 0) {
+      const atomicLock = await OrderModel.findOneAndUpdate(
+        { id: orderId, pointsAwarded: { $ne: true } },
+        { $set: { pointsAwarded: true } },
+        { new: false }
+      );
+      // Only proceed if WE were the ones who set pointsAwarded (atomicLock is the pre-update doc, not yet awarded)
+      pointsActuallyAwarded = !!atomicLock;
+    }
+
+    if (pointsActuallyAwarded) {
       try {
         // Update Customer document if customerId exists
         if (order.customerId) {
-          await CustomerModel.findByIdAndUpdate(order.customerId, {
+          await CustomerModel.findOneAndUpdate({ id: order.customerId }, {
             $inc: { points: totalPointsToAward, pendingPoints: -Math.abs(totalPointsToAward) }
           });
         }
@@ -260,12 +399,24 @@ async function deductInventoryForOrder(orderId: string, branchId: string, employ
         if (order.customerId) {
           loyaltyCard = await mongoose.model('LoyaltyCard').findOne({ customerId: order.customerId });
         }
-        // Fallback: search by phone from order
+        // Fallback 1: search by phone from order
         if (!loyaltyCard) {
           const customerPhone = order.customerPhone || order.customerInfo?.customerPhone;
           if (customerPhone) {
             const cleanPhone = customerPhone.replace(/\D/g, '').replace(/^966/, '0').replace(/^9665/, '05');
             loyaltyCard = await mongoose.model('LoyaltyCard').findOne({ phoneNumber: { $in: [cleanPhone, customerPhone, `+966${cleanPhone.slice(1)}`, `966${cleanPhone.slice(1)}`] } });
+          }
+        }
+        // Fallback 2: look up customer by customerId to get phone, then search card by phone
+        if (!loyaltyCard && order.customerId) {
+          const cust = await CustomerModel.findOne({ id: order.customerId }).lean();
+          if (cust?.phone) {
+            const p = cust.phone.replace(/\D/g, '').replace(/^966/, '0').replace(/^9665/, '05');
+            loyaltyCard = await mongoose.model('LoyaltyCard').findOne({ phoneNumber: { $in: [p, cust.phone, `+966${p.slice(1)}`, `966${p.slice(1)}`] } });
+            // Link customerId to card for future lookups
+            if (loyaltyCard && !loyaltyCard.customerId) {
+              loyaltyCard.customerId = order.customerId;
+            }
           }
         }
 
@@ -278,12 +429,10 @@ async function deductInventoryForOrder(orderId: string, branchId: string, employ
           console.warn(`[LOYALTY] No loyalty card found for order ${order.id} (customerId: ${order.customerId}, phone: ${order.customerPhone})`);
         }
 
-        // Mark points as awarded on the order to prevent future duplicates
-        await OrderModel.findOneAndUpdate({ id: orderId }, { pointsAwarded: true });
       } catch (e) {
         console.error("[LOYALTY] Failed to update loyalty card:", e);
       }
-    } else if ((order as any).pointsAwarded) {
+    } else if (totalPointsToAward > 0) {
       console.log(`[LOYALTY] Points already awarded for order ${order.id}, skipping`);
     }
 
@@ -302,53 +451,57 @@ async function deductInventoryForOrder(orderId: string, branchId: string, employ
       console.warn(`[INVENTORY] Order ${order.orderNumber} warnings:`, result.warnings);
     }
 
-    // Auto-create COGS journal entry for accounting (only on full success, with idempotency)
-    if (result.success && result.costOfGoods > 0) {
-      try {
-        const tenantId = order.tenantId || 'demo-tenant';
-        const { JournalEntryModel } = await import("@shared/schema");
-        const existingEntry = await JournalEntryModel.findOne({ tenantId, referenceType: 'order_cogs', referenceId: orderId });
-        
-        if (!existingEntry) {
+    // Auto-create accounting journal entries (idempotent — skip if already created)
+    try {
+      const tenantId = order.tenantId || 'demo-tenant';
+      const { JournalEntryModel } = await import("@shared/schema");
+
+      // ── 1. COGS entry: DR Cost-of-Goods-Sold (5100) / CR Inventory (1130) ──
+      if (result.success && result.costOfGoods > 0) {
+        const existingCogs = await JournalEntryModel.findOne({ tenantId, referenceType: 'order_cogs', referenceId: orderId });
+        if (!existingCogs) {
           const cogsAccount = await AccountModel.findOne({ tenantId, accountNumber: "5100" });
           const inventoryAccount = await AccountModel.findOne({ tenantId, accountNumber: "1130" });
-          
           if (cogsAccount && inventoryAccount) {
             await ErpAccountingService.createJournalEntry({
-              tenantId,
-              entryDate: new Date(),
-              description: `تكلفة البضاعة المباعة - طلب رقم ${order.orderNumber}`,
+              tenantId, entryDate: new Date(),
+              description: `تكلفة البضاعة المباعة - طلب ${order.orderNumber}`,
               lines: [
-                {
-                  accountId: cogsAccount.id,
-                  accountNumber: cogsAccount.accountNumber,
-                  accountName: cogsAccount.nameAr,
-                  debit: result.costOfGoods,
-                  credit: 0,
-                  description: `تكلفة البضاعة المباعة - طلب ${order.orderNumber}`,
-                  branchId,
-                },
-                {
-                  accountId: inventoryAccount.id,
-                  accountNumber: inventoryAccount.accountNumber,
-                  accountName: inventoryAccount.nameAr,
-                  debit: 0,
-                  credit: result.costOfGoods,
-                  description: `خصم مخزون - طلب ${order.orderNumber}`,
-                  branchId,
-                },
+                { accountId: cogsAccount.id, accountNumber: cogsAccount.accountNumber, accountName: cogsAccount.nameAr, debit: result.costOfGoods, credit: 0, description: `COGS - طلب ${order.orderNumber}`, branchId },
+                { accountId: inventoryAccount.id, accountNumber: inventoryAccount.accountNumber, accountName: inventoryAccount.nameAr, debit: 0, credit: result.costOfGoods, description: `خصم مخزون - طلب ${order.orderNumber}`, branchId },
               ],
-              referenceType: 'order_cogs',
-              referenceId: orderId,
-              createdBy: employeeId,
-              autoPost: true,
+              referenceType: 'order_cogs', referenceId: orderId, createdBy: employeeId, autoPost: true,
             });
-            console.log(`[ACCOUNTING] COGS journal entry created for order ${order.orderNumber}: ${result.costOfGoods} SAR`);
+            console.log(`[ACCOUNTING] COGS entry created for order ${order.orderNumber}: ${result.costOfGoods} SAR`);
           }
         }
-      } catch (accountingError) {
-        console.error(`[ACCOUNTING] Failed to create COGS journal entry for order ${order.orderNumber}:`, accountingError);
       }
+
+      // ── 2. Sales entry: DR Cash/Card (1101/1102) / CR Sales Revenue (4100) ──
+      const orderTotal = (order as any).totalAmount || 0;
+      if (orderTotal > 0) {
+        const existingSales = await JournalEntryModel.findOne({ tenantId, referenceType: 'order_sales', referenceId: orderId });
+        if (!existingSales) {
+          const salesAccount = await AccountModel.findOne({ tenantId, accountNumber: "4100" });
+          const payMethod = (order as any).paymentMethod || 'cash';
+          const debitAccNum = payMethod === 'card' || payMethod === 'network' || payMethod === 'mada' ? "1102" : "1101";
+          const debitAccount = await AccountModel.findOne({ tenantId, accountNumber: debitAccNum });
+          if (salesAccount && debitAccount) {
+            await ErpAccountingService.createJournalEntry({
+              tenantId, entryDate: new Date(),
+              description: `إيرادات مبيعات - طلب ${order.orderNumber}`,
+              lines: [
+                { accountId: debitAccount.id, accountNumber: debitAccount.accountNumber, accountName: debitAccount.nameAr, debit: orderTotal, credit: 0, description: `قبض - طلب ${order.orderNumber} (${payMethod})`, branchId },
+                { accountId: salesAccount.id, accountNumber: salesAccount.accountNumber, accountName: salesAccount.nameAr, debit: 0, credit: orderTotal, description: `إيراد مبيعات - طلب ${order.orderNumber}`, branchId },
+              ],
+              referenceType: 'order_sales', referenceId: orderId, createdBy: employeeId, autoPost: true,
+            });
+            console.log(`[ACCOUNTING] Sales entry created for order ${order.orderNumber}: ${orderTotal} SAR`);
+          }
+        }
+      }
+    } catch (accountingError) {
+      console.error(`[ACCOUNTING] Failed to create journal entries for order:`, accountingError);
     }
 
     return { 
@@ -386,7 +539,7 @@ function getOrderStatusMessage(status: string, orderNumber: string): string {
 // Maileroo Email Configuration - DISABLED IN FAVOR OF TURBOSMTP
 /*
 const mailerooApiKey = process.env.MAILEROO_API_KEY;
-const mailerooUser = process.env.MAILEROO_USER || 'cluny@qirox.online';
+const mailerooUser = process.env.MAILEROO_USER || 'cafe@cluny.cafe';
 */
 
 // Set transporter to null to satisfy the rest of the code that might reference it
@@ -466,7 +619,7 @@ function generateInvoiceHTML(invoiceNumber: string, data: any): string {
 
         <div class="footer">
           <p>شكراً لتعاملك معنا | تم إصدار هذه الفاتورة من نظام CLUNY CAFE</p>
-          <p>© 2025 CLUNY CAFE - جميع الحقوق محفوظة</p>
+          <p>© 2026 CLUNY CAFE - جميع الحقوق محفوظة</p>
         </div>
       </div>
     </body>
@@ -526,58 +679,219 @@ const upload = multer({
 // Simple POS device status tracker
 let posDeviceStatus = { connected: false, lastCheck: Date.now() };
 
-import { BusinessConfigModel, AppointmentModel } from "./models";
+import { PrintJobModel } from "./models";
+// BusinessConfigModel and AppointmentModel are now imported from @shared/schema (canonical source)
 
-// ── In-memory cache for frequently-read, rarely-changing data ──────────────
-interface CacheEntry<T> { data: T; expiresAt: number; }
-const _cache = new Map<string, CacheEntry<any>>();
-
-function cacheGet<T>(key: string): T | null {
-  const entry = _cache.get(key);
-  if (!entry || Date.now() > entry.expiresAt) { _cache.delete(key); return null; }
-  return entry.data as T;
-}
-function cacheSet<T>(key: string, data: T, ttlMs: number): void {
-  _cache.set(key, { data, expiresAt: Date.now() + ttlMs });
-}
-function cacheInvalidate(prefix: string): void {
-  for (const key of _cache.keys()) { if (key.startsWith(prefix)) _cache.delete(key); }
+function getAppBaseUrl(req?: import("express").Request): string {
+  if (process.env.SITE_URL) return process.env.SITE_URL;
+  if (req) return `${req.protocol}://${req.get('host')}`;
+  return `https://cluny.cafe`;
 }
 
-async function getCachedCoffeeItems(): Promise<any[]> {
-  const cached = cacheGet<any[]>('coffeeItems');
-  if (cached) return cached;
-  const items = await CoffeeItemModel.find({}).lean();
-  cacheSet('coffeeItems', items, 5 * 60 * 1000); // 5 min TTL
-  return items;
+function generateOrderNotificationSVG(
+  status: string,
+  orderNumber: string,
+  estimatedTimeStr?: string,
+  orderType?: string
+): string {
+  type StageConfig = { icon: string; titleAr: string; stageIdx: number; bg1: string; bg2: string };
+  const stageConfigs: Record<string, StageConfig> = {
+    'pending':           { icon: '&#x1F550;', titleAr: '&#x062A;&#x0645; &#x0627;&#x0633;&#x062A;&#x0644;&#x0627;&#x0645; &#x0637;&#x0644;&#x0628;&#x0643;',    stageIdx: 0, bg1: '#0d3322', bg2: '#1a5c38' },
+    'payment_confirmed': { icon: '&#x2705;',  titleAr: '&#x062A;&#x0645; &#x062A;&#x0623;&#x0643;&#x064A;&#x062F; &#x0637;&#x0644;&#x0628;&#x0643;',    stageIdx: 0, bg1: '#0d3322', bg2: '#1a5c38' },
+    'in_progress':       { icon: '&#x2615;',  titleAr: '&#x062C;&#x0627;&#x0631;&#x0650; &#x0627;&#x0644;&#x062A;&#x062D;&#x0636;&#x064A;&#x0631;',      stageIdx: 1, bg1: '#0d3322', bg2: '#1a5c38' },
+    'ready':             { icon: '&#x1F514;', titleAr: '&#x0637;&#x0644;&#x0628;&#x0643; &#x062C;&#x0627;&#x0647;&#x0632;!',       stageIdx: 2, bg1: '#0a2d1e', bg2: '#16503a' },
+    'completed':         { icon: '&#x1F389;', titleAr: '&#x062A;&#x0645; &#x0627;&#x0644;&#x062A;&#x0633;&#x0644;&#x064A;&#x0645; &#x0628;&#x0646;&#x062C;&#x0627;&#x062D;', stageIdx: 3, bg1: '#0a2d1e', bg2: '#164d35' },
+    'cancelled':         { icon: '&#x274C;',  titleAr: '&#x062A;&#x0645; &#x0625;&#x0644;&#x063A;&#x0627;&#x0621; &#x0627;&#x0644;&#x0637;&#x0644;&#x0628;', stageIdx: -1, bg1: '#1a0a0a', bg2: '#3d1515' },
+  };
+  const cfg = stageConfigs[status] || stageConfigs['pending'];
+  const estimatedTime = estimatedTimeStr ? parseInt(estimatedTimeStr) : 0;
+
+  const dotXPositions = [120, 373, 627, 880];
+  const stageLabels = [
+    '&#x0627;&#x0633;&#x062A;&#x0644;&#x0627;&#x0645;',
+    '&#x062A;&#x062D;&#x0636;&#x064A;&#x0631;',
+    '&#x062C;&#x0627;&#x0647;&#x0632;',
+    '&#x062A;&#x0633;&#x0644;&#x064A;&#x0645;',
+  ];
+  const progressFillWidths = [0, 253, 507, 760];
+  const progressFill = cfg.stageIdx >= 0 ? (progressFillWidths[cfg.stageIdx] || 0) : 0;
+
+  const dotElements = dotXPositions.map((x, i) => {
+    const isDone = i <= cfg.stageIdx;
+    const r = isDone ? 13 : 8;
+    const fill = isDone ? '#7FD4A8' : '#ffffff';
+    const fillOp = isDone ? '1' : '0.25';
+    const labelFill = isDone ? '#7FD4A8' : '#ffffff';
+    const labelOp = isDone ? '1' : '0.35';
+    return `<circle cx="${x}" cy="432" r="${r}" fill="${fill}" fill-opacity="${fillOp}"/>` +
+           `<text x="${x}" y="462" text-anchor="middle" font-family="Arial,sans-serif" font-size="16" fill="${labelFill}" fill-opacity="${labelOp}">${stageLabels[i]}</text>`;
+  }).join('');
+
+  const orderTypeEmojis: Record<string, string> = {
+    'delivery': '&#x1F697; &#x062A;&#x0648;&#x0635;&#x064A;&#x0644;',
+    'car-pickup': '&#x1F697; &#x0633;&#x064A;&#x0627;&#x0631;&#x0629;',
+    'dine-in': '&#x1F37D;&#xFE0F; &#x062F;&#x0627;&#x062E;&#x0644;',
+    'takeaway': '&#x2615; &#x0627;&#x0633;&#x062A;&#x0644;&#x0627;&#x0645;',
+    'scheduled': '&#x1F4C5; &#x0645;&#x062C;&#x062F;&#x0648;&#x0644;',
+  };
+  const orderTypeBadge = orderType ? (orderTypeEmojis[orderType] || '') : '';
+  const orderTypeBadgeEl = orderTypeBadge
+    ? `<text x="950" y="55" text-anchor="end" font-family="Arial,sans-serif" font-size="18" fill="#ffffff" fill-opacity="0.5">${orderTypeBadge}</text>`
+    : '';
+
+  const estimatedEl = (estimatedTime > 0 && status === 'in_progress')
+    ? `<rect x="340" y="358" width="320" height="42" rx="21" fill="#7FD4A8" fill-opacity="0.15"/>` +
+      `<text x="500" y="385" text-anchor="middle" font-family="Arial,sans-serif" font-size="26" fill="#7FD4A8">&#x23F1; &#x0645;&#x062A;&#x0628;&#x0642;&#x064A; ${estimatedTime} &#x062F;&#x0642;&#x064A;&#x0642;&#x0629;</text>`
+    : '';
+
+  const progressEl = progressFill > 0
+    ? `<rect x="120" y="426" width="${progressFill}" height="7" rx="3.5" fill="#7FD4A8"/>`
+    : '';
+
+  const cancelledBanner = status === 'cancelled'
+    ? `<rect x="300" y="345" width="400" height="40" rx="20" fill="#ff4444" fill-opacity="0.2"/>` +
+      `<text x="500" y="372" text-anchor="middle" font-family="Arial,sans-serif" font-size="22" fill="#ff8888">&#x1F4DE; &#x062A;&#x0648;&#x0627;&#x0635;&#x0644; &#x0645;&#x0639;&#x0646;&#x0627; &#x0644;&#x0644;&#x0627;&#x0633;&#x062A;&#x0641;&#x0633;&#x0627;&#x0631;</text>`
+    : '';
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="500" viewBox="0 0 1000 500">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="${cfg.bg1}"/>
+      <stop offset="100%" stop-color="${cfg.bg2}"/>
+    </linearGradient>
+    <linearGradient id="pg" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#5EC99A"/>
+      <stop offset="100%" stop-color="#A8E6C8"/>
+    </linearGradient>
+  </defs>
+  <rect width="1000" height="500" fill="url(#bg)"/>
+  <circle cx="880" cy="70" r="180" fill="#ffffff" fill-opacity="0.02"/>
+  <circle cx="100" cy="460" r="130" fill="#ffffff" fill-opacity="0.02"/>
+  <circle cx="500" cy="-40" r="240" fill="#7FD4A8" fill-opacity="0.03"/>
+  <text x="48" y="56" font-family="Arial,sans-serif" font-size="26" fill="#7FD4A8" font-weight="bold" letter-spacing="2">CLUNY CAFE</text>
+  ${orderTypeBadgeEl}
+  <line x1="48" y1="72" x2="952" y2="72" stroke="#ffffff" stroke-opacity="0.07" stroke-width="1"/>
+  <text x="500" y="220" text-anchor="middle" font-family="Segoe UI Emoji,Apple Color Emoji,Arial" font-size="100">${cfg.icon}</text>
+  <text x="500" y="298" text-anchor="middle" font-family="Arial,sans-serif" font-size="54" font-weight="bold" fill="#ffffff">${cfg.titleAr}</text>
+  <text x="500" y="340" text-anchor="middle" font-family="Arial,sans-serif" font-size="24" fill="#ffffff" fill-opacity="0.5">&#x0631;&#x0642;&#x0645; &#x0627;&#x0644;&#x0637;&#x0644;&#x0628; #${orderNumber}</text>
+  ${estimatedEl}
+  ${cancelledBanner}
+  <rect x="120" y="426" width="760" height="7" rx="3.5" fill="#ffffff" fill-opacity="0.12"/>
+  ${progressEl}
+  ${dotElements}
+</svg>`;
 }
 
-function enrichOrderWithItems(serializedOrder: any, coffeeItems: any[]): any {
-  let orderItems = serializedOrder.items;
-  if (typeof orderItems === 'string') { try { orderItems = JSON.parse(orderItems); } catch { orderItems = []; } }
-  if (!Array.isArray(orderItems)) orderItems = [];
+
+/**
+ * Calculate the free-drink points threshold dynamically.
+ * Threshold = avg(product prices in SAR) × pointsPerSar
+ * Falls back to the config value or 500 if no products found.
+ */
+async function calcFreeDrinkThreshold(tenantId: string, pointsPerSar = 20, fallback = 500): Promise<number> {
+  try {
+    const items = await CoffeeItemModel.find({
+      $or: [{ tenantId }, { tenantId: { $exists: false } }],
+      isActive: { $ne: false },
+      price: { $gt: 0 },
+    }).select('price').lean().exec();
+    if (!items || items.length === 0) return fallback;
+    const avg = items.reduce((sum: number, i: any) => sum + (Number(i.price) || 0), 0) / items.length;
+    if (avg <= 0) return fallback;
+    return Math.round(avg * pointsPerSar);
+  } catch {
+    return fallback;
+  }
+}
+
+// ─── In-Memory Visitor Tracker ───────────────────────────────────────────────
+interface VisitorEntry { lastSeen: number; page: string; }
+const visitorSessions = new Map<string, VisitorEntry>();
+let totalPageViews = 0;
+let visitorDayKey = new Date().toDateString();
+
+function trackVisitor(sessionId: string, page: string) {
+  const today = new Date().toDateString();
+  if (today !== visitorDayKey) {
+    visitorSessions.clear();
+    totalPageViews = 0;
+    visitorDayKey = today;
+  }
+  totalPageViews++;
+  visitorSessions.set(sessionId, { lastSeen: Date.now(), page });
+  // Prune sessions older than 30 min
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  visitorSessions.forEach((v, k) => { if (v.lastSeen < cutoff) visitorSessions.delete(k); });
+}
+
+export function getVisitorStats() {
   return {
-    ...serializedOrder,
-    items: orderItems.map((item: any) => {
-      const ci = coffeeItems.find((c: any) => c.id === item.coffeeItemId);
-      return { ...item, coffeeItem: ci ? { nameAr: ci.nameAr, nameEn: ci.nameEn, price: ci.price, imageUrl: ci.imageUrl, category: ci.category } : null };
-    }),
+    uniqueVisitorsToday: visitorSessions.size,
+    totalPageViewsToday: totalPageViews,
+    activeVisitors: [...visitorSessions.values()].filter(v => v.lastSeen > Date.now() - 5 * 60 * 1000).length,
   };
 }
 
+// ─── Payment Session Token Model ─────────────────────────────────────────────
+// One-time server-side token that survives cross-browser redirects.
+// Stores order data + customer identity so /payment-return can auto-login
+// the customer and create the order even if sessionStorage is empty.
+const PaymentSessionTokenSchema = new mongoose.Schema({
+  token:                { type: String, required: true, unique: true, index: true },
+  customerPhone:        { type: String, required: true },
+  customerId:           { type: String, default: null },
+  customerName:         { type: String, default: '' },
+  orderData:            { type: mongoose.Schema.Types.Mixed, required: true },
+  used:                 { type: Boolean, default: false },
+  confirmedOrderNumber: { type: String, default: null },
+  expiresAt:            { type: Date,   required: true },
+  createdAt:            { type: Date,   default: Date.now },
+});
+const PaymentSessionTokenModel = (mongoose.models['PaymentSessionToken']
+  ? mongoose.model('PaymentSessionToken')
+  : mongoose.model('PaymentSessionToken', PaymentSessionTokenSchema)) as any;
+
+// ─── Payment Logger Helper ───────────────────────────────────────────────────
+async function logPayment(data: {
+  tenantId?: string;
+  event: 'init' | 'verify' | 'callback' | 'webhook' | 'failed';
+  provider: string;
+  amount?: number;
+  currency?: string;
+  status: 'pending' | 'success' | 'failed' | 'unknown';
+  sessionId?: string;
+  externalId?: string;
+  orderId?: string;
+  orderNumber?: string;
+  customerPhone?: string;
+  customerEmail?: string;
+  errorMessage?: string;
+  rawData?: Record<string, any>;
+  ipAddress?: string;
+}) {
+  try {
+    await PaymentLogModel.create({ ...data, id: nanoid() });
+  } catch (e) {
+    console.error('[PaymentLog] Failed to save log:', e);
+  }
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   registerObjectStorageRoutes(app);
 
-  // Note: /.well-known/apple-developer-merchantid-domain-association routes are
-  // registered early in server/index.ts before registerRoutes() to ensure they
-  // are never intercepted by the SPA catch-all.
+  // ── Visitor tracking middleware ──────────────────────────────────────────
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) return next();
+    const sid = (req.session as any)?.id || req.ip || 'anon';
+    trackVisitor(sid, req.path);
+    next();
+  });
 
   // Send manual email to customer
   app.post("/api/admin/send-email", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { customerId, subject, message } = req.body;
-      const customer = await CustomerModel.findById(customerId);
+      const customer = await CustomerModel.findOne({ id: customerId });
       if (!customer || !customer.email) {
         return res.status(404).json({ error: "Customer not found or has no email" });
       }
@@ -613,6 +927,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ publicKey: getVapidPublicKey() });
   });
 
+  // Dynamic notification image endpoint - generates creative SVG for order status push notifications
+  app.get("/api/notification-image", (req, res) => {
+    const { status, orderNumber, t: estimatedTime, type: orderType } = req.query as Record<string, string>;
+    const svg = generateOrderNotificationSVG(
+      status || 'pending',
+      orderNumber || '---',
+      estimatedTime,
+      orderType
+    );
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'public, max-age=30');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.send(svg);
+  });
+
   app.post("/api/push/subscribe", async (req, res) => {
     try {
       const { subscription, userType, userId, branchId } = req.body;
@@ -636,8 +965,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── APNs Device Token Registration (native iOS app) ──────────────────────
+  app.post("/api/push/register-device", async (req, res) => {
+    try {
+      const { token, platform, phone, employeeId } = req.body;
+      if (!token) return res.status(400).json({ error: "token required" });
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const { saveAPNsToken } = await import("./push-service");
+      await saveAPNsToken(token, phone || "", employeeId || "", tenantId);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to register device token" });
+    }
+  });
+
+  app.post("/api/push/unregister-device", async (req, res) => {
+    try {
+      const { token } = req.body;
+      if (!token) return res.status(400).json({ error: "token required" });
+      const { removeAPNsToken } = await import("./push-service");
+      await removeAPNsToken(token);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to unregister device token" });
+    }
+  });
+
   // --- Manually send promo to all customers ---
-  app.post("/api/push/send-promo", async (req: any, res) => {
+  // --- Test push notification (admin/owner only) ---
+  app.post("/api/push/test", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const employee = req.session?.employee;
+      const userId = employee?.id || employee?.username || 'admin';
+      const { PushSubscriptionModel, sendPushBySubscriptions } = await import("./push-service");
+      const subs = await PushSubscriptionModel.find({ userId });
+      if (subs.length === 0) {
+        return res.json({ success: false, message: "لم يتم العثور على اشتراك لهذا المستخدم. تأكد من تفعيل الإشعارات أولاً." });
+      }
+      await sendPushBySubscriptions(subs, {
+        title: "✅ اختبار الإشعارات",
+        body: "الإشعارات تعمل بشكل صحيح في الخلفية!",
+        url: "/admin/dashboard",
+        tag: "push-test",
+        type: "general",
+      });
+      res.json({ success: true, message: `تم إرسال إشعار تجريبي إلى ${subs.length} جهاز` });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to send test notification" });
+    }
+  });
+
+  app.post("/api/push/send-promo", requireAuth, requireAdmin, async (req: any, res) => {
     try {
       const { title, body, url } = req.body;
       if (!title || !body) return res.status(400).json({ error: "title and body are required" });
@@ -652,7 +1030,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // --- Manually trigger admin daily summary ---
-  app.post("/api/push/admin-summary", async (req: any, res) => {
+  app.post("/api/push/admin-summary", requireAuth, requireAdmin, async (req: any, res) => {
     try {
       const { sendAdminDailySummaryNow } = await import("./smart-scheduler");
       await sendAdminDailySummaryNow();
@@ -665,97 +1043,206 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // --- ORDERS API ---
   app.get("/api/orders/live", async (req: any, res) => {
     try {
-      const branchId = req.query.branchId as string;
-      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
-      const liveStatuses = ['pending', 'in_progress', 'ready', 'payment_confirmed', 'confirmed'];
-      const query: any = { tenantId, status: { $in: liveStatuses } };
-      if (branchId) query.branchId = branchId;
+      const { OrderModel } = await import("@shared/schema");
+      const employee = req.session?.employee;
+      const tenantId = (employee as any)?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const isOwnerOrAdmin = employee?.role === 'owner' || employee?.role === 'admin';
+      const branchId = (req.query.branchId as string) || (isOwnerOrAdmin ? undefined : employee?.branchId);
+
+      // 2-second burst cache: prevents DB hammering when multiple staff pages poll simultaneously
+      const ck = cacheKey('live-orders', tenantId, branchId || 'all');
+      const cached = cache.get<any[]>(ck);
+      if (cached) return res.json(cached);
+
+      const query: any = {
+        tenantId,
+        status: { $in: ['pending', 'awaiting_payment', 'payment_confirmed', 'confirmed', 'in_progress', 'preparing', 'serving', 'ready', 'delivered', 'received', 'suspended'] }
+      };
+      if (branchId) query.branchId = { $in: [branchId, 'main'] };
+
       const liveOrders = await OrderModel.find(query)
         .sort({ createdAt: -1 })
-        .limit(150)
+        .limit(200)
         .lean();
-      res.json(liveOrders.map(serializeDoc));
+
+      const coffeeItemMap = await getCachedCoffeeItemMap(tenantId);
+      const enriched = liveOrders.map((order: any) => {
+        const s = serializeDoc(order);
+        let orderItems = s.items;
+        if (typeof orderItems === 'string') { try { orderItems = JSON.parse(orderItems); } catch { orderItems = []; } }
+        if (!Array.isArray(orderItems)) orderItems = [];
+        return {
+          ...s,
+          items: orderItems.map((item: any) => {
+            const ci = coffeeItemMap.get(item.coffeeItemId);
+            return { ...item, coffeeItem: ci ? { nameAr: ci.nameAr, nameEn: ci.nameEn, price: ci.price, imageUrl: ci.imageUrl } : null };
+          })
+        };
+      });
+
+      cache.set(ck, enriched, 2); // 2-second burst cache
+      res.json(enriched);
     } catch (error) {
       console.error("Error fetching live orders:", error);
       res.status(500).json({ error: "Failed to fetch live orders" });
     }
   });
 
+  // ── Curbside / Car Pickup Orders ─────────────────────────────────────────
+  app.get("/api/orders/curbside", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { OrderModel } = await import("@shared/schema");
+      const employee = req.session?.employee;
+      const tenantId = (employee as any)?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const isOwnerOrAdmin = employee?.role === 'owner' || employee?.role === 'admin';
+      const branchId = (req.query.branchId as string) || (isOwnerOrAdmin ? undefined : employee?.branchId);
+
+      const query: any = {
+        tenantId,
+        $or: [{ orderType: "car_pickup" }, { orderType: "car-pickup" }, { carPickup: true }],
+        status: { $in: ['pending', 'payment_confirmed', 'confirmed', 'in_progress', 'ready', 'delivered', 'received'] },
+      };
+      if (branchId) query.branchId = branchId;
+
+      const orders = await OrderModel.find(query).sort({ arrivalTime: 1, createdAt: -1 }).limit(50).lean();
+      res.json(orders);
+    } catch (err) {
+      console.error("[GET /api/orders/curbside] Error:", err);
+      res.status(500).json({ error: "Failed to fetch curbside orders" });
+    }
+  });
+
   app.post("/api/orders", async (req, res) => {
     try {
       const body = req.body;
-      
+
+      // ── INPUT VALIDATION ───────────────────────────────────────────────────
+      if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
+        return res.status(400).json({ error: "items مطلوب ويجب أن يكون مصفوفة تحتوي على عنصر واحد على الأقل" });
+      }
+      if (!body.paymentMethod || typeof body.paymentMethod !== 'string') {
+        return res.status(400).json({ error: "paymentMethod مطلوب" });
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
       // Map payment method aliases
       const paymentMethodMap: Record<string, string> = {
         'cash': 'cash',
         'card': 'pos',
         'apple_pay': 'apple_pay',
+        'paymob-apple-pay': 'paymob-apple-pay',
+        'neoleap-apple-pay': 'neoleap-apple-pay',
         'stc_pay': 'stc-pay',
+        'stc-pay': 'stc-pay',
         'qahwa-card': 'qahwa-card',
+        'qirox-card': 'qirox-card',
+        'loyalty-card': 'loyalty-card',
         'pos': 'pos',
         'pos-network': 'pos-network',
         'mada': 'mada',
-        'coupon': 'coupon',
-        'loyalty_points': 'loyalty_points',
+        'split': 'split',
+        'paymob-card': 'paymob-card',
+        'paymob': 'paymob',
+        'geidea': 'geidea',
+        'bank_transfer': 'bank_transfer',
+        'rajhi': 'rajhi',
+        'alinma': 'alinma',
+        'ur': 'ur',
+        'barq': 'barq',
       };
 
-      const tenantId = body.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const tenantId = body.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId();
 
-      const mappedPaymentMethod = paymentMethodMap[body.paymentMethod] || body.paymentMethod || 'cash';
+      const mappedPaymentMethod = paymentMethodMap[body.paymentMethod] || body.paymentMethod || 'other';
 
       // Auto-confirm orders from POS channel with immediate payment methods
-      const autoConfirmMethods = ['cash', 'pos', 'pos-network', 'mada', 'apple_pay', 'stc-pay', 'qahwa-card'];
+      const autoConfirmMethods = ['cash', 'pos', 'pos-network', 'mada', 'stc-pay', 'qahwa-card', 'qirox-card', 'split'];
       const isPosChannel = body.channel === 'pos';
       const shouldAutoConfirm = isPosChannel && autoConfirmMethods.includes(mappedPaymentMethod);
 
-      // ── QAHWA CARD VALIDATION ─────────────────────────────────────────────
-      // Must have sufficient loyalty points before we create the order
-      if (mappedPaymentMethod === 'qahwa-card') {
+      // ── QAHWA CARD / POINTS DISCOUNT VALIDATION (ATOMIC) ─────────────────
+      // Uses findOneAndUpdate with $gte to atomically deduct points — prevents
+      // double-spend race conditions when two requests arrive simultaneously.
+      const pointsRedeemedInBody = Number(body.pointsRedeemed) || 0;
+      if (pointsRedeemedInBody > 0 || mappedPaymentMethod === 'qahwa-card') {
         const cardPhone = body.customerPhone || body.customerInfo?.customerPhone;
-        if (!cardPhone) {
-          return res.status(400).json({ error: "رقم الهاتف مطلوب للدفع ببطاقة الولاء" });
+        if (cardPhone) {
+          const cPhone = cardPhone.replace(/\D/g, '').replace(/^966/, '0').replace(/^9665/, '05');
+          const phoneVariants = [cPhone, cardPhone, `+966${cPhone.slice(1)}`, `966${cPhone.slice(1)}`];
+          const { LoyaltyCardModel: LCM } = await import("@shared/schema");
+
+          const bizCfg = await BusinessConfigModel.findOne({ tenantId }).lean().catch(() => null);
+          const pointsPerSar = Number((bizCfg as any)?.loyalty?.pointsPerSar) || 50;
+          const minPtsForRedemption = 100;
+
+          if (pointsRedeemedInBody > 0) {
+            // Atomic check-and-deduct: only succeeds if points >= requested amount
+            // This prevents race conditions — no separate read needed
+            const updatedLoyCard = await LCM.findOneAndUpdate(
+              {
+                phoneNumber: { $in: phoneVariants },
+                points: { $gte: Math.max(pointsRedeemedInBody, minPtsForRedemption) }
+              },
+              { $inc: { points: -pointsRedeemedInBody } },
+              { new: false }
+            );
+
+            if (!updatedLoyCard) {
+              // Either card not found or insufficient points — read to give correct error
+              const loyCard = await LCM.findOne({ phoneNumber: { $in: phoneVariants } });
+              if (!loyCard) {
+                return res.status(400).json({ error: "بطاقة الولاء غير موجودة" });
+              }
+              const availPts = Number(loyCard.points) || 0;
+              return res.status(400).json({
+                error: `رصيد النقاط غير كافٍ للصرف`,
+                details: `لديك ${availPts} نقطة، والحد الأدنى للصرف ${minPtsForRedemption} نقطة`,
+                currentPoints: availPts,
+                requiredPoints: minPtsForRedemption,
+                code: 'INSUFFICIENT_POINTS',
+              });
+            }
+
+            // Points deducted atomically — store in body for order record
+            const pointsToUse = Math.min(pointsRedeemedInBody, Number(updatedLoyCard.points));
+            const discountSar = parseFloat((pointsRedeemedInBody / pointsPerSar).toFixed(2));
+            body.pointsRedeemed = pointsRedeemedInBody;
+            body.pointsValue = discountSar;
+            // Flag so points-awarding flow skips re-deduction on this order
+            body._pointsPreDeducted = true;
+          } else {
+            // qahwa-card payment without explicit pointsRedeemed — read-only lookup
+            const loyCard = await LCM.findOne({ phoneNumber: { $in: phoneVariants } });
+            if (loyCard) {
+              const availPts = Number(loyCard.points) || 0;
+              const discountSar = parseFloat((availPts / pointsPerSar).toFixed(2));
+              body.pointsRedeemed = availPts;
+              body.pointsValue = discountSar;
+            }
+          }
         }
-        const cPhone = cardPhone.replace(/\D/g, '').replace(/^966/, '0').replace(/^9665/, '05');
-        const phoneVariants = [cPhone, cardPhone, `+966${cPhone.slice(1)}`, `966${cPhone.slice(1)}`];
-        const { BusinessConfigModel: BizCfg, LoyaltyCardModel: LCM } = await import("@shared/schema");
-        const bizCfg = await BizCfg.findOne({ tenantId }).lean() as any;
-        const ptsForFree = Number(bizCfg?.loyaltyConfig?.pointsForFreeDrink) || 500;
-        const loyCard = await LCM.findOne({ phoneNumber: { $in: phoneVariants } });
-        if (!loyCard) {
-          return res.status(400).json({ error: "لا توجد بطاقة ولاء مرتبطة بهذا الرقم" });
-        }
-        const availPts = Number(loyCard.points) || 0;
-        const hasFreeCup = (Number(loyCard.freeCupsEarned) || 0) > (Number(loyCard.freeCupsRedeemed) || 0);
-        if (availPts < ptsForFree && !hasFreeCup) {
-          return res.status(400).json({
-            error: `رصيد البطاقة غير كافٍ`,
-            details: `لديك ${availPts} نقطة، وتحتاج ${ptsForFree} نقطة للحصول على مشروب مجاني`,
-            currentPoints: availPts,
-            requiredPoints: ptsForFree,
-          });
-        }
-        // Force total to 0 for free drink payment
-        body.totalAmount = 0;
-        body.freeDrinkRedeemed = true;
-        if (!body.pointsRedeemed || Number(body.pointsRedeemed) === 0) {
-          body.pointsRedeemed = availPts >= ptsForFree ? ptsForFree : 0;
+        if (mappedPaymentMethod === 'qahwa-card') {
+          body.totalAmount = Math.max(0, (Number(body.total) || Number(body.totalAmount) || 0) - (Number(body.pointsValue) || 0));
         }
       }
       // ─────────────────────────────────────────────────────────────────────
 
-      // --- Auto-calculate estimated prep time based on businessConfig ---
-      let autoEstimatedPrepTime: number | undefined = undefined;
+      // Auto-calculate preparation time based on business config settings
+      let autoPrepTimeMinutes = 10;
       try {
-        const cfg = await BusinessConfigModel.findOne({ tenantId }).lean() as any;
-        const base = cfg?.prepTimeConfig?.basePrepMinutes ?? 10;
-        const extraPerItem = cfg?.prepTimeConfig?.extraMinutesPerItem ?? 3;
-        const threshold = cfg?.prepTimeConfig?.extraItemThreshold ?? 2;
-        const items = body.items || [];
-        const totalItems = items.reduce((sum: number, item: any) => sum + (item.quantity || 1), 0);
-        const extra = Math.max(0, totalItems - threshold) * extraPerItem;
-        autoEstimatedPrepTime = base + extra;
-      } catch (_) {}
-      // ────────────────────────────────────────────────────────────────
+        const { BusinessConfigModel: BizCfgPrep } = await import("@shared/schema");
+        const bizCfgPrep = await BizCfgPrep.findOne({ tenantId }).lean() as any;
+        const baseMins = Number(bizCfgPrep?.prepBaseMinutes) || 10;
+        const extraPerItem = Number(bizCfgPrep?.prepExtraMinutesPerItem) || 3;
+        const freeItemCount = Number(bizCfgPrep?.prepFreeItemCount) || 2;
+        const orderItems: any[] = body.items || [];
+        const totalItems = orderItems.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 1), 0);
+        const extraItems = Math.max(0, totalItems - freeItemCount);
+        autoPrepTimeMinutes = baseMins + (extraItems * extraPerItem);
+      } catch (err) {
+        console.error('[PrepTime] Failed to calculate auto prep time:', err);
+        autoPrepTimeMinutes = 10;
+      }
 
       const orderData = {
         ...body,
@@ -763,37 +1250,151 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalAmount: (body.totalAmount !== undefined && body.totalAmount !== null) ? Number(body.totalAmount) : (body.total || 0),
         paymentMethod: mappedPaymentMethod,
         status: shouldAutoConfirm ? 'payment_confirmed' : (body.status || 'pending'),
+        estimatedPrepTimeInMinutes: autoPrepTimeMinutes,
+        prepTimeSetAt: new Date(),
         customerInfo: body.customerInfo || {
           customerName: body.customerName,
           customerPhone: body.customerPhone,
           email: body.customerEmail,
         },
-        estimatedPrepTimeInMinutes: body.estimatedPrepTimeInMinutes ?? autoEstimatedPrepTime,
       };
       
       // Remove redundant 'total' field if present
       delete orderData.total;
 
-      const order = await storage.createOrder(orderData);
+      // Ensure subtotal and tax are always stored (VAT-inclusive pricing)
+      const rawTotal = Number(orderData.totalAmount) || 0;
+      if (rawTotal > 0 && (orderData.subtotal == null || orderData.tax == null)) {
+        const computedSubtotal = rawTotal / (1 + VAT_RATE);
+        const computedTax = rawTotal - computedSubtotal;
+        if (orderData.subtotal == null) orderData.subtotal = computedSubtotal;
+        if (orderData.tax == null) orderData.tax = computedTax;
+      }
+
+      // ── Gift Card atomic deduction ────────────────────────────────────────────
+      // If the order includes a gift card payment, validate and deduct atomically
+      // BEFORE creating the order so we never create an order against a bad card.
+      const giftCardCode = (body.giftCardCode as string | undefined)?.toUpperCase();
+      const giftCardAmount = giftCardCode ? Math.abs(Number(body.giftCardAmount || 0)) : 0;
+
+      if (giftCardCode && giftCardAmount > 0) {
+        const { GiftCardModel } = await import("@shared/schema");
+        const card = await GiftCardModel.findOne({ code: giftCardCode });
+        if (!card) return res.status(400).json({ error: "بطاقة الهدية غير موجودة", code: "GIFT_CARD_NOT_FOUND" });
+        if (card.status !== 'active') return res.status(400).json({ error: "بطاقة الهدية غير نشطة أو مستخدمة مسبقاً", code: "GIFT_CARD_INACTIVE" });
+        if (Number(card.balance) <= 0) return res.status(400).json({ error: "رصيد بطاقة الهدية صفر", code: "GIFT_CARD_EMPTY" });
+
+        const deducted = Math.min(giftCardAmount, Number(card.balance));
+        // Store resolved gift card info in the order document
+        orderData.giftCardCode = giftCardCode;
+        orderData.giftCardAmountUsed = deducted;
+        orderData.giftCardRemainingBalance = Number(card.balance) - deducted;
+
+        // Deduct balance atomically — use findOneAndUpdate to avoid race conditions
+        const updatedCard = await GiftCardModel.findOneAndUpdate(
+          { code: giftCardCode, status: 'active', balance: { $gte: deducted } },
+          {
+            $inc: { balance: -deducted },
+            $set: {
+              status: Number(card.balance) - deducted <= 0 ? 'used' : 'active',
+              updatedAt: new Date()
+            }
+          },
+          { new: true }
+        );
+        if (!updatedCard) {
+          return res.status(409).json({ error: "تعذّر خصم بطاقة الهدية — قد تكون مستخدمة بالفعل", code: "GIFT_CARD_RACE" });
+        }
+        orderData.giftCardRemainingBalance = Number(updatedCard.balance);
+      }
+      // ─────────────────────────────────────────────────────────────────────────
+
+      let order: any;
+      try {
+        order = await storage.createOrder(orderData);
+      } catch (createErr) {
+        // Rollback gift card deduction if order creation fails
+        if (giftCardCode && giftCardAmount > 0 && orderData.giftCardAmountUsed) {
+          const { GiftCardModel: GCM } = await import("@shared/schema");
+          const deducted = orderData.giftCardAmountUsed;
+          await GCM.findOneAndUpdate(
+            { code: giftCardCode },
+            { $inc: { balance: deducted }, $set: { status: 'active', updatedAt: new Date() } }
+          ).catch(rb => console.error('[GIFT-CARD-ROLLBACK] Failed to restore balance:', rb));
+          console.warn(`[GIFT-CARD-ROLLBACK] Restored ${deducted} to card ${giftCardCode} after order creation failure`);
+        }
+        throw createErr;
+      }
       const serializedOrder = serializeDoc(order);
+      cache.invalidate('live-orders:');
+      // Invalidate analytics so dashboards reflect new order within 1 cycle
+      cache.invalidate('analytics:advanced:');
+      cache.invalidate('reports:unified:');
       
-      // Notify via WebSocket - use broadcastNewOrder so POS/kitchen receive it as "new_order"
-      wsManager.broadcastNewOrder(serializedOrder);
+      // Only notify employees when order is confirmed (not when awaiting payment)
+      if (orderData.status !== 'awaiting_payment') {
+        wsManager.broadcastNewOrder(serializedOrder);
+      }
+
+      // === Update active cashier shift totals (BEFORE response — financial data integrity) ===
+      // Runs synchronously to prevent data loss if server crashes between response and setImmediate.
+      try {
+        const shiftEmployeeId = orderData.employeeId || (req as any).employee?._id?.toString() || (req as any).employee?.id;
+        if (shiftEmployeeId && orderData.status !== 'awaiting_payment') {
+          const activeShift = await CashierShiftModel.findOne({ employeeId: shiftEmployeeId, status: 'open' });
+          if (activeShift) {
+            const amount = Number(orderData.totalAmount) || 0;
+            const method = ((orderData as any).paymentMethod || '').toLowerCase();
+            activeShift.totalSales += amount;
+            activeShift.totalOrders += 1;
+            activeShift.netRevenue += amount;
+            const ordId = serializedOrder.id || serializedOrder._id?.toString();
+            if (ordId && !activeShift.orderIds.includes(ordId)) activeShift.orderIds.push(ordId);
+            if (method === 'cash') {
+              activeShift.totalCashSales += amount;
+              activeShift.paymentBreakdown.cash = (activeShift.paymentBreakdown.cash || 0) + amount;
+            } else if (method === 'qahwa-card' || method === 'loyalty-card' || method === 'qirox-card') {
+              activeShift.totalDigitalSales += amount;
+              activeShift.paymentBreakdown.loyalty = (activeShift.paymentBreakdown.loyalty || 0) + amount;
+            } else if (method) {
+              // non-cash, non-loyalty, non-empty: card/digital/Apple Pay/etc.
+              activeShift.totalCardSales += amount;
+              activeShift.paymentBreakdown.card = (activeShift.paymentBreakdown.card || 0) + amount;
+            }
+            // if method is '' (unknown/pending), still counted in totalSales but not in a specific bucket
+            const type = ((orderData as any).orderType || 'takeaway').toLowerCase();
+            if (type === 'dine_in' || type === 'dine-in') activeShift.orderTypeBreakdown.dine_in = (activeShift.orderTypeBreakdown.dine_in || 0) + 1;
+            else if (type === 'car_pickup' || type === 'car-pickup') activeShift.orderTypeBreakdown.car_pickup = (activeShift.orderTypeBreakdown.car_pickup || 0) + 1;
+            else if (type === 'delivery') activeShift.orderTypeBreakdown.delivery = (activeShift.orderTypeBreakdown.delivery || 0) + 1;
+            else activeShift.orderTypeBreakdown.takeaway = (activeShift.orderTypeBreakdown.takeaway || 0) + 1;
+            await activeShift.save();
+          }
+        }
+      } catch (shiftErr) {
+        // Log but don't fail the order — shift can be recalculated from orders if needed
+        console.error('[SHIFT] ⚠️ Failed to update cashier shift totals:', shiftErr);
+      }
 
       res.status(201).json(serializedOrder);
 
-      // === Track discount code usage ===
-      if (body.discountCode) {
-        setImmediate(async () => {
-          try {
-            const { DiscountCodeModel } = await import("@shared/schema");
-            await DiscountCodeModel.findOneAndUpdate(
-              { code: body.discountCode.toUpperCase() },
-              { $inc: { usageCount: 1 } }
-            );
-          } catch (e) { /* non-critical */ }
-        });
-      }
+      // Increment salesCount for each ordered item (async, non-blocking — statistics only)
+      setImmediate(async () => {
+        try {
+          const orderedItems: any[] = orderData.items || [];
+          for (const item of orderedItems) {
+            const itemId = item.coffeeItemId || item.id;
+            if (itemId) {
+              await CoffeeItemModel.findOneAndUpdate(
+                { id: itemId },
+                { $inc: { salesCount: Number(item.quantity) || 1 } }
+              );
+            }
+          }
+          cache.invalidate('coffee-items:');
+        } catch (err) {
+          console.error('[salesCount] Failed to increment:', err);
+        }
+      });
 
       // === 3-Layer Notifications: Customer + Admins ===
       setImmediate(async () => {
@@ -821,140 +1422,164 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
 
-      // === Loyalty: ensure loyalty card exists and add pending points ===
+      // === Auto-Create Delivery Order for home delivery orders ===
+      setImmediate(async () => {
+        try {
+          const isDeliveryOrder = (
+            serializedOrder.orderType === 'delivery' ||
+            serializedOrder.deliveryType === 'delivery' ||
+            serializedOrder.deliveryMode === 'delivery'
+          );
+          if (!isDeliveryOrder) return;
+
+          // Check if delivery order already exists for this order
+          const existing = await DeliveryOrderModel.findOne({ orderId: serializedOrder.id || serializedOrder._id });
+          if (existing) return;
+
+          const branchLat = serializedOrder.branchLat || 24.7136;
+          const branchLng = serializedOrder.branchLng || 46.6753;
+          const customerLat = serializedOrder.customerLat || serializedOrder.deliveryLat || 0;
+          const customerLng = serializedOrder.customerLng || serializedOrder.deliveryLng || 0;
+
+          await deliveryService.createDeliveryOrder({
+            tenantId: serializedOrder.tenantId || 'demo-tenant',
+            orderId: serializedOrder.id || serializedOrder._id?.toString(),
+            orderNumber: serializedOrder.orderNumber,
+            branchId: serializedOrder.branchId,
+            branchLat,
+            branchLng,
+            customerName: serializedOrder.customerInfo?.customerName || serializedOrder.customerName || 'عميل',
+            customerPhone: serializedOrder.customerInfo?.customerPhone || serializedOrder.customerPhone || '',
+            customerAddress: serializedOrder.deliveryAddress || serializedOrder.customerAddress || '',
+            customerLat,
+            customerLng,
+            totalAmount: serializedOrder.totalAmount || 0,
+            deliveryFee: serializedOrder.deliveryFee || 0,
+            deliveryType: 'internal',
+            status: 'pending',
+            preparationMinutes: serializedOrder.estimatedPrepTimeInMinutes || 10,
+          });
+          console.log(`[DELIVERY] Auto-created delivery order for order ${serializedOrder.orderNumber || serializedOrder.id}`);
+        } catch (deliveryErr) {
+          console.error("[DELIVERY] Failed to auto-create delivery order:", deliveryErr);
+        }
+      });
+
+      // === Loyalty: Deduct points at order creation for free/cash orders ===
+      // Gateway payments (Paymob/Geidea/Neoleap) → deduction handled in their webhook callbacks
+      // All other methods (cash, qahwa-card, mada, stc-pay, transfer, etc.) → deduct here immediately
+      try {
+        const orderUsedPointsNow = Number(body.pointsRedeemed) > 0;
+        const GATEWAY_METHODS = ['paymob', 'paymob-card', 'paymob-wallet', 'geidea', 'apple_pay', 'neoleap', 'neoleap-apple-pay'];
+        const isNonGatewayPayment = !GATEWAY_METHODS.includes(String(body.paymentMethod)) || Number(serializedOrder.totalAmount) <= 0;
+        if (orderUsedPointsNow && isNonGatewayPayment) {
+          const redeemPts = Number(body.pointsRedeemed);
+          const redeemValue = Number(body.pointsValue) || parseFloat((redeemPts / 50).toFixed(2));
+          const cardPhone = body.customerPhone || body.customerInfo?.customerPhone || body.customerInfo?.phoneNumber;
+          if (cardPhone) {
+            const rawDigits = cardPhone.replace(/\D/g, '');
+            const last9 = rawDigits.slice(-9);
+            const cPh = rawDigits.replace(/^966/, '0').replace(/^9665/, '05');
+            const phVariants = [...new Set([cPh, cardPhone, rawDigits, last9, `0${last9}`, `+966${last9}`, `966${last9}`])];
+            const loyCard = await mongoose.model('LoyaltyCard').findOne({ phoneNumber: { $in: phVariants } });
+            if (loyCard) {
+              const curPts = Number(loyCard.points) || 0;
+              const ptsToDeduct = Math.min(redeemPts, curPts);
+              if (ptsToDeduct > 0) {
+                await mongoose.model('LoyaltyCard').findByIdAndUpdate(loyCard._id, {
+                  $inc: { points: -ptsToDeduct },
+                  $set: { lastUsedAt: new Date() },
+                });
+                const LoyaltyTransactionModel = mongoose.model('LoyaltyTransaction');
+                await LoyaltyTransactionModel.create({
+                  cardId: loyCard.id || loyCard._id.toString(),
+                  customerId: body.customerId || loyCard.customerId || undefined,
+                  type: 'points_redeemed',
+                  pointsChange: -ptsToDeduct,
+                  description: `استخدام ${ptsToDeduct} نقطة (${redeemValue.toFixed(2)} ريال خصم) - طلب #${serializedOrder.orderNumber}`,
+                  orderId: serializedOrder.id,
+                  createdAt: new Date(),
+                });
+                console.log(`[LOYALTY] ✅ Deducted ${ptsToDeduct} pts (${redeemValue} SAR) from ${last9} for order #${serializedOrder.orderNumber} via ${body.paymentMethod}`);
+              } else {
+                console.warn(`[LOYALTY] ⚠️ No points to deduct: has ${curPts}, requested ${redeemPts} for ${last9}`);
+              }
+            } else {
+              console.warn(`[LOYALTY] ⚠️ Loyalty card NOT found for phone variants: ${phVariants.join(', ')} — points NOT deducted`);
+            }
+          } else {
+            console.warn(`[LOYALTY] ⚠️ No customerPhone in order body — points NOT deducted`);
+          }
+        }
+      } catch (deductErr) {
+        console.error("[LOYALTY] Failed to deduct points at order creation:", deductErr);
+      }
+
+      // === Loyalty: ensure loyalty card exists and award points ===
+      // POS auto-confirmed orders: award actual points immediately (no pending phase needed)
+      // Online orders: add pending points to be confirmed when order is marked ready/completed
+      // Skip if customer used points for redemption on this order
       try {
         const customerPhone = body.customerPhone || body.customerInfo?.customerPhone;
-        if (customerPhone) {
+        const orderUsedPoints = Number(body.pointsRedeemed) > 0;
+        if (customerPhone && !orderUsedPoints) {
           const cleanPhone = customerPhone.replace(/\D/g, '').replace(/^966/, '0').replace(/^9665/, '05');
           const phoneVariants = [cleanPhone, customerPhone, `+966${cleanPhone.slice(1)}`, `966${cleanPhone.slice(1)}`];
 
-          // Detect if this order uses loyalty points to pay (support both field naming conventions)
-          // Checkout sends: pointsRedeemed (number) + pointsValue (SAR)
-          // POS sends: pointsUsed (boolean) + loyaltyDiscount (SAR)
-          const pointsRedeemedNum = Number(body.pointsRedeemed) || 0;
-          const loyaltyDiscountSar = Number(body.loyaltyDiscount) || Number(body.pointsValue) || 0;
-          const usedPoints = !!body.pointsUsed || pointsRedeemedNum > 0 || body.paymentMethod === 'loyalty_points';
+          // Read pointsPerDrink from business config
+          const { BusinessConfigModel: BizCfg } = await import("@shared/schema");
+          const bizCfg = await BizCfg.findOne({ tenantId }).lean();
+          const pointsPerDrinkCfg = Number(bizCfg?.loyaltyConfig?.pointsPerDrink) || 10;
 
-          // 10 points per item priced above 1 SAR — but NO points if this order uses loyalty points to pay
+          // Only earn points for items with price > 1 SAR
           const itemsArr = Array.isArray(body.items) ? body.items : [];
-          const pendingPts = usedPoints ? 0 : itemsArr.reduce((sum: number, item: any) => {
-            const price = Number(item.price || item.unitPrice || 0);
-            if (price <= 1) return sum;
-            return sum + ((Number(item.quantity) || 1) * 10);
+          const eligibleDrinks = itemsArr.reduce((sum: number, item: any) => {
+            const itemPrice = Number(item.price) || 0;
+            return itemPrice > 1 ? sum + (Number(item.quantity) || 1) : sum;
           }, 0);
+          const earnedPts = eligibleDrinks * pointsPerDrinkCfg;
 
           let card = await mongoose.model('LoyaltyCard').findOne({ phoneNumber: { $in: phoneVariants } });
+          const customerName = body.customerName || body.customerInfo?.customerName || 'عميل';
+          if (!card && body.customerId) {
+            card = await mongoose.model('LoyaltyCard').findOne({ customerId: body.customerId });
+          }
           if (!card) {
-            const customerName = body.customerName || body.customerInfo?.customerName || 'عميل';
             card = await storage.createLoyaltyCard({
               customerName,
               phoneNumber: cleanPhone,
+              customerId: body.customerId || undefined,
             } as any);
-            console.log(`[LOYALTY] Created new card for ${cleanPhone}, pending: ${pendingPts}`);
-          } else if (pendingPts > 0) {
-            await mongoose.model('LoyaltyCard').findByIdAndUpdate(card._id, {
-              $inc: { pendingPoints: pendingPts },
-              $set: { lastUsedAt: new Date() },
-            });
-            console.log(`[LOYALTY] Added ${pendingPts} pending points to card ${card.id} (${cleanPhone})`);
+            console.log(`[LOYALTY] Created new card for ${cleanPhone}`);
           }
-
-          // If order used loyalty points as payment, deduct them now
-          if (usedPoints && loyaltyDiscountSar > 0 && card) {
-            // Use the exact points count if provided, otherwise calculate from SAR value
-            const ptsToDeduct = pointsRedeemedNum > 0 ? pointsRedeemedNum : Math.ceil(loyaltyDiscountSar / 0.02);
-            const currentPoints = Number(card.points) || 0;
-            const actualDeduct = Math.min(ptsToDeduct, currentPoints);
-            if (actualDeduct > 0) {
+          if (card && body.customerId && !card.customerId) {
+            await mongoose.model('LoyaltyCard').findByIdAndUpdate(card._id, { $set: { customerId: body.customerId } });
+          }
+          if (card && earnedPts > 0) {
+            if (shouldAutoConfirm) {
+              // POS order: award actual points immediately and mark order as awarded
               await mongoose.model('LoyaltyCard').findByIdAndUpdate(card._id, {
-                $inc: { points: -actualDeduct, discountCount: 1 },
+                $inc: { points: earnedPts },
+                $set: { lastUsedAt: new Date() },
               });
-              await storage.createLoyaltyTransaction({
-                cardId: card._id.toString(),
-                type: 'redeem',
-                pointsChange: -actualDeduct,
-                discountAmount: loyaltyDiscountSar,
-                orderAmount: Number(body.totalAmount || body.total) || 0,
-                description: `خصم بطاقة كلوني: ${actualDeduct} نقطة = ${Number(loyaltyDiscountSar).toFixed(2)} ريال`,
+              // Also update Customer document if linked
+              if (body.customerId) {
+                await CustomerModel.findOneAndUpdate({ id: body.customerId }, { $inc: { points: earnedPts } });
+              }
+              await OrderModel.findOneAndUpdate({ id: order.id }, { pointsAwarded: true });
+              console.log(`[LOYALTY] POS: Awarded ${earnedPts} actual points to card ${card.id} (${cleanPhone})`);
+            } else {
+              // Online order: add pending points — converted when order reaches ready/completed
+              await mongoose.model('LoyaltyCard').findByIdAndUpdate(card._id, {
+                $inc: { pendingPoints: earnedPts },
+                $set: { lastUsedAt: new Date() },
               });
-              console.log(`[LOYALTY] Deducted ${actualDeduct} pts (${loyaltyDiscountSar} SAR) for order — method: ${body.paymentMethod}`);
+              console.log(`[LOYALTY] Online: Added ${earnedPts} pending points to card ${card.id} (${cleanPhone})`);
             }
-          } else if (usedPoints) {
-            console.warn(`[LOYALTY] Points used but no discount amount found — pointsRedeemed: ${pointsRedeemedNum}, pointsValue: ${body.pointsValue}, loyaltyDiscount: ${body.loyaltyDiscount}, card: ${card?.phoneNumber || 'NOT FOUND'}`);
           }
         }
       } catch (loyaltyErr) {
         console.error("[LOYALTY] Failed to process loyalty on order create:", loyaltyErr);
-      }
-
-      // === Award actual loyalty points for immediately-confirmed orders ===
-      // POS orders (shouldAutoConfirm=true) and loyalty_points payment orders are created
-      // directly with status=payment_confirmed, so they never trigger the PATCH status handler.
-      // We award points here to fix that gap.
-      const isAutoConfirmedOrder = shouldAutoConfirm || body.status === 'payment_confirmed';
-      const orderUsedLoyaltyPoints = !!body.pointsUsed || Number(body.pointsRedeemed) > 0 || body.paymentMethod === 'loyalty_points';
-      if (isAutoConfirmedOrder && !orderUsedLoyaltyPoints && !(order as any).pointsAwarded) {
-        setImmediate(async () => {
-          try {
-            const itemsArr = Array.isArray(body.items) ? body.items : [];
-            const pointsToAward = itemsArr.reduce((sum: number, item: any) => {
-              const price = Number(item.price || item.unitPrice || 0);
-              if (price <= 1) return sum;
-              return sum + ((Number(item.quantity) || 1) * 10);
-            }, 0);
-
-            if (pointsToAward <= 0) {
-              console.log(`[LOYALTY] No points to award for auto-confirmed order ${order.orderNumber} (no items above 1 SAR)`);
-              return;
-            }
-
-            // Find loyalty card: customerId first, then phone
-            let loyaltyCard: any = null;
-            const orderId = (order as any).id || order._id?.toString();
-            if (body.customerId || order.customerId) {
-              loyaltyCard = await mongoose.model('LoyaltyCard').findOne({ customerId: body.customerId || order.customerId });
-            }
-            if (!loyaltyCard) {
-              const phoneForPoints = body.customerPhone || body.customerInfo?.customerPhone;
-              if (phoneForPoints) {
-                const cleanPhone = phoneForPoints.replace(/\D/g, '').replace(/^966/, '0').replace(/^9665/, '05');
-                const nineDigit = cleanPhone.startsWith('0') ? cleanPhone.slice(1) : cleanPhone;
-                loyaltyCard = await mongoose.model('LoyaltyCard').findOne({
-                  phoneNumber: { $in: [cleanPhone, nineDigit, phoneForPoints, `+966${nineDigit}`, `966${nineDigit}`] }
-                });
-              }
-            }
-
-            if (!loyaltyCard) {
-              console.warn(`[LOYALTY] Auto-confirm: No loyalty card for order ${order.orderNumber} — points not awarded`);
-              return;
-            }
-
-            const currentPoints = Number(loyaltyCard.points) || 0;
-            const currentPending = Number(loyaltyCard.pendingPoints) || 0;
-            await mongoose.model('LoyaltyCard').findByIdAndUpdate(loyaltyCard._id, {
-              points: currentPoints + pointsToAward,
-              pendingPoints: Math.max(0, currentPending - pointsToAward),
-              lastUsedAt: new Date(),
-            });
-
-            await storage.createLoyaltyTransaction({
-              cardId: loyaltyCard._id.toString(),
-              type: 'earn',
-              pointsChange: pointsToAward,
-              discountAmount: 0,
-              orderAmount: Number(body.totalAmount || body.total || 0),
-              orderId,
-              description: `نقاط مكسبة: ${pointsToAward} نقطة من الطلب #${order.orderNumber}`,
-            });
-
-            await OrderModel.findOneAndUpdate({ id: orderId }, { pointsAwarded: true });
-
-            console.log(`[LOYALTY] ✅ Auto-confirm: Awarded ${pointsToAward} pts for order ${order.orderNumber} → card ${loyaltyCard.phoneNumber}`);
-          } catch (autoPointsErr) {
-            console.error('[LOYALTY] Auto-confirm points award failed:', autoPointsErr);
-          }
-        });
       }
 
       try {
@@ -981,21 +1606,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }).catch(err => console.error('[PUSH] Employee new order notification error:', err));
 
         const custId = order.customerId || order.customerInfo?.customerId;
+        const orderNum = String(order.orderNumber || order.dailyNumber || '');
+        const baseUrl = getAppBaseUrl();
+        const customerPushPayload = {
+          title: `✅ تم استلام طلبك`,
+          body: `طلب رقم #${orderNum} • ${orderItems.length} ${orderItems.length > 1 ? 'منتجات' : 'منتج'} • ${Number(order.totalAmount).toFixed(2)} ر.س`,
+          url: '/my-orders',
+          tag: `order-${orderNum}`,
+          type: 'order_status' as const,
+          orderNumber: orderNum,
+          orderStatus: 'pending',
+          totalAmount: order.totalAmount,
+          itemCount: orderItems.length,
+          items: orderItems.slice(0, 5),
+          orderType: order.orderType,
+          image: `${baseUrl}/api/notification-image?status=pending&orderNumber=${encodeURIComponent(orderNum)}&type=${encodeURIComponent(order.orderType || '')}`,
+          actions: [{ action: 'track', title: '👁 متابعة الطلب' }],
+          stageIndex: 0,
+          totalStages: 4,
+        };
+        const custPhone = order.customerPhone || order.customerInfo?.customerPhone;
         if (custId) {
-          // console.log(`[PUSH] Sending order confirmation push to customer ${custId}`);
-          sendPushToCustomer(custId, {
-            title: `✅ تم استلام طلبك #${order.orderNumber || order.dailyNumber}`,
-            body: `${orderItems.length} ${orderItems.length > 1 ? 'منتجات' : 'منتج'} • ${Number(order.totalAmount).toFixed(2)} ر.س`,
-            url: '/my-orders',
-            tag: `order-confirmed-${order.orderNumber}`,
-            type: 'order_status',
-            orderNumber: String(order.orderNumber || order.dailyNumber || ''),
-            orderStatus: 'pending',
-            totalAmount: order.totalAmount,
-            itemCount: orderItems.length,
-            items: orderItems.slice(0, 5),
-            orderType: order.orderType,
-          }).catch(err => console.error('[PUSH] Customer order confirmation error:', err));
+          sendPushToCustomer(custId, customerPushPayload, custPhone)
+            .catch(err => console.error('[PUSH] Customer order confirmation error:', err));
+        } else if (custPhone) {
+          // Guest order: try by phone directly (they may have subscribed with phone number)
+          const cleanPhone = custPhone.replace(/\D/g, '').replace(/^966/, '0').replace(/^9665/, '05');
+          // Also try looking up a registered customer account by phone
+          sendPushToCustomer(cleanPhone, customerPushPayload)
+            .catch(() => {});
+          storage.getCustomerByPhone(cleanPhone).then(customer => {
+            if (customer) {
+              const mongoId = (customer as any)._id?.toString() || (customer as any).id;
+              if (mongoId) {
+                sendPushToCustomer(mongoId, customerPushPayload)
+                  .catch(err => console.error('[PUSH] POS phone-based customer push error:', err));
+              }
+            }
+          }).catch(() => {});
         }
       } catch (pushErr) {
         console.error('[PUSH] Error sending push for new order:', pushErr);
@@ -1058,13 +1706,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/business-config", async (req, res) => {
     try {
       const tenantId = getTenantIdFromRequest(req) || "demo-tenant";
-      let config = await BusinessConfigModel.findOne({ tenantId });
+      const ck = cacheKey('biz-config', tenantId);
+      let config = cache.get<any>(ck);
+      if (!config) {
+        config = await BusinessConfigModel.findOne({ tenantId });
+        if (config) cache.set(ck, config, CACHE_TTL.BUSINESS_CONFIG);
+      }
       
       if (!config) {
         config = await BusinessConfigModel.create({
           tenantId,
-          tradeNameAr: "كلوني كافيه",
-          tradeNameEn: "Cluny Cafe",
+          tradeNameAr: "كلوني",
+          tradeNameEn: "CLUNY CAFE",
           activityType: "both",
           isFoodEnabled: true,
           isDrinksEnabled: true,
@@ -1125,51 +1778,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const serialized = serializeDoc(config);
-      // Ensure layout fields always have defaults (for existing documents created before these fields)
       if (!serialized.menuLayout) serialized.menuLayout = 'classic';
       if (!serialized.cashierLayout) serialized.cashierLayout = 'classic';
-      res.json({ ...serialized, isOpen });
+      // Apply defaults for service fee fields (for documents created before these fields were added)
+      if (serialized.serviceFeeEnabled === undefined || serialized.serviceFeeEnabled === null) serialized.serviceFeeEnabled = true;
+      if (!serialized.serviceFeeAmount) serialized.serviceFeeAmount = 0.70;
+      if (!serialized.serviceFeeLowOrderThreshold) serialized.serviceFeeLowOrderThreshold = 5.00;
+      if (!serialized.serviceFeeLowOrderAmount) serialized.serviceFeeLowOrderAmount = 0.35;
+
+      let subscription = null;
+      try {
+        const { SubscriptionConfigModel } = await import("./qirox-admin");
+        const sub = await SubscriptionConfigModel.findOne({ tenantId });
+        if (sub) {
+          subscription = {
+            plan: sub.plan,
+            isActive: sub.isActive,
+            maxBranches: sub.maxBranches,
+            maxEmployees: sub.maxEmployees,
+            maxProducts: sub.maxProducts,
+            inventoryManagement: sub.inventoryManagement,
+            recipeManagement: sub.recipeManagement,
+            accountingModule: sub.accountingModule,
+            erpIntegration: sub.erpIntegration,
+            deliveryManagement: sub.deliveryManagement,
+            loyaltyProgram: sub.loyaltyProgram,
+            giftCards: sub.giftCards,
+            tableManagement: sub.tableManagement,
+            kitchenDisplay: sub.kitchenDisplay,
+            posSystem: sub.posSystem,
+            payrollManagement: sub.payrollManagement,
+            supplierManagement: sub.supplierManagement,
+            warehouseManagement: sub.warehouseManagement,
+            zatcaCompliance: sub.zatcaCompliance,
+            advancedAnalytics: sub.advancedAnalytics,
+            apiAccess: sub.apiAccess,
+            customBranding: sub.customBranding,
+            supportPriority: sub.supportPriority,
+          };
+        }
+      } catch {}
+
+      res.json({ ...serialized, isOpen, subscription });
     } catch (error) {
       console.error("Error fetching business config:", error);
       res.status(500).json({ error: "Failed to fetch business config" });
     }
   });
 
-  app.patch("/api/business-config", requireAuth, requireManager, async (req: AuthRequest, res) => {
+  // Public settings alias — returns a subset of business-config safe for unauthenticated use
+  app.get("/api/public/settings", async (req, res) => {
+    try {
+      const tenantId = getTenantIdFromRequest(req) || "demo-tenant";
+      const config = await BusinessConfigModel.findOne({ tenantId }).lean();
+      if (!config) return res.json({});
+      res.json({
+        tradeNameAr: (config as any).tradeNameAr,
+        tradeNameEn: (config as any).tradeNameEn,
+        currency: (config as any).currency || 'SAR',
+        vatPercentage: (config as any).vatPercentage || 15,
+        isEmergencyClosed: (config as any).isEmergencyClosed || false,
+        maintenanceMode: (config as any).maintenanceMode || false,
+        allowGuestCheckout: (config as any).allowGuestCheckout ?? true,
+        minimumOrderAmount: (config as any).minimumOrderAmount || 0,
+        deliveryFee: (config as any).deliveryFee || 0,
+        timezone: (config as any).timezone || 'Asia/Riyadh',
+      });
+    } catch (error) {
+      console.error("Error fetching public settings:", error);
+      res.status(500).json({ error: "Failed to fetch public settings" });
+    }
+  });
+
+  app.patch("/api/business-config", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
       const tenantId = getTenantIdFromRequest(req) || "demo-tenant";
       const updates = req.body;
-      // console.log(`[CONFIG] Updating business config for tenant: ${tenantId}`);
-      
-      let config = await BusinessConfigModel.findOne({ tenantId });
-      if (!config) {
-        config = new BusinessConfigModel({ tenantId, tradeNameAr: "كلوني كافيه" });
-      }
-      
+
+      // Build a flat $set map so we never trigger full-document validation
+      const setMap: Record<string, any> = { updatedAt: new Date() };
+
       for (const [key, value] of Object.entries(updates)) {
-        (config as any)[key] = value;
+        setMap[key] = value;
       }
-      
-      if (updates.storeHours) {
-        config.markModified('storeHours');
-      }
-      if (updates.socialLinks) {
-        config.markModified('socialLinks');
-      }
-      if (updates.paymentGateway) {
-        config.markModified('paymentGateway');
-      }
-      if (updates.loyaltyConfig) {
-        config.markModified('loyaltyConfig');
-      }
-      if (updates.offersConfig) {
-        config.markModified('offersConfig');
-      }
-      
-      config.updatedAt = new Date();
-      await config.save();
-      
-      // console.log(`[CONFIG] Successfully updated business config for tenant: ${tenantId}`);
+
+      const config = await BusinessConfigModel.findOneAndUpdate(
+        { tenantId },
+        { $set: setMap },
+        { new: true, upsert: true, strict: false, runValidators: false }
+      );
+
+      cache.invalidateKey(cacheKey('biz-config', tenantId));
+      cache.invalidate('payment-methods:' + tenantId);
+      cache.invalidate('loyalty-settings:' + tenantId);
       res.json(serializeDoc(config));
     } catch (error) {
       console.error("[CONFIG] Error updating business config:", error);
@@ -1212,6 +1913,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (req.body.paymentMethod) order.paymentMethod = req.body.paymentMethod;
       order.updatedAt = new Date();
       await order.save();
+      cache.invalidate('live-orders:');
+
+      // Audit log for status change
+      logFromRequest(req, {
+        action: status === 'cancelled' ? 'order.cancel' : 'order.status_change',
+        entityType: 'order',
+        entityId: orderId,
+        entityLabel: `طلب #${(order as any).orderNumber}`,
+        before: { status: oldStatus },
+        after: { status },
+        details: cancellationReason ? { reason: cancellationReason } : undefined,
+      });
 
       // Reverse totalSpent on loyalty card when order is cancelled by staff
       if (status === 'cancelled' && oldStatus !== 'cancelled' && order.customerId) {
@@ -1238,7 +1951,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       setImmediate(async () => {
         try {
           if (order.customerId) {
-            const customer = await CustomerModel.findById(order.customerId);
+            const customer = await CustomerModel.findOne({ id: order.customerId });
             if (customer && customer.email) {
               const { sendOrderNotificationEmail } = await import("./mail-service");
               await sendOrderNotificationEmail(
@@ -1267,81 +1980,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Award loyalty points when order is completed/ready/payment_confirmed
-      // This runs independently of inventory deduction to fix the bug where
-      // POS orders deduct inventory immediately (blocking the deductInventoryForOrder path)
-      if (
-        (status === 'completed' || status === 'ready' || status === 'payment_confirmed') &&
-        !['completed', 'ready', 'payment_confirmed'].includes(oldStatus) &&
-        !(order as any).pointsAwarded
-      ) {
-        setImmediate(async () => {
-          try {
-            const orderUsedPoints = !!(order as any).pointsUsed || Number((order as any).pointsRedeemed) > 0;
-            let orderItemsList: any[] = [];
-            try {
-              orderItemsList = Array.isArray(order.items) ? order.items : JSON.parse((order.items as any) || '[]');
-            } catch (_) {}
-
-            const pointsToAward = orderUsedPoints ? 0 : orderItemsList.reduce((acc: number, item: any) => {
-              const price = Number(item.price || item.unitPrice || item.coffeeItem?.price || 0);
-              if (price <= 1) return acc;
-              return acc + ((Number(item.quantity) || 1) * 10);
-            }, 0);
-
-            if (pointsToAward <= 0) return;
-
-            // Find loyalty card — by customerId first, then by phone
-            let loyaltyCard: any = null;
-            if (order.customerId) {
-              loyaltyCard = await mongoose.model('LoyaltyCard').findOne({ customerId: order.customerId });
-            }
-            if (!loyaltyCard) {
-              const rawPhone = (order as any).customerPhone ||
-                (typeof order.customerInfo === 'string'
-                  ? JSON.parse(order.customerInfo)
-                  : order.customerInfo)?.customerPhone || '';
-              if (rawPhone) {
-                const clean = rawPhone.replace(/\D/g, '').replace(/^966/, '0').replace(/^9665/, '05');
-                loyaltyCard = await mongoose.model('LoyaltyCard').findOne({
-                  phoneNumber: { $in: [clean, rawPhone, `+966${clean.slice(1)}`, `966${clean.slice(1)}`] }
-                });
-              }
-            }
-
-            if (!loyaltyCard) {
-              console.warn(`[LOYALTY] No loyalty card found for order ${order.orderNumber} — points not awarded`);
-              return;
-            }
-
-            const currentPoints = Number(loyaltyCard.points) || 0;
-            const currentPending = Number(loyaltyCard.pendingPoints) || 0;
-
-            await mongoose.model('LoyaltyCard').findByIdAndUpdate(loyaltyCard._id, {
-              points: currentPoints + pointsToAward,
-              pendingPoints: Math.max(0, currentPending - pointsToAward),
-              lastUsedAt: new Date(),
-            });
-
-            await storage.createLoyaltyTransaction({
-              cardId: loyaltyCard._id.toString(),
-              type: 'earn',
-              pointsChange: pointsToAward,
-              discountAmount: 0,
-              orderAmount: Number(order.totalAmount) || 0,
-              orderId: (order as any).id || order._id?.toString(),
-              description: `نقاط مكسبة: ${pointsToAward} نقطة من الطلب #${order.orderNumber}`,
-            });
-
-            await OrderModel.findOneAndUpdate({ id: orderId }, { pointsAwarded: true });
-
-            console.log(`[LOYALTY] ✅ Awarded ${pointsToAward} points for order ${order.orderNumber} (card: ${loyaltyCard.phoneNumber})`);
-          } catch (loyaltyErr) {
-            console.error('[LOYALTY] Failed to award points on status change:', loyaltyErr);
-          }
-        });
-      }
-
       // Auto-generate ZATCA invoice on completion
       if ((status === 'completed' || status === 'ready') && order.status !== status) {
         setImmediate(async () => {
@@ -1360,10 +1998,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   nameAr: item.coffeeItem?.nameAr || item.nameAr || 'منتج',
                   quantity: item.quantity || 1,
                   unitPrice: item.coffeeItem?.price || item.unitPrice || 0,
-                  taxRate: 0.15,
+                  taxRate: VAT_RATE,
                   discountAmount: item.discountAmount || 0
                 })),
-                paymentMethod: order.paymentMethod || 'cash',
+                paymentMethod: order.paymentMethod || 'unknown',
                 branchId: order.branchId,
                 createdBy: employee?.id,
                 invoiceType: 'simplified'
@@ -1394,7 +2032,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const statusMessages: Record<string, { title: string; body: string; icon: string }> = {
             in_progress:      { title: "🔄 طلبك قيد التحضير", body: `طلبك رقم #${orderNum} يتم تحضيره الآن!`, icon: "🔄" },
             ready:            { title: "✅ طلبك جاهز!", body: `طلبك رقم #${orderNum} جاهز للاستلام`, icon: "✅" },
-            completed:        { title: "🎉 شكراً لك!", body: `اكتمل طلبك #${orderNum} بنجاح`, icon: "🎉" },
+            out_for_delivery: { title: "🚚 طلبك في الطريق!", body: `السائق في طريقه إليك بطلبك رقم #${orderNum}`, icon: "🚚" },
+            completed:        { title: "تم توصيل طلبك", body: `اكتمل طلبك #${orderNum} بنجاح`, icon: "✅" },
             cancelled:        { title: "❌ تم إلغاء الطلب", body: `تم إلغاء طلبك #${orderNum}`, icon: "❌" },
             payment_confirmed:{ title: "💳 تم تأكيد الدفع", body: `تم تأكيد دفع طلبك #${orderNum}`, icon: "💳" },
             confirmed:        { title: "✅ تم تأكيد طلبك", body: `طلبك رقم #${orderNum} مؤكد ويتم تحضيره`, icon: "✅" },
@@ -1405,6 +2044,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
               type: "order_update", icon: msg.icon, link: `/track/${orderId}`, userType: "customer",
               orderId, orderNumber: orderNum,
             });
+            // Also send APNs native push (iOS app) — uses phone as customer ID
+            try {
+              const { sendAPNsToCustomer } = await import("./push-service");
+              const customerPhone = (order as any).customerPhone || customerId || "";
+              if (customerPhone) {
+                await sendAPNsToCustomer(customerPhone, msg.title, msg.body, {
+                  orderId: String(orderId),
+                  orderNumber: String(orderNum),
+                  orderPath: `/track/${orderId}`,
+                  status,
+                });
+              }
+            } catch (apnsErr) {
+              console.warn("[APNs] Failed to send status push:", (apnsErr as any)?.message);
+            }
           }
         } catch (notifErr) {
           console.error("[NOTIFY] Status change notification failed:", notifErr);
@@ -1424,7 +2078,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const query: any = { 
         tenantId, 
-        status: { $in: ['pending', 'in_progress', 'ready'] } 
+        status: { $in: ['pending', 'in_progress', 'ready', 'delivered', 'received', 'suspended'] } 
       };
       if (branchId) query.branchId = branchId;
       
@@ -1469,10 +2123,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/orders/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
+      const existingOrder = await OrderModel.findOne({ id }).lean() as any;
       const deleted = await storage.deleteOrder(id);
       if (!deleted) return res.status(404).json({ error: "Order not found" });
       const branchId = req.employee?.branchId;
       wsManager.broadcastToBranch(branchId || 'all', { type: 'orders_updated' });
+      logFromRequest(req, {
+        action: 'order.delete',
+        entityType: 'order',
+        entityId: id,
+        entityLabel: existingOrder ? `طلب #${existingOrder.orderNumber}` : `Order ${id}`,
+        details: { orderNumber: existingOrder?.orderNumber, amount: existingOrder?.totalAmount },
+      });
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting order:", error);
@@ -1481,18 +2143,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get all tables
-  app.get("/api/tables", async (req, res) => {
+  app.get("/api/tables", async (req: AuthRequest, res) => {
     try {
-      // Use a consistent tenantId detection
       const branchId = req.query.branchId as string;
       const tenantId = req.headers['x-tenant-id'] as string || getTenantIdFromRequest(req) || 'demo-tenant';
-      let query: any = { tenantId };
-      if (branchId && branchId !== 'none' && branchId !== 'undefined' && branchId !== 'null' && branchId !== '') {
-        query.branchId = branchId;
+      
+      // Enforce branch isolation: use session employee if available (without requiring auth)
+      const sessionEmployee = (req as any).session?.employee;
+      const sessionRole = sessionEmployee?.role;
+      const sessionBranchId = sessionEmployee?.branchId;
+      const isAdminOrOwner = sessionRole === 'admin' || sessionRole === 'owner';
+      const effectiveBranchId = (!isAdminOrOwner && sessionBranchId)
+        ? (branchId || sessionBranchId)
+        : branchId;
+
+      const ck = cacheKey('tables', tenantId, effectiveBranchId || 'all');
+      const cached = cache.get<any[]>(ck);
+      if (cached) return res.json(cached);
+
+      // Build tenant filter: include tables with matching tenantId OR without tenantId (migration fallback)
+      const tenantConditions = tenantId === 'demo-tenant'
+        ? [{ tenantId }, { tenantId: { $exists: false } }, { tenantId: null }, { tenantId: '' }]
+        : [{ tenantId }];
+
+      let query: any;
+      if (effectiveBranchId && effectiveBranchId !== 'none' && effectiveBranchId !== 'undefined' && effectiveBranchId !== 'null' && effectiveBranchId !== '') {
+        query = { $and: [{ $or: tenantConditions }, { branchId: effectiveBranchId }] };
+      } else {
+        query = { $or: tenantConditions };
       }
       
       const tables = await TableModel.find(query).sort({ tableNumber: 1 });
-      res.json(tables.map(serializeDoc));
+      const result = tables.map(serializeDoc);
+      cache.set(ck, result, CACHE_TTL.TABLES);
+      res.json(result);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch tables" });
     }
@@ -1518,7 +2202,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isOccupied: 0
       };
       const table = await TableModel.create(tableData);
-
+      cache.invalidate('tables:' + tenantId);
       res.json(serializeDoc(table));
     } catch (error) {
       console.error("Error creating table:", error);
@@ -1578,6 +2262,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const created = await TableModel.insertMany(tables);
+      cache.invalidate('tables:' + tenantId);
       res.json({ results: { created: created.map(serializeDoc) } });
     } catch (error) {
       console.error("Error bulk creating tables:", error);
@@ -1597,8 +2282,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const branch = await storage.getBranch(table.branchId);
       const branchName = branch ? branch.nameAr : "فرع غير معروف";
 
-      // Use a fixed domain for QR codes as per requirement in TableQRCard
-      const tableUrl = `${req.protocol}://${req.get('host')}/table-menu/${table.qrToken}`;
+      // Use production domain for QR codes so they work after deployment
+      const PRODUCTION_DOMAIN = "https://www.cluny.cafe";
+      const tableUrl = `${PRODUCTION_DOMAIN}/table-menu/${table.qrToken}`;
 
       res.json({
         qrToken: table.qrToken,
@@ -1620,6 +2306,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
       
       const result = await TableModel.deleteMany({ branchId, tenantId });
+      cache.invalidate('tables:' + tenantId);
       res.json({ message: "تم حذف جميع الطاولات بنجاح", count: result.deletedCount });
     } catch (error) {
       console.error("Error deleting all tables:", error);
@@ -1627,9 +2314,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/tables/all", async (req, res) => {
+  app.delete("/api/tables/all", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const result = await TableModel.deleteMany({});
+      cache.invalidate('tables:');
       res.json({ message: `Deleted ${result.deletedCount} tables` });
     } catch (error) {
       console.error("[TABLES_DELETE] Error:", error);
@@ -1647,6 +2335,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ].filter(q => q._id !== null || q.id !== undefined)
       });
       if (!result) return res.status(404).json({ error: "الطاولة غير موجودة" });
+      cache.invalidate('tables:');
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete table" });
@@ -1667,6 +2356,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       table.isActive = table.isActive === 1 ? 0 : 1;
       await table.save();
+      cache.invalidate('tables:');
       res.json(serializeDoc(table));
     } catch (error) {
       res.status(500).json({ error: "Failed to toggle status" });
@@ -1685,8 +2375,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/custom-banners", async (req, res) => {
     try {
       const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const ck = cacheKey('banners', tenantId);
+      const cached = cache.get<any[]>(ck);
+      if (cached) return res.json(cached);
       const banners = await CustomBannerModel.find({ tenantId, isActive: true }).sort({ orderIndex: 1 });
-      res.json(banners.map(serializeDoc));
+      const result = banners.map(serializeDoc);
+      cache.set(ck, result, CACHE_TTL.BANNERS);
+      res.json(result);
     } catch (error) {
       console.error("Error fetching custom banners:", error);
       res.status(500).json({ error: "Failed to fetch banners" });
@@ -1704,6 +2399,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updatedAt: new Date()
       };
       const banner = await CustomBannerModel.create(bannerData);
+      cache.invalidate('banners:' + tenantId);
       res.json(serializeDoc(banner));
     } catch (error) {
       console.error("Error creating banner:", error);
@@ -1714,9 +2410,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/custom-banners/:id", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
       const updates = { ...req.body, updatedAt: new Date() };
       const banner = await CustomBannerModel.findOneAndUpdate({ id }, updates, { new: true });
       if (!banner) return res.status(404).json({ error: "Banner not found" });
+      cache.invalidate('banners:' + tenantId);
       res.json(serializeDoc(banner));
     } catch (error) {
       console.error("Error updating banner:", error);
@@ -1727,8 +2425,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/custom-banners/:id", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
       const result = await CustomBannerModel.deleteOne({ id });
       if (result.deletedCount === 0) return res.status(404).json({ error: "Banner not found" });
+      cache.invalidate('banners:' + tenantId);
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting banner:", error);
@@ -1738,15 +2438,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Delivery Integrations
   app.get("/api/integrations/delivery", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
-    const tenantId = getTenantIdFromRequest(req) || 'default';
-    const integrations = await DeliveryIntegrationModel.find({ tenantId });
-    res.json(integrations.map(serializeDoc));
+    try {
+      const tenantId = getTenantIdFromRequest(req) || 'default';
+      const integrations = await DeliveryIntegrationModel.find({ tenantId });
+      res.json(integrations.map(serializeDoc));
+    } catch (error) {
+      console.error("Error fetching delivery integrations:", error);
+      res.status(500).json({ error: "Failed to fetch delivery integrations" });
+    }
   });
 
   app.post("/api/integrations/delivery", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
-    const tenantId = getTenantIdFromRequest(req) || 'default';
-    const integration = await DeliveryIntegrationModel.create({ ...req.body, tenantId });
-    res.json(serializeDoc(integration));
+    try {
+      const tenantId = getTenantIdFromRequest(req) || 'default';
+      if (!req.body || typeof req.body !== 'object') {
+        return res.status(400).json({ error: "Invalid request body" });
+      }
+      const integration = await DeliveryIntegrationModel.create({ ...req.body, tenantId });
+      res.json(serializeDoc(integration));
+    } catch (error) {
+      console.error("Error creating delivery integration:", error);
+      res.status(500).json({ error: "Failed to create delivery integration" });
+    }
   });
 
   // Webhook Placeholder for Delivery Apps
@@ -1771,6 +2484,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/admin/clear-all-data", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ error: 'Destructive demo cleanup disabled in production' });
+    }
     try {
       const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
       
@@ -1790,20 +2506,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to clear data" });
     }
   });
-  // Reset order counter back to 1 for the tenant
-  app.post("/api/admin/reset-order-counter", requireAuth, requireManager, async (req: AuthRequest, res) => {
+
+  // Demo Data Management
+  app.get("/api/admin/demo-stats", requireAuth, async (req: AuthRequest, res) => {
     try {
       const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
-      await (OrderCounterModel as any).findOneAndUpdate(
-        { tenantId },
-        { seq: 0 },
-        { upsert: true }
-      );
-      console.log(`[ADMIN] Order counter reset to 0 for tenant ${tenantId} — next order will be ORD#0001`);
-      res.json({ success: true, message: "تم إعادة تعيين عداد الطلبات إلى 1 بنجاح" });
+      const [ordersCount, customersCount, cartCount] = await Promise.all([
+        OrderModel.countDocuments({ tenantId }),
+        CustomerModel.countDocuments({ tenantId }),
+        CartItemModel.countDocuments({ tenantId }),
+      ]);
+      res.json({ ordersCount, customersCount, cartCount });
     } catch (error) {
-      console.error("Error resetting order counter:", error);
-      res.status(500).json({ error: "فشل إعادة تعيين العداد" });
+      res.status(500).json({ error: "Failed to get demo stats" });
+    }
+  });
+
+  app.delete("/api/admin/demo-orders", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const [ordersResult, cartResult] = await Promise.all([
+        OrderModel.deleteMany({ tenantId }),
+        CartItemModel.deleteMany({ tenantId }),
+        NotificationModel.deleteMany({ tenantId }),
+      ]);
+      console.log(`[DEMO] Cleared ${ordersResult.deletedCount} orders for tenant ${tenantId}`);
+      res.json({ message: `تم حذف ${ordersResult.deletedCount} طلب بنجاح`, deletedCount: ordersResult.deletedCount });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete demo orders" });
+    }
+  });
+
+  app.delete("/api/admin/demo-customers", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const result = await CustomerModel.deleteMany({ tenantId });
+      await (await import("@shared/schema")).LoyaltyCardModel?.deleteMany({ tenantId }).catch(() => {});
+      console.log(`[DEMO] Cleared ${result.deletedCount} customers for tenant ${tenantId}`);
+      res.json({ message: `تم حذف ${result.deletedCount} عميل بنجاح`, deletedCount: result.deletedCount });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete demo customers" });
     }
   });
 
@@ -1816,50 +2558,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Public loyalty settings (no auth required) for customer-facing pages
   app.get("/api/public/loyalty-settings", async (req, res) => {
     try {
-      const config = await storage.getBusinessConfig('demo-tenant');
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const ck = cacheKey('loyalty-settings', tenantId);
+      const cached = cache.get<any>(ck);
+      if (cached) return res.json(cached);
+      const config = await storage.getBusinessConfig(tenantId);
       const loyaltyConfig = (config as any)?.loyaltyConfig || {};
-      res.json({
+      const pointsPerSar = loyaltyConfig.pointsPerSar ?? 50;
+      const result = {
         enabled: loyaltyConfig.enabled ?? true,
-        pointsEarnedPerItem: loyaltyConfig.pointsEarnedPerItem ?? 10,
-        pointsPerSar: loyaltyConfig.pointsPerSar ?? 50,
+        pointsPerDrink: loyaltyConfig.pointsPerDrink ?? 10,
+        pointsPerSar,
+        pointsEarnedPerSar: loyaltyConfig.pointsEarnedPerSar ?? 1,
         minPointsForRedemption: loyaltyConfig.minPointsForRedemption ?? 100,
         pointsValueInSar: loyaltyConfig.pointsValueInSar ?? 0.02,
-      });
+        redemptionRate: 50,
+      };
+      cache.set(ck, result, CACHE_TTL.LOYALTY_SETTINGS);
+      res.json(result);
     } catch (error) {
       res.json({
         enabled: true,
-        pointsEarnedPerItem: 10,
+        pointsPerDrink: 10,
         pointsPerSar: 50,
+        pointsEarnedPerSar: 1,
         minPointsForRedemption: 100,
         pointsValueInSar: 0.02,
+        redemptionRate: 50,
       });
     }
   });
 
   app.get("/api/loyalty-config", async (req, res) => {
     try {
-      const config = await storage.getBusinessConfig('demo-tenant');
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const ck = cacheKey('loyalty-settings', tenantId);
+      const cached = cache.get<any>(ck);
+      if (cached) return res.json(cached);
+      const config = await storage.getBusinessConfig(tenantId);
       const loyaltyConfig = (config as any)?.loyaltyConfig || {};
-      res.json({
+      const pointsPerSar = loyaltyConfig.pointsPerSar ?? 50;
+      const loyaltyResult = {
         enabled: loyaltyConfig.enabled ?? true,
-        pointsEarnedPerItem: loyaltyConfig.pointsEarnedPerItem ?? 10,
-        pointsPerSar: loyaltyConfig.pointsPerSar ?? 50,
+        pointsPerDrink: loyaltyConfig.pointsPerDrink ?? 10,
+        pointsPerSar,
+        pointsEarnedPerSar: loyaltyConfig.pointsEarnedPerSar ?? 1,
         minPointsForRedemption: loyaltyConfig.minPointsForRedemption ?? 100,
         pointsValueInSar: loyaltyConfig.pointsValueInSar ?? 0.02,
-      });
+        redemptionRate: 50,
+      };
+      cache.set(ck, loyaltyResult, CACHE_TTL.LOYALTY_SETTINGS);
+      res.json(loyaltyResult);
     } catch (error) {
       res.json({
         enabled: true,
-        pointsEarnedPerItem: 10,
+        pointsPerDrink: 10,
         pointsPerSar: 50,
+        pointsEarnedPerSar: 1,
         minPointsForRedemption: 100,
         pointsValueInSar: 0.02,
+        redemptionRate: 50,
       });
     }
   });
 
   // Claim free drink - resets all customer points to 0
-  app.post("/api/loyalty/claim-free-drink", async (req, res) => {
+  app.post("/api/loyalty/claim-free-drink", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { phone } = req.body;
       if (!phone) return res.status(400).json({ error: "رقم الهاتف مطلوب" });
@@ -1870,10 +2634,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const config = await storage.getBusinessConfig('demo-tenant');
       const loyaltyConfig = (config as any)?.loyaltyConfig || {};
-      const pointsForFreeDrink = loyaltyConfig.pointsForFreeDrink ?? 500;
+      const pointsPerSar = loyaltyConfig.pointsPerSar ?? 20;
+      const cfgFallback = loyaltyConfig.pointsForFreeDrink ?? 500;
+      const pointsForFreeDrink = await calcFreeDrinkThreshold('demo-tenant', pointsPerSar, cfgFallback);
 
       if ((card.points || 0) < pointsForFreeDrink) {
-        return res.status(400).json({ error: "النقاط غير كافية للحصول على مشروب مجاني" });
+        return res.status(400).json({
+          error: "النقاط غير كافية للحصول على مشروب مجاني",
+          currentPoints: card.points || 0,
+          requiredPoints: pointsForFreeDrink,
+        });
       }
 
       const cardId = (card as any)._id?.toString() || (card as any).id;
@@ -1988,15 +2758,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.patch("/api/addons/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
-    const updated = await ProductAddonModel.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
-    res.json(updated);
+    try {
+      let updated = await ProductAddonModel.findOneAndUpdate({ id: req.params.id }, { $set: req.body }, { new: true });
+      if (!updated && req.params.id.match(/^[a-f\d]{24}$/i)) {
+        updated = await ProductAddonModel.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
+      }
+      if (!updated) return res.status(404).json({ error: "الإضافة غير موجودة" });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "فشل في تحديث الإضافة" });
+    }
   });
 
   // Stock Movements API
   app.post("/api/inventory/movements", requireAuth, requireManager, async (req: AuthRequest, res) => {
     const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
     const { ingredientId, type, quantity, notes, branchId } = req.body;
-    
+
+    // ── INPUT VALIDATION ───────────────────────────────────────────────────
+    if (!ingredientId || typeof ingredientId !== 'string') {
+      return res.status(400).json({ error: "ingredientId مطلوب" });
+    }
+    if (!type || !['in', 'out'].includes(type)) {
+      return res.status(400).json({ error: "type مطلوب ويجب أن يكون 'in' أو 'out'" });
+    }
+    if (quantity === undefined || quantity === null || typeof quantity !== 'number' || quantity <= 0) {
+      return res.status(400).json({ error: "quantity مطلوب ويجب أن يكون رقماً موجباً" });
+    }
+    if (!notes || typeof notes !== 'string' || notes.trim() === '') {
+      return res.status(400).json({ error: "notes مطلوب — أدخل وصفاً للحركة" });
+    }
+    if (!branchId || typeof branchId !== 'string' || branchId.trim() === '') {
+      return res.status(400).json({ error: "branchId مطلوب" });
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
     const ingredientItems = await storage.getIngredientItems(tenantId);
     const foundIngredient = ingredientItems.find((i: any) => i._id.toString() === ingredientId);
     const currentStock = foundIngredient?.currentStock || 0;
@@ -2100,7 +2896,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ error: "فشل في حذف المشروب من قاعدة البيانات" });
       }
 
-      cacheInvalidate('coffeeItems');
+      invalidateCoffeeItemsCache(tenantId || 'demo-tenant');
+      logFromRequest(req, {
+        action: 'product.delete',
+        entityType: 'product',
+        entityId: id,
+        entityLabel: deletedItem.nameAr || deletedItem.nameEn || id,
+      });
       res.json({ 
         success: true, 
         message: "تم حذف المشروب وجميع البيانات المرتبطة به بنجاح" 
@@ -2114,13 +2916,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Toggle New Product status
+  // Update a coffee item (also persists & links its addons so they appear in POS)
   app.put("/api/coffee-items/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
-      const updated = await CoffeeItemModel.findOneAndUpdate({ id: req.params.id }, { $set: req.body }, { new: true });
-      cacheInvalidate('coffeeItems');
+      const itemId = req.params.id;
+      const { addons, ...itemFields } = req.body || {};
+
+      const updated = await CoffeeItemModel.findOneAndUpdate({ id: itemId }, { $set: itemFields }, { new: true });
+
+      // Persist addons & link them to the coffee item (works for both food and drinks)
+      if (Array.isArray(addons)) {
+        const keepAddonIds: string[] = [];
+        for (const addon of addons) {
+          if (!addon || !addon.nameAr) continue;
+          if (!addon.id) addon.id = nanoid();
+          keepAddonIds.push(addon.id);
+          try {
+            // Strip _id from the spread to avoid E11000 duplicate key on upsert
+            const { _id: _addonId, __v, ...addonData } = addon;
+            await ProductAddonModel.findOneAndUpdate(
+              { id: addon.id },
+              {
+                $set: { ...addonData, id: addon.id, category: addonData.category || 'other' },
+                $setOnInsert: { createdAt: new Date() },
+              },
+              { upsert: true, new: true, runValidators: false }
+            );
+            await CoffeeItemAddonModel.findOneAndUpdate(
+              { coffeeItemId: itemId, addonId: addon.id },
+              {
+                $set: { coffeeItemId: itemId, addonId: addon.id, isDefault: addon.isDefault || 0, minQuantity: addon.minQuantity || 0, maxQuantity: addon.maxQuantity || 10 },
+                $setOnInsert: { createdAt: new Date() },
+              },
+              { upsert: true, runValidators: false }
+            );
+          } catch (err: any) {
+            // Ignore duplicate key errors — the document already exists and was already updated
+            if (err?.code === 11000) continue;
+            console.error("[PUT /api/coffee-items/:id] Error saving addon:", err);
+          }
+        }
+        // Remove links for addons the user deleted in the editor
+        try {
+          await CoffeeItemAddonModel.deleteMany({ coffeeItemId: itemId, addonId: { $nin: keepAddonIds } });
+        } catch (err) {
+          console.error("[PUT /api/coffee-items/:id] Error pruning addon links:", err);
+        }
+      }
+
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      invalidateCoffeeItemsCache(tenantId);
+      cache.invalidate('with-addons');
       res.json(serializeDoc(updated));
     } catch (error) {
+      console.error("[PUT /api/coffee-items/:id] Error:", error);
       res.status(500).json({ error: "فشل في تحديث حالة المنتج" });
     }
   });
@@ -2147,14 +2996,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(transfer);
   });
 
-  // --- DELIVERY INTEGRATION MOCK API ---
-  app.get("/api/integrations/delivery/mock-status", requireAuth, async (req: AuthRequest, res) => {
-    res.json({
-      hungerstation: { status: 'connected', latency: '120ms', ordersToday: 45 },
-      jahez: { status: 'connected', latency: '95ms', ordersToday: 32 },
-      toyou: { status: 'disconnected', lastActive: '2025-12-29' }
-    });
-  });
 
   // Real service status endpoint
   app.get("/api/integrations/delivery/service-status", requireAuth, async (req: AuthRequest, res) => {
@@ -2170,13 +3011,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(services.length > 0 ? services : [
         { provider: 'hungerstation', status: 'connected', latency: '120ms', ordersToday: 45 },
         { provider: 'jahez', status: 'connected', latency: '95ms', ordersToday: 32 },
-        { provider: 'toyou', status: 'disconnected', lastActive: '2025-12-29' }
+        { provider: 'toyou', status: 'disconnected', lastActive: '2026-01-15' }
       ]);
     } catch (error) {
       res.json([
         { provider: 'hungerstation', status: 'connected', latency: '120ms', ordersToday: 45 },
         { provider: 'jahez', status: 'connected', latency: '95ms', ordersToday: 32 },
-        { provider: 'toyou', status: 'disconnected', lastActive: '2025-12-29' }
+        { provider: 'toyou', status: 'disconnected', lastActive: '2026-01-15' }
       ]);
     }
   });
@@ -2185,8 +3026,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/payment-methods", async (req, res) => {
     try {
       const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
-      const config = await BusinessConfigModel.findOne({ tenantId }).lean();
-      const pg = (config as any)?.paymentGateway;
+      const ck = cacheKey('payment-methods', tenantId);
+      const cached = cache.get<any[]>(ck);
+      if (cached) return res.json(cached);
+      const configDoc = await BusinessConfigModel.findOne({ tenantId });
+      const pg = configDoc?.toObject()?.paymentGateway;
 
       const allMethods: any[] = [];
 
@@ -2203,15 +3047,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (!pg || pg.qahwaCardEnabled !== false) {
-        allMethods.push({ id: 'qahwa-card', nameAr: 'بطاقة كلوني كافيه', nameEn: 'Cluny Card', details: 'ادفع ببطاقة الولاء', icon: 'fas fa-gift' });
+        allMethods.push({ id: 'qahwa-card', nameAr: 'بطاقة كلوني', nameEn: 'بطاقة كلوني', details: 'ادفع ببطاقة الولاء', icon: 'fas fa-gift' });
       }
 
+      // STC Pay — only show if explicitly enabled
       if (pg?.stcPayEnabled) {
         allMethods.push({ id: 'stc-pay', nameAr: 'STC Pay', nameEn: 'STC Pay', details: 'الدفع عبر محفظة STC', icon: 'fas fa-mobile-alt' });
       }
 
       if (pg?.bankTransferEnabled) {
-        allMethods.push({ id: 'mada', nameAr: 'تحويل بنكي', nameEn: 'Bank Transfer', details: 'تحويل مباشر', icon: 'fas fa-university' });
+        allMethods.push({
+          id: 'mada',
+          nameAr: 'تحويل بنكي',
+          nameEn: 'Bank Transfer',
+          details: pg.bankIban ? `IBAN: ${pg.bankIban}` : 'تحويل مباشر',
+          icon: 'fas fa-university',
+          requiresReceipt: true,
+          bankIban: pg.bankIban || '',
+          bankName: pg.bankName || '',
+          bankAccountHolder: pg.bankAccountHolder || '',
+        });
       }
 
       if (pg?.provider === 'neoleap') {
@@ -2221,17 +3076,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           allMethods.push({ id: 'neoleap-apple-pay', nameAr: 'Apple Pay', nameEn: 'Apple Pay', details: 'الدفع السريع عبر Apple Pay', icon: 'fas fa-mobile-alt', gateway: 'neoleap' });
         }
       } else if (pg?.provider === 'geidea') {
-        const hasCredentials = !!(pg.geidea?.publicKey && pg.geidea?.apiPassword);
-        const customerEnabled = pg.geidea?.customerEnabled === true;
-        if (hasCredentials && customerEnabled) {
-          allMethods.push({ id: 'geidea', nameAr: 'بطاقة بنكية', nameEn: 'Card Payment', details: 'مدى، فيزا، ماستر كارد عبر جيديا', icon: 'fas fa-credit-card', gateway: 'geidea' });
+        // Only show Geidea if it has real credentials
+        const geideaPublicKey = pg.geidea?.publicKey;
+        const geideaApiPassword = pg.geidea?.apiPassword;
+        if (geideaPublicKey && geideaApiPassword) {
+          allMethods.push({ id: 'geidea', nameAr: 'بطاقة بنكية', nameEn: 'Card Payment', details: 'مدى، فيزا، ماستر كارد', icon: 'fas fa-credit-card', gateway: 'geidea' });
           allMethods.push({ id: 'apple_pay', nameAr: 'Apple Pay', nameEn: 'Apple Pay', details: 'الدفع السريع عبر Apple Pay', icon: 'fas fa-mobile-alt', gateway: 'geidea' });
         }
       } else if (pg?.provider === 'paymob') {
-        const hasCredentials = !!(pg.paymob?.apiKey && pg.paymob?.integrationId);
-        if (hasCredentials) {
+        const hasSACredentials = !!(pg.paymob?.secretKey && pg.paymob?.publicKey);
+        const hasLegacyCredentials = !!(pg.paymob?.apiKey && pg.paymob?.integrationId);
+        if (hasSACredentials || hasLegacyCredentials) {
           allMethods.push({ id: 'paymob-card', nameAr: 'بطاقة بنكية', nameEn: 'Card Payment', details: 'مدى، فيزا، ماستر كارد عبر Paymob', icon: 'fas fa-credit-card', gateway: 'paymob' });
-          if (pg.paymob?.walletIntegrationId) {
+          allMethods.push({ id: 'paymob-apple-pay', nameAr: 'Apple Pay', nameEn: 'Apple Pay', details: 'الدفع السريع عبر Apple Pay', icon: 'fas fa-mobile-alt', gateway: 'paymob' });
+          if (!hasSACredentials && pg.paymob?.walletIntegrationId) {
             allMethods.push({ id: 'paymob-wallet', nameAr: 'محفظة إلكترونية', nameEn: 'Mobile Wallet', details: 'الدفع عبر المحفظة الإلكترونية', icon: 'fas fa-mobile-alt', gateway: 'paymob' });
           }
         }
@@ -2239,11 +3097,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       allMethods.push({ id: 'loyalty-card', nameAr: 'بطاقة كوبي (رقم العميل)', nameEn: 'Loyalty Card', details: 'خصم تلقائي ودفع بالنقاط', icon: 'fas fa-gift' });
 
+      // Append custom payment methods
+      if (pg?.customPaymentMethods?.length) {
+        for (const cm of pg.customPaymentMethods) {
+          if (cm.id && cm.nameAr) {
+            allMethods.push({
+              id: cm.id,
+              nameAr: cm.nameAr,
+              nameEn: cm.nameEn || cm.nameAr,
+              details: cm.nameAr,
+              icon: 'fas fa-credit-card',
+              emoji: cm.icon || '💳',
+              isCustom: true,
+              enabledForCustomer: cm.enabledForCustomer !== false,
+              enabledForPos: cm.enabledForPos !== false,
+            });
+          }
+        }
+      }
+
+      cache.set(ck, allMethods, CACHE_TTL.PAYMENT_METHODS);
       res.json(allMethods);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch payment methods" });
     }
   });
+
+  // ─── Simulated STC Pay endpoints ─────────────────────────────────────────
+  // Initiate STC Pay: accepts phone number, returns session token
+  app.post("/api/pay/stc/initiate", async (req, res) => {
+    try {
+      const { phone } = req.body as { phone?: string };
+      if (!phone || !/^05\d{8}$/.test(phone.replace(/\s/g, ''))) {
+        return res.status(400).json({ success: false, error: "رقم الجوال غير صحيح" });
+      }
+      const sessionToken = `stc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      return res.json({ success: true, sessionToken, message: "تم إرسال رمز التحقق" });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: "Server error" });
+    }
+  });
+
+  // Verify STC Pay OTP
+  // NOTE: STC Pay real integration requires STCPAY_API_KEY and STCPAY_MERCHANT_ID env vars.
+  // Until they are configured, this endpoint returns a clear error so users are not misled.
+  app.post("/api/pay/stc/verify", async (req, res) => {
+    try {
+      const { sessionToken, otp } = req.body as { sessionToken?: string; otp?: string };
+      if (!sessionToken || !otp) {
+        return res.status(400).json({ success: false, error: "بيانات غير مكتملة" });
+      }
+
+      // Real STC Pay integration: verify OTP via STC Pay API
+      const stcApiKey = process.env.STCPAY_API_KEY;
+      const stcMerchantId = process.env.STCPAY_MERCHANT_ID;
+
+      if (!stcApiKey || !stcMerchantId) {
+        // Simulation mode — only in development/test environments
+        if (process.env.NODE_ENV === 'production') {
+          return res.status(503).json({
+            success: false,
+            error: "STC Pay غير مفعّل بعد. يرجى التواصل مع الدعم الفني.",
+            code: "STC_NOT_CONFIGURED",
+          });
+        }
+        // Non-production: use env-var OTP or reject
+        const devOtp = process.env.SIMULATED_STC_OTP;
+        if (!devOtp || otp !== devOtp) {
+          return res.status(422).json({ success: false, error: "رمز التحقق غير صحيح" });
+        }
+        const transactionId = `TXN-STC-SIM-${Date.now()}`;
+        return res.json({ success: true, transactionId, message: "تمت عملية الدفع (محاكاة)" });
+      }
+
+      // TODO: call real STC Pay OTP verification API here
+      return res.status(503).json({
+        success: false,
+        error: "تكامل STC Pay الحقيقي قيد الإعداد. استخدم طريقة دفع أخرى مؤقتاً.",
+        code: "STC_NOT_IMPLEMENTED",
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: "Server error" });
+    }
+  });
+  // ─────────────────────────────────────────────────────────────────────────
 
   // Get payment gateway config (masked for admin UI)
   app.get("/api/payment-gateway/config", requireAuth, async (req: AuthRequest, res) => {
@@ -2252,7 +3189,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "غير مصرح" });
       }
       const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
-      const config = await BusinessConfigModel.findOne({ tenantId });
+      const configDoc = await BusinessConfigModel.findOne({ tenantId });
+      const config = configDoc?.toObject();
       const pg = config?.paymentGateway;
       if (!pg) {
         return res.json({
@@ -2282,6 +3220,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         posEnabled: pg.posEnabled,
         qahwaCardEnabled: pg.qahwaCardEnabled,
         bankTransferEnabled: pg.bankTransferEnabled,
+        bankIban: pg.bankIban || '',
+        bankName: pg.bankName || '',
+        bankAccountHolder: pg.bankAccountHolder || '',
         stcPayEnabled: pg.stcPayEnabled,
         paymentTestMode: !!pg.paymentTestMode,
         neoleap: {
@@ -2296,16 +3237,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           publicKey: maskSecret(pg.geidea?.publicKey),
           baseUrl: pg.geidea?.baseUrl || 'https://api.merchant.geidea.net',
           callbackUrl: pg.geidea?.callbackUrl || '',
-          customerEnabled: pg.geidea?.customerEnabled === true,
         },
         paymob: {
-          configured: !!(pg.paymob?.apiKey && pg.paymob?.integrationId),
+          configured: !!(pg.paymob?.secretKey || (pg.paymob?.apiKey && pg.paymob?.integrationId)),
           apiKey: maskSecret(pg.paymob?.apiKey),
           integrationId: pg.paymob?.integrationId || '',
           iframeId: pg.paymob?.iframeId || '',
           walletIntegrationId: pg.paymob?.walletIntegrationId || '',
           hmacSecret: maskSecret(pg.paymob?.hmacSecret),
           callbackUrl: pg.paymob?.callbackUrl || '',
+          secretKey: maskSecret(pg.paymob?.secretKey),
+          publicKey: pg.paymob?.publicKey || '',
+          baseUrl: pg.paymob?.baseUrl || 'https://ksa.paymob.com',
+          integrationId: pg.paymob?.integrationId || '',
         },
       });
     } catch (error) {
@@ -2335,8 +3279,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (body.posEnabled !== undefined) updates['paymentGateway.posEnabled'] = body.posEnabled;
       if (body.qahwaCardEnabled !== undefined) updates['paymentGateway.qahwaCardEnabled'] = body.qahwaCardEnabled;
       if (body.bankTransferEnabled !== undefined) updates['paymentGateway.bankTransferEnabled'] = body.bankTransferEnabled;
+      if (body.bankIban !== undefined) updates['paymentGateway.bankIban'] = body.bankIban;
+      if (body.bankName !== undefined) updates['paymentGateway.bankName'] = body.bankName;
+      if (body.bankAccountHolder !== undefined) updates['paymentGateway.bankAccountHolder'] = body.bankAccountHolder;
       if (body.stcPayEnabled !== undefined) updates['paymentGateway.stcPayEnabled'] = body.stcPayEnabled;
       if (body.paymentTestMode !== undefined) updates['paymentGateway.paymentTestMode'] = !!body.paymentTestMode;
+      if (Array.isArray(body.customPaymentMethods)) updates['paymentGateway.customPaymentMethods'] = body.customPaymentMethods;
 
       if (body.neoleapClientId) updates['paymentGateway.neoleap.clientId'] = body.neoleapClientId;
       if (body.neoleapClientSecret) updates['paymentGateway.neoleap.clientSecret'] = body.neoleapClientSecret;
@@ -2348,7 +3296,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (body.geideaApiPassword) updates['paymentGateway.geidea.apiPassword'] = body.geideaApiPassword;
       if (body.geideaBaseUrl) updates['paymentGateway.geidea.baseUrl'] = body.geideaBaseUrl;
       if (body.geideaCallbackUrl) updates['paymentGateway.geidea.callbackUrl'] = body.geideaCallbackUrl;
-      if (body.geideaCustomerEnabled !== undefined) updates['paymentGateway.geidea.customerEnabled'] = !!body.geideaCustomerEnabled;
 
       if (body.paymobApiKey) updates['paymentGateway.paymob.apiKey'] = body.paymobApiKey;
       if (body.paymobIntegrationId) updates['paymentGateway.paymob.integrationId'] = String(body.paymobIntegrationId);
@@ -2356,6 +3303,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (body.paymobWalletIntegrationId !== undefined) updates['paymentGateway.paymob.walletIntegrationId'] = String(body.paymobWalletIntegrationId || '');
       if (body.paymobHmacSecret) updates['paymentGateway.paymob.hmacSecret'] = body.paymobHmacSecret;
       if (body.paymobCallbackUrl !== undefined) updates['paymentGateway.paymob.callbackUrl'] = body.paymobCallbackUrl;
+      if (body.paymobSecretKey) updates['paymentGateway.paymob.secretKey'] = body.paymobSecretKey;
+      if (body.paymobPublicKey) updates['paymentGateway.paymob.publicKey'] = body.paymobPublicKey;
+      if (body.paymobBaseUrl) updates['paymentGateway.paymob.baseUrl'] = body.paymobBaseUrl;
+      if (body.paymobIntegrationIds !== undefined) updates['paymentGateway.paymob.integrationIds'] = (Array.isArray(body.paymobIntegrationIds) ? body.paymobIntegrationIds : []).map(Number).filter(Boolean);
 
       updates['updatedAt'] = new Date();
 
@@ -2371,688 +3322,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ── Geidea Express Checkout (Wallets) — OFFICIAL integration ──────
-  // This is the supported way to render Apple Pay / Google Pay / Samsung Pay
-  // via Geidea's SDK. Creates a session with `expressCheckouts` array set so
-  // Geidea's GeideaExpressCheckout SDK can mount the wallet button. Geidea
-  // handles merchant validation, the Apple Pay sheet, and payment processing.
-  // See: Geidea KSA — Express Checkout (Wallets) docs.
-  app.post("/api/payments/express-checkout/init-session", async (req, res) => {
-    try {
-      const { amount, orderId, currency = 'SAR', wallet = 'apple-pay', label, customerEmail, customerPhone, returnUrl } = req.body;
-      if (!amount || amount <= 0) return res.status(400).json({ error: "المبلغ مطلوب" });
-
-      const config = await BusinessConfigModel.findOne({ tenantId: 'demo-tenant' });
-      const pg = config?.paymentGateway;
-      if (!pg?.geidea?.publicKey || !pg?.geidea?.apiPassword) {
-        return res.status(400).json({ error: "بيانات Geidea غير مكتملة" });
-      }
-
-      const { publicKey, apiPassword, baseUrl: cfgBase } = pg.geidea as any;
-      const baseUrl = (cfgBase || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
-      const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
-
-      const merchantReferenceId = orderId || `EXP-${nanoid()}`;
-      const amountFormatted = Number(amount).toFixed(2);
-
-      const crypto = await import('crypto');
-      const now = new Date();
-      const pad2x = (n: number) => String(n).padStart(2, '0');
-      const hx = now.getHours();
-      const ampmx = hx >= 12 ? 'PM' : 'AM';
-      const h12x = hx % 12 || 12;
-      const timestamp = `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear()} ${h12x}:${pad2x(now.getMinutes())}:${pad2x(now.getSeconds())} ${ampmx}`;
-      const rawSignature = `${publicKey}${amountFormatted}${currency}${merchantReferenceId}${timestamp}`;
-      const signature = crypto.createHmac('sha256', apiPassword).update(rawSignature).digest('base64');
-
-      // Build a public callback URL (must be HTTPS, never localhost).
-      const requestOrigin = req.headers.origin as string | undefined;
-      const requestHost = req.headers.host as string | undefined;
-      const isPublicUrl = (u: string) => !!(u && u.startsWith('https://') && !u.includes('localhost') && !u.includes('127.0.0.1'));
-      const replitDomain = process.env.REPLIT_DEV_DOMAIN;
-      const publicBase = isPublicUrl(requestOrigin || '') ? requestOrigin :
-        (requestHost && !requestHost.includes('localhost') ? `https://${requestHost}` :
-        (replitDomain ? `https://${replitDomain}` : 'https://cluny.cafe'));
-      const callbackUrl = `${publicBase}/api/payments/geidea/callback?orderNumber=${encodeURIComponent(merchantReferenceId)}`;
-      const finalReturnUrl = isPublicUrl(returnUrl) ? returnUrl :
-        `${publicBase}/payment-return?orderNumber=${encodeURIComponent(merchantReferenceId)}`;
-
-      const walletLabelMap: Record<string, string> = {
-        'apple-pay': 'Apple Pay',
-        'google-pay': 'Google Pay',
-        'samsung-pay': 'Samsung Pay',
-      };
-
-      const geideaBody: any = {
-        merchantPublicKey: publicKey,
-        amount: Number(amountFormatted),
-        currency,
-        merchantReferenceId,
-        callbackUrl,
-        returnUrl: finalReturnUrl,
-        timestamp,
-        signature,
-        language: 'ar',
-        paymentOperation: 'Pay',
-        // ── The critical field: tell Geidea this session is for Express Checkout ──
-        expressCheckouts: [
-          { wallet, label: label || walletLabelMap[wallet] || wallet },
-        ],
-      };
-      if (customerEmail) geideaBody.customer = { email: customerEmail, phoneNumber: customerPhone };
-
-      console.log('[Express Checkout] Creating session for wallet:', wallet, 'orderId:', merchantReferenceId);
-
-      const sessionEndpoints = [
-        `${baseUrl}/payment-intent/api/v2/direct/session`,
-        `${baseUrl}/payment-intent/api/v1/session`,
-      ];
-
-      let sessionData: any = null;
-      let geideaSessionId: string | null = null;
-      let lastStatus = 0;
-
-      for (const sessionUrl of sessionEndpoints) {
-        try {
-          const ctrl = new AbortController();
-          // Geidea's session endpoint can take 5-15s during peak times.
-          // Use a generous 25s timeout so we don't fall back to v1 (which has
-          // a different request schema and rejects our v2 payload).
-          const timer = setTimeout(() => ctrl.abort(), 25000);
-          const sessionRes = await fetch(sessionUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
-            body: JSON.stringify(geideaBody),
-            signal: ctrl.signal,
-          }).finally(() => clearTimeout(timer));
-          lastStatus = sessionRes.status;
-          sessionData = await sessionRes.json().catch(() => ({}));
-          console.log(`[Express Checkout] ${sessionUrl} → ${sessionRes.status}:`, JSON.stringify(sessionData).substring(0, 1500));
-          geideaSessionId = sessionData?.session?.id || sessionData?.sessionId || sessionData?.id;
-          if (geideaSessionId) {
-            console.log('[Express Checkout] ✅ Session created:', geideaSessionId);
-            break;
-          }
-          if (sessionRes.status !== 404) break;
-        } catch (sessionErr: any) {
-          console.warn('[Express Checkout] endpoint error:', sessionUrl, sessionErr.message);
-        }
-      }
-
-      if (!geideaSessionId) {
-        return res.status(400).json({
-          error: sessionData?.detailedResponseMessage || sessionData?.responseMessage || `فشل إنشاء جلسة Express Checkout (${lastStatus})`,
-          gatewayResponse: sessionData,
-        });
-      }
-
-      res.json({ sessionId: geideaSessionId, orderId: merchantReferenceId });
-    } catch (err: any) {
-      console.error('[Express Checkout] init-session error:', err);
-      res.status(500).json({ error: "خطأ في تهيئة جلسة Express Checkout", details: err.message });
-    }
-  });
-
-  // ── Apple Pay: Validate Merchant Session ──────────────────────────
-  // Called by the frontend during ApplePaySession.onvalidatemerchant.
-  // Proxies the Apple validation URL through Geidea's backend which holds
-  // the merchant identity certificate.
-  app.post("/api/payments/apple-pay/validate-merchant", async (req, res) => {
-    try {
-      const { validationURL, sessionId } = req.body;
-      if (!validationURL) return res.status(400).json({ error: "validationURL مطلوب" });
-      if (!sessionId) return res.status(400).json({ error: "sessionId مطلوب — يجب إنشاء جلسة Geidea قبل التحقق من التاجر" });
-
-      const config = await BusinessConfigModel.findOne({ tenantId: 'demo-tenant' });
-      const pg = config?.paymentGateway;
-      if (!pg?.geidea?.publicKey || !pg?.geidea?.apiPassword) {
-        return res.status(400).json({ error: "بيانات Geidea غير مكتملة" });
-      }
-
-      const { publicKey, apiPassword, baseUrl: cfgBase, applePayMerchantId } = pg.geidea as any;
-      const baseUrl = (cfgBase || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
-      const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
-
-      const appleMerchantId = resolveApplePayMerchantId(applePayMerchantId);
-
-      // ⚠️ Apple Pay merchant validation MUST use the domain that is registered
-      // with Apple AND with Geidea (cluny.cafe). Using the request origin (e.g. a
-      // *.replit.dev preview URL) makes Apple/Geidea reject the validation.
-      // Always pass the registered production domain.
-      const merchantDomain = APPLE_PAY_DOMAIN;
-
-      console.log('[Apple Pay] validate-merchant → merchantId:', appleMerchantId, 'domain:', merchantDomain, 'sessionId:', sessionId, 'validationURL:', validationURL);
-
-      const results: { url: string; status: number; body: string }[] = [];
-
-      // Helper: fetch with timeout so we don't block for tens of seconds
-      const fetchWithTimeout = async (url: string, init: RequestInit, ms = 5000) => {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), ms);
-        try {
-          return await fetch(url, { ...init, signal: ctrl.signal });
-        } finally {
-          clearTimeout(t);
-        }
-      };
-
-      // ── Body format variants to try ──
-      // Geidea KSA Direct Apple Pay REQUIRES sessionId in the body so it can
-      // authenticate the merchant validation against the active payment intent.
-      // Without sessionId, Geidea returns 401 Unauthorized even with valid Basic Auth.
-      const bodyVariants = [
-        JSON.stringify({ sessionId, validationUrl: validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE', initiative: 'web', initiativeContext: merchantDomain }),
-        JSON.stringify({ sessionId, validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE', initiative: 'web', initiativeContext: merchantDomain }),
-        JSON.stringify({ sessionId, validationUrl: validationURL, merchantIdentifier: appleMerchantId, domainName: merchantDomain, displayName: 'CLUNY CAFE' }),
-      ];
-
-      // ── Geidea endpoints (v1 first, since diagnose shows that's the active one on KSA) ──
-      const geideaEndpoints = [
-        `${baseUrl}/payment/api/v1/direct/apple/merchant-session`,
-        `${baseUrl}/pgw/api/v1/direct/apple/merchant-session`,
-        `${baseUrl}/pgw/api/v2/direct/apple/merchant-session`,
-      ];
-
-      outer:
-      for (const url of geideaEndpoints) {
-        for (const body of bodyVariants) {
-          try {
-            const geideaRes = await fetchWithTimeout(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
-              body,
-            }, 5000);
-            const responseText = await geideaRes.text();
-            results.push({ url, status: geideaRes.status, body: responseText.substring(0, 300) });
-            console.log(`[Apple Pay] ${url} → ${geideaRes.status}: ${responseText.substring(0, 150)}`);
-
-            if (geideaRes.ok && responseText.trim().startsWith('{')) {
-              try {
-                const merchantSession = JSON.parse(responseText);
-                if (merchantSession.epochTimestamp || merchantSession.merchantSessionIdentifier || merchantSession.signature) {
-                  console.log('[Apple Pay] ✅ Merchant session obtained via:', url);
-                  return res.json(merchantSession);
-                }
-                if (merchantSession.session || merchantSession.data || merchantSession.merchantSession) {
-                  const inner = merchantSession.session || merchantSession.data || merchantSession.merchantSession;
-                  if (typeof inner === 'object') {
-                    console.log('[Apple Pay] ✅ Merchant session (wrapped) via:', url);
-                    return res.json(inner);
-                  }
-                }
-              } catch {}
-            }
-            // 404 → try next URL; auth/server errors → stop entirely (no point trying more variants)
-            if (geideaRes.status === 404) break;
-            if (geideaRes.status === 401 || geideaRes.status === 403 || geideaRes.status >= 500) break outer;
-          } catch (fetchErr: any) {
-            results.push({ url, status: 0, body: fetchErr.message });
-            console.warn(`[Apple Pay] fetch error ${url}:`, fetchErr.message);
-            break;
-          }
-        }
-      }
-
-      const certPath = process.env.APPLE_PAY_MERCHANT_IDENTITY_CERT_PATH || process.env.APPLE_PAY_CERT_PATH;
-      const certKeyPath = process.env.APPLE_PAY_KEY_PATH;
-      const certPassphrase = process.env.APPLE_PAY_CERT_PASSPHRASE;
-
-      if (certPath) {
-        try {
-          const fs = await import('fs');
-          const https = await import('https');
-          const certData = fs.readFileSync(certPath);
-          const isPem = certData.toString('utf8', 0, 10).includes('-----');
-          const isPfx = !isPem && /\.(p12|pfx)$/i.test(certPath);
-
-          let agent: any;
-          if (isPfx) {
-            agent = new https.Agent({ pfx: certData, passphrase: certPassphrase || '' });
-            console.log('[Apple Pay] Using PFX certificate for Apple direct validation');
-          } else if (certKeyPath && fs.existsSync(certKeyPath)) {
-            const keyData = fs.readFileSync(certKeyPath);
-            agent = new https.Agent({ cert: certData, key: keyData, passphrase: certPassphrase || '' });
-            console.log('[Apple Pay] Using PEM certificate + key for Apple direct validation');
-          } else {
-            console.warn('[Apple Pay] Merchant Identity certificate/key not configured. Skipping direct Apple validation.');
-            results.push({ url: 'direct-apple-certificate', status: 0, body: 'Merchant Identity certificate and private key are required for direct Apple validation' });
-          }
-
-          if (agent) {
-            console.log('[Apple Pay] Trying Apple direct validationURL with certificate');
-            const appleRes = await fetch(validationURL, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                merchantIdentifier: appleMerchantId,
-                domainName: merchantDomain,
-                displayName: 'CLUNY CAFE',
-              }),
-              // @ts-ignore
-              agent,
-            });
-
-            const appleBody = await appleRes.text();
-            console.log(`[Apple Pay] Apple direct → ${appleRes.status}: ${appleBody.substring(0, 200)}`);
-
-            if (appleRes.ok) {
-              console.log('[Apple Pay] ✅ Merchant session validated directly via Apple');
-              return res.json(JSON.parse(appleBody));
-            }
-            results.push({ url: validationURL, status: appleRes.status, body: appleBody.substring(0, 300) });
-          }
-        } catch (certErr: any) {
-          console.error('[Apple Pay] Apple direct error:', certErr.message);
-          results.push({ url: validationURL, status: 0, body: certErr.message });
-        }
-      }
-
-      // ── All methods failed — return diagnostic summary ──
-      const hasAuthError = results.some(r => r.status === 401 || r.status === 403);
-      const hasDomainError = results.some(r => r.body.toLowerCase().includes('domain') || r.body.toLowerCase().includes('registered'));
-      const allNotFound = results.every(r => r.status === 404 || r.status === 0);
-
-      console.error('[Apple Pay] ❌ All validation methods failed. Results:', JSON.stringify(results));
-
-      let errorMsg = 'Apple Pay غير مفعّل بعد على حساب Geidea. تواصل مع Geidea لتفعيل خدمة Apple Pay Direct API.';
-      let errorCode = 'GEIDEA_APPLE_PAY_NOT_ACTIVATED';
-
-      if (allNotFound) {
-        errorMsg = 'Apple Pay Direct API غير مفعّل على حساب Geidea. تواصل مع Geidea على support@geidea.net أو 920000038 وأطلب تفعيل Apple Pay Direct API.';
-        errorCode = 'GEIDEA_APPLE_PAY_NOT_ACTIVATED';
-      } else if (hasAuthError) {
-        errorMsg = 'Apple Pay Direct API غير مفعّل على حساب Geidea (خطأ 401). تواصل مع Geidea على support@geidea.net أو 920000038 وأطلب تفعيل Apple Pay Direct API.';
-        errorCode = 'GEIDEA_APPLE_PAY_NOT_ACTIVATED';
-      } else if (hasDomainError) {
-        errorMsg = 'Apple Pay غير مفعّل بعد. تواصل مع Geidea على support@geidea.net أو 920000038 لتفعيل Apple Pay Direct API.';
-        errorCode = 'GEIDEA_APPLE_PAY_NOT_ACTIVATED';
-      }
-
-      return res.status(502).json({
-        error: errorMsg,
-        errorCode,
-        setupRequired: true,
-        diagnostic: results.map(r => ({ url: r.url, status: r.status, preview: r.body })),
-      });
-    } catch (err: any) {
-      console.error('[Apple Pay] validate-merchant error:', err);
-      res.status(500).json({ error: "خطأ في التحقق من التاجر", details: err.message });
-    }
-  });
-
-  // ── Apple Pay: Pre-create Geidea Session ──────────────────────────
-  // Creates a Geidea session before showing the Apple Pay sheet.
-  // Returns the sessionId to be used in the Direct Apple Pay API call.
-  app.post("/api/payments/apple-pay/init-session", async (req, res) => {
-    try {
-      const { amount, currency = 'SAR', orderId, customerEmail, customerPhone } = req.body;
-      if (!amount || !orderId) return res.status(400).json({ error: "amount و orderId مطلوبان" });
-
-      const config = await BusinessConfigModel.findOne({ tenantId: 'demo-tenant' });
-      const pg = config?.paymentGateway;
-      if (!pg?.geidea?.publicKey || !pg?.geidea?.apiPassword) {
-        return res.status(400).json({ error: "بيانات Geidea غير مكتملة" });
-      }
-
-      const { publicKey, apiPassword, baseUrl: cfgBase } = pg.geidea as any;
-      const baseUrl = (cfgBase || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
-      const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
-
-      const crypto = await import('crypto');
-      const now = new Date();
-      const pad2 = (n: number) => String(n).padStart(2, '0');
-      const h = now.getHours();
-      const ampm = h >= 12 ? 'PM' : 'AM';
-      const h12 = h % 12 || 12;
-      // Geidea required format: M/D/YYYY H:MM:SS AM/PM (no leading zeros on month/day/hour)
-      const timestamp = `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear()} ${h12}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())} ${ampm}`;
-      const amountFormatted = Number(amount).toFixed(2);
-      const rawSignature = `${publicKey}${amountFormatted}${currency}${orderId}${timestamp}`;
-      const signature = crypto.createHmac('sha256', apiPassword).update(rawSignature).digest('base64');
-
-      const requestOrigin = req.headers.origin as string | undefined;
-      const requestHost = req.headers.host as string | undefined;
-      const isPublicUrl = (u: string) => !!(u && u.startsWith('https://') && !u.includes('localhost') && !u.includes('127.0.0.1'));
-      const replitDomain = process.env.REPLIT_DEV_DOMAIN;
-      const publicBase = isPublicUrl(requestOrigin || '') ? requestOrigin :
-        (requestHost && !requestHost.includes('localhost') ? `https://${requestHost}` :
-        (replitDomain ? `https://${replitDomain}` : null));
-      const callbackUrl = publicBase
-        ? `${publicBase}/api/payments/geidea/callback?orderNumber=${encodeURIComponent(orderId)}`
-        : `https://cluny.cafe/api/payments/geidea/callback?orderNumber=${encodeURIComponent(orderId)}`;
-
-      const sessionBody: any = {
-        merchantPublicKey: publicKey,
-        amount: Number(amountFormatted),
-        currency,
-        merchantReferenceId: orderId,
-        callbackUrl,
-        timestamp,
-        signature,
-        language: 'ar',
-      };
-      if (customerEmail) sessionBody.customer = { email: customerEmail, phoneNumber: customerPhone };
-
-      console.log('[Apple Pay] Creating Geidea session, orderId:', orderId, 'amount:', amount);
-
-      // Try multiple session creation endpoints (KSA may use different path)
-      const sessionEndpoints = [
-        `${baseUrl}/payment-intent/api/v2/direct/session`,
-        `${baseUrl}/payment-intent/api/v1/session`,
-        `${baseUrl}/pgw/api/v2/direct/session`,
-      ];
-
-      let sessionData: any = null;
-      let geideaSessionId: string | null = null;
-
-      for (const sessionUrl of sessionEndpoints) {
-        try {
-          const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 6000);
-          const sessionRes = await fetch(sessionUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
-            body: JSON.stringify(sessionBody),
-            signal: ctrl.signal,
-          }).finally(() => clearTimeout(timer));
-          sessionData = await sessionRes.json() as any;
-          console.log(`[Apple Pay] Session ${sessionUrl} → ${sessionRes.status}:`, JSON.stringify(sessionData).substring(0, 200));
-          geideaSessionId = sessionData?.session?.id || sessionData?.sessionId || sessionData?.id;
-          if (geideaSessionId) {
-            console.log('[Apple Pay] ✅ Session created via:', sessionUrl, 'id:', geideaSessionId);
-            break;
-          }
-          if (sessionRes.status !== 404) break;
-        } catch (sessionErr: any) {
-          console.warn('[Apple Pay] Session endpoint error:', sessionUrl, sessionErr.message);
-        }
-      }
-
-      if (!geideaSessionId) {
-        return res.status(400).json({
-          error: sessionData?.detailedResponseMessage || sessionData?.responseMessage || "فشل إنشاء جلسة الدفع",
-        });
-      }
-
-      res.json({ sessionId: geideaSessionId });
-    } catch (err: any) {
-      console.error('[Apple Pay] init-session error:', err);
-      res.status(500).json({ error: "خطأ في تهيئة جلسة الدفع", details: err.message });
-    }
-  });
-
-  // ── Apple Pay: Process Payment ─────────────────────────────────────
-  // Sends the Apple Pay payment token to Geidea's Direct API.
-  app.post("/api/payments/apple-pay/process", async (req, res) => {
-    try {
-      const { applePayToken, amount, currency = 'SAR', orderId, geideaSessionId, customerEmail, customerPhone } = req.body;
-
-      if (!applePayToken || !amount || !orderId) {
-        return res.status(400).json({ error: "بيانات الدفع غير مكتملة" });
-      }
-
-      const config = await BusinessConfigModel.findOne({ tenantId: 'demo-tenant' });
-      const pg = config?.paymentGateway;
-      if (!pg?.geidea?.publicKey || !pg?.geidea?.apiPassword) {
-        return res.status(400).json({ error: "بيانات Geidea غير مكتملة" });
-      }
-
-      const { publicKey, apiPassword, baseUrl: cfgBase } = pg.geidea as any;
-      const baseUrl = (cfgBase || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
-      const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
-
-      // Use pre-created sessionId from frontend (created before showing Apple Pay sheet)
-      // If not provided, fall back to creating one now
-      let sessionId = geideaSessionId;
-      if (!sessionId) {
-        const crypto = await import('crypto');
-        const now = new Date();
-        const pad2b = (n: number) => String(n).padStart(2, '0');
-        const hb = now.getHours();
-        const ampmb = hb >= 12 ? 'PM' : 'AM';
-        const h12b = hb % 12 || 12;
-        const timestamp = `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear()} ${h12b}:${pad2b(now.getMinutes())}:${pad2b(now.getSeconds())} ${ampmb}`;
-        const amountFormatted = Number(amount).toFixed(2);
-        const rawSignature = `${publicKey}${amountFormatted}${currency}${orderId}${timestamp}`;
-        const signature = crypto.createHmac('sha256', apiPassword).update(rawSignature).digest('base64');
-        const requestOrigin = req.headers.origin as string | undefined;
-        const requestHost = req.headers.host as string | undefined;
-        const isPublicUrl = (u: string) => !!(u && u.startsWith('https://') && !u.includes('localhost') && !u.includes('127.0.0.1'));
-        const replitDomain = process.env.REPLIT_DEV_DOMAIN;
-        const publicBase = isPublicUrl(requestOrigin || '') ? requestOrigin :
-          (requestHost && !requestHost.includes('localhost') ? `https://${requestHost}` :
-          (replitDomain ? `https://${replitDomain}` : null));
-        const callbackUrl = publicBase
-          ? `${publicBase}/api/payments/geidea/callback?orderNumber=${encodeURIComponent(orderId)}`
-          : `https://cluny.cafe/api/payments/geidea/callback?orderNumber=${encodeURIComponent(orderId)}`;
-        const sessionBody: any = { merchantPublicKey: publicKey, amount: Number(amountFormatted), currency, merchantReferenceId: orderId, callbackUrl, timestamp, signature, language: 'ar' };
-        if (customerEmail) sessionBody.customer = { email: customerEmail, phoneNumber: customerPhone };
-
-        const sessionEndpoints = [
-          `${baseUrl}/payment-intent/api/v2/direct/session`,
-          `${baseUrl}/payment-intent/api/v1/session`,
-          `${baseUrl}/pgw/api/v2/direct/session`,
-          `${baseUrl}/pgw/api/v1/direct/session`,
-        ];
-        let lastSessionData: any = null;
-        for (const sessionUrl of sessionEndpoints) {
-          try {
-            const sessionRes = await fetch(sessionUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
-              body: JSON.stringify(sessionBody),
-            });
-            lastSessionData = await sessionRes.json() as any;
-            sessionId = lastSessionData?.session?.id || lastSessionData?.sessionId || lastSessionData?.id;
-            if (sessionId) { console.log('[Apple Pay] ✅ Fallback session created via:', sessionUrl); break; }
-            if (sessionRes.status !== 404) break;
-          } catch (e: any) { console.warn('[Apple Pay] Fallback session error:', sessionUrl, e.message); }
-        }
-        if (!sessionId) {
-          return res.status(400).json({ error: lastSessionData?.detailedResponseMessage || lastSessionData?.responseMessage || "فشل إنشاء جلسة الدفع" });
-        }
-      }
-
-      // Call Geidea Direct Apple Pay API
-      // event.payment.token structure from Apple Pay JS API:
-      //   { paymentData: { version, data, signature, header }, paymentMethod: {...}, transactionIdentifier }
-      // For method:"encrypted" → walletData = the paymentData sub-object (contains the encrypted blob)
-      // For method:"decrypted" → walletData = the decrypted token (requires Payment Processing private key)
-      // Geidea handles decryption on their side when method is "encrypted".
-      const tokenObj = typeof applePayToken === 'string'
-        ? JSON.parse(applePayToken)
-        : applePayToken;
-
-      // Extract the paymentData sub-object which has {version, data, signature, header}
-      // This is what Geidea needs to decrypt the Apple Pay token on their side
-      const paymentDataObj = tokenObj?.paymentData ?? tokenObj;
-      const walletDataStr = typeof paymentDataObj === 'string'
-        ? paymentDataObj
-        : JSON.stringify(paymentDataObj);
-
-      // Try Geidea's documented Apple Pay endpoints. Per Geidea docs the
-      // documented enum is "encrypted" — try that first, then "decrypted" as fallback.
-      const applePayEndpoints = [
-        `${baseUrl}/pgw/api/v2/direct/apple/pay`,
-        `${baseUrl}/pgw/api/v1/direct/apple/pay`,
-      ];
-
-      const bodyVariants = [
-        { sessionId, orderId, method: "encrypted", walletData: walletDataStr, source: "DirectAPI", initiatedBy: "Internet" },
-        { sessionId, orderId, method: "decrypted", walletData: walletDataStr, source: "DirectAPI", initiatedBy: "Internet" },
-      ];
-
-      console.log('[Apple Pay] Calling Geidea Direct Apple Pay API, sessionId:', sessionId, 'orderId:', orderId);
-
-      const attempts: Array<{ url: string; status: number; body: string; method: string }> = [];
-      let successData: any = null;
-      let successUrl = '';
-
-      outer:
-      for (const url of applePayEndpoints) {
-        for (const body of bodyVariants) {
-          try {
-            const r = await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
-              body: JSON.stringify(body),
-            });
-            const txt = await r.text();
-            attempts.push({ url, status: r.status, body: txt.substring(0, 250), method: body.method });
-            console.log(`[Apple Pay] ${url} method=${body.method} → ${r.status}: ${txt.substring(0, 200)}`);
-
-            if (r.ok && txt.trim().startsWith('{')) {
-              try {
-                const parsed = JSON.parse(txt);
-                if (!parsed.responseCode || parsed.responseCode === '000') {
-                  successData = parsed;
-                  successUrl = url;
-                  break outer;
-                }
-              } catch {}
-            }
-            // 404 = try next URL; other status codes (400/401) = try next body variant
-            if (r.status === 404) break;
-          } catch (fetchErr: any) {
-            attempts.push({ url, status: 0, body: fetchErr.message, method: body.method });
-            console.warn(`[Apple Pay] fetch error ${url}:`, fetchErr.message);
-            break;
-          }
-        }
-      }
-
-      if (!successData) {
-        console.error('[Apple Pay] ❌ All Direct API attempts failed:', JSON.stringify(attempts));
-        const allNotFound = attempts.every(a => a.status === 404 || a.status === 0);
-        const hasAuthError = attempts.some(a => a.status === 401 || a.status === 403);
-        const lastWithBody = attempts.find(a => a.body && a.status >= 400 && a.status < 500 && a.status !== 404);
-        let errorMsg = 'فشلت عملية الدفع';
-        if (allNotFound) {
-          errorMsg = 'Apple Pay Direct API غير مفعّل على حساب Geidea. تواصل مع support@geidea.net أو 920000038 وأطلب تفعيل Apple Pay Direct API.';
-        } else if (hasAuthError) {
-          errorMsg = 'Apple Pay Direct API غير مفعّل على حساب Geidea (401). تواصل مع support@geidea.net أو 920000038.';
-        } else if (lastWithBody) {
-          try {
-            const parsed = JSON.parse(lastWithBody.body);
-            errorMsg = parsed.detailedResponseMessage || parsed.responseMessage || parsed.message || errorMsg;
-          } catch {
-            errorMsg = lastWithBody.body.substring(0, 200);
-          }
-        }
-        return res.status(400).json({ error: errorMsg, diagnostic: attempts });
-      }
-
-      console.log('[Apple Pay] ✅ Payment successful via:', successUrl);
-      res.json({
-        success: true,
-        transactionId: successData.order?.id || successData.orderId || sessionId,
-        responseCode: successData.responseCode,
-      });
-    } catch (err: any) {
-      console.error('[Apple Pay] process error:', err);
-      res.status(500).json({ error: "خطأ في معالجة الدفع", details: err.message });
-    }
-  });
-
-  // ── Apple Pay: Get Merchant Identifier ────────────────────────────
-  app.get("/api/payments/apple-pay/merchant-id", async (req, res) => {
-    const config = await BusinessConfigModel.findOne({ tenantId: 'demo-tenant' });
-    const merchantId = resolveApplePayMerchantId((config?.paymentGateway as any)?.geidea?.applePayMerchantId);
-    res.json({ merchantId });
-  });
-
-  // ── Apple Pay: Diagnostic endpoint ─────────────────────────────────
-  // GET /api/payments/apple-pay/diagnose
-  // Tests each component of the Apple Pay setup and returns a status report.
-  app.get("/api/payments/apple-pay/diagnose", async (req, res) => {
-    const report: Record<string, any> = {};
-
-    // 1. Check .well-known file
-    try {
-      const fs = await import('fs');
-      const path = await import('path');
-      const { fileURLToPath } = await import('url');
-      const __filename = fileURLToPath(import.meta.url);
-      const __dirname2 = path.dirname(__filename);
-      const wkPath = path.resolve(__dirname2, '..', 'public', '.well-known', 'apple-developer-merchantid-domain-association');
-      const exists = fs.existsSync(wkPath);
-      report.wellKnownFile = { exists, path: wkPath, size: exists ? fs.statSync(wkPath).size : 0 };
-    } catch (e: any) { report.wellKnownFile = { error: e.message }; }
-
-    // 2. Check Geidea config
-    try {
-      const config = await BusinessConfigModel.findOne({ tenantId: 'demo-tenant' });
-      const pg = (config?.paymentGateway as any)?.geidea;
-      report.geideaConfig = {
-        hasPublicKey: !!pg?.publicKey,
-        hasApiPassword: !!pg?.apiPassword,
-        baseUrl: pg?.baseUrl || 'https://api.ksamerchant.geidea.net',
-        applePayMerchantId: resolveApplePayMerchantId(pg?.applePayMerchantId),
-      };
-    } catch (e: any) { report.geideaConfig = { error: e.message }; }
-
-    // 3. Check env vars
-    report.envVars = {
-      APPLE_PAY_MERCHANT_ID: process.env.APPLE_PAY_MERCHANT_ID ? 'SET' : 'not set',
-      APPLE_PAY_DOMAIN: process.env.APPLE_PAY_DOMAIN ? 'SET' : 'not set',
-      APPLE_PAY_CERT_PATH: process.env.APPLE_PAY_CERT_PATH ? 'SET' : 'not set',
-      APPLE_PAY_MERCHANT_IDENTITY_CERT_PATH: process.env.APPLE_PAY_MERCHANT_IDENTITY_CERT_PATH ? 'SET' : 'not set',
-      APPLE_PAY_CERT_PASSPHRASE: process.env.APPLE_PAY_CERT_PASSPHRASE ? 'SET' : 'not set',
-    };
-    report.localFiles = {
-      domainAssociationPath: APPLE_PAY_DOMAIN_ASSOCIATION_PATH,
-      paymentProcessingCertificatePath: path.resolve(process.cwd(), 'certs/apple_pay_payment_processing_merchant_cluny_cafe.cer'),
-      paymentProcessingCertificateExists: fs.existsSync(path.resolve(process.cwd(), 'certs/apple_pay_payment_processing_merchant_cluny_cafe.cer')),
-    };
-
-    // 4. Test Geidea API connectivity
-    try {
-      const config = await BusinessConfigModel.findOne({ tenantId: 'demo-tenant' });
-      const pg = (config?.paymentGateway as any)?.geidea;
-      if (pg?.publicKey && pg?.apiPassword) {
-        const baseUrl = (pg.baseUrl || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
-        const credentials = Buffer.from(`${pg.publicKey}:${pg.apiPassword}`).toString('base64');
-        const endpoints = [
-          `${baseUrl}/payment/api/v1/direct/apple/merchant-session`,
-          `${baseUrl}/pgw/api/v2/direct/apple/merchant-session`,
-          `${baseUrl}/pgw/api/v2/direct/apple/sessions`,
-        ];
-        const endpointResults = await Promise.all(endpoints.map(async (url) => {
-          try {
-            const r = await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}` },
-              body: JSON.stringify({ validationUrl: 'https://test.apple.com', merchantIdentifier: resolveApplePayMerchantId(pg.applePayMerchantId), domainName: APPLE_PAY_DOMAIN, displayName: 'CLUNY CAFE' }),
-            });
-            const body = await r.text();
-            return { url, status: r.status, preview: body.substring(0, 150) };
-          } catch (e: any) {
-            return { url, status: 0, error: e.message };
-          }
-        }));
-        report.geideaEndpoints = endpointResults;
-      }
-    } catch (e: any) { report.geideaEndpoints = { error: e.message }; }
-
-    // 5. Domain info
-    report.serverDomain = req.headers.host || 'unknown';
-    report.expectedApplePayDomain = APPLE_PAY_DOMAIN;
-
-    res.json({ ok: true, timestamp: new Date().toISOString(), report });
-  });
-
   // Initialize payment session (gateway-agnostic)
+  // ── Public QR-pay endpoints ─────────────────────────────────────────────
+  // Helper: build a safe, minimal public view of an order for the pay page.
+  // Does NOT expose customer PII (name/phone), notes, employee, tenant, etc.
+  const buildPublicPayPayload = (order: any) => {
+    const totalAmount = Number(order.totalAmount || order.total || 0);
+    const subtotal = Number(order.subtotal || (totalAmount / 1.15));
+    const tax = Number(order.tax || (totalAmount - subtotal));
+    const items = (Array.isArray(order.items) ? order.items : []).map((it: any) => {
+      const qty = Number(it.quantity || 1);
+      const price = Number(it.price || it.unitPrice || 0);
+      return {
+        name: it.name || it.nameAr || it.coffeeItem?.nameAr || '',
+        quantity: qty,
+        price,
+        total: +(price * qty).toFixed(2),
+      };
+    });
+    const alreadyPaid =
+      order.paymentStatus === 'paid' ||
+      order.status === 'payment_confirmed' ||
+      order.status === 'completed';
+    return {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      paymentStatus: order.paymentStatus || 'pending',
+      total: +totalAmount.toFixed(2),
+      subtotal: +subtotal.toFixed(2),
+      tax: +tax.toFixed(2),
+      tableNumber: order.tableNumber || undefined,
+      items,
+      alreadyPaid,
+    };
+  };
+
+  // Lookup by unguessable nanoid `id` field — avoids IDOR via predictable
+  // `orderNumber` (which wraps `ORD#0001..0999`). Tenant is NOT trusted from
+  // the request; nanoid is globally unique across tenants.
+  app.get("/api/pay/order/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!id || id.length < 8) return res.status(404).json({ error: "الفاتورة غير موجودة" });
+      const order = await OrderModel.findOne({ id }).lean() as any;
+      if (!order) return res.status(404).json({ error: "الفاتورة غير موجودة" });
+      return res.json(buildPublicPayPayload(order));
+    } catch (err: any) {
+      console.error('[pay/order]', err);
+      return res.status(500).json({ error: "خطأ في جلب الفاتورة" });
+    }
+  });
+
+  // Returns the table info + any open/unpaid bills for that table's QR token.
+  // Tenant is taken from the table record itself, never from the client.
+  app.get("/api/pay/table/:qrToken", async (req, res) => {
+    try {
+      const { qrToken } = req.params;
+      const table = await storage.getTableByQRToken(qrToken);
+      if (!table) return res.status(404).json({ error: "الطاولة غير موجودة" });
+
+      const tenantId = (table as any).tenantId;
+      if (!tenantId) return res.status(404).json({ error: "الطاولة غير موجودة" });
+
+      const orders = await OrderModel.find({
+        tenantId,
+        tableNumber: table.tableNumber,
+        $and: [
+          { paymentStatus: { $ne: 'paid' } },
+          { status: { $nin: ['cancelled', 'completed', 'payment_confirmed'] } },
+        ],
+      }).sort({ createdAt: -1 }).limit(10).lean() as any[];
+
+      return res.json({
+        table: { tableNumber: table.tableNumber },
+        bills: orders.map(buildPublicPayPayload),
+      });
+    } catch (err: any) {
+      console.error('[pay/table]', err);
+      return res.status(500).json({ error: "خطأ في جلب فواتير الطاولة" });
+    }
+  });
+
   app.post("/api/payments/init", async (req, res) => {
     try {
-      const { amount, orderId, currency = 'SAR', customerEmail, customerPhone, customerName, returnUrl } = req.body;
+      const { amount, orderId, currency = 'SAR', customerEmail, customerPhone, customerName, returnUrl, paymentMethod: reqPaymentMethod } = req.body;
 
       if (!amount || amount <= 0) {
         return res.status(400).json({ error: "المبلغ مطلوب" });
       }
 
-      const tenantId = 'demo-tenant';
-      const config = await BusinessConfigModel.findOne({ tenantId });
-      const pg = config?.paymentGateway;
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const config = await BusinessConfigModel.findOne({ tenantId }).lean();
+      const pg = (config as any)?.paymentGateway;
 
       if (!pg || pg.provider === 'none') {
         return res.status(400).json({ error: "لم يتم تكوين بوابة دفع إلكتروني" });
@@ -3063,77 +3425,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (pg.provider === 'geidea') {
         const publicKey = pg.geidea?.publicKey;
         const apiPassword = pg.geidea?.apiPassword;
-        const baseUrl = (pg.geidea?.baseUrl || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
+        const baseUrl = (pg.geidea?.baseUrl || 'https://api.merchant.geidea.net').replace(/\/$/, '');
 
         if (!publicKey || !apiPassword) {
           return res.status(400).json({ error: "بيانات اعتماد جيديا غير مكتملة" });
         }
 
         try {
-          const crypto = await import('crypto');
-          const merchantReferenceId = orderId || `ORD-${internalSessionId}`;
+          const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
+          const merchantReferenceId = orderId || `order-${internalSessionId}`;
 
-          // Generate timestamp in Geidea required format: M/D/YYYY H:MM:SS AM/PM
-          const now = new Date();
-          const pad2c = (n: number) => String(n).padStart(2, '0');
-          const hc = now.getHours();
-          const ampmc = hc >= 12 ? 'PM' : 'AM';
-          const h12c = hc % 12 || 12;
-          const timestamp = `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear()} ${h12c}:${pad2c(now.getMinutes())}:${pad2c(now.getSeconds())} ${ampmc}`;
-
-          // Format amount to 2 decimal places for signature
-          const amountFormatted = Number(amount).toFixed(2);
-
-          // Generate HMAC-SHA256 signature: Base64(HMAC(PK + amount + currency + refId + timestamp, apiPassword))
-          const rawSignature = `${publicKey}${amountFormatted}${currency}${merchantReferenceId}${timestamp}`;
-          const signature = crypto.createHmac('sha256', apiPassword)
-            .update(rawSignature)
-            .digest('base64');
-
-          // Build public callback URL — must be HTTPS and publicly accessible (not localhost)
-          // Detect the actual request host to support custom domains like cluny.cafe
-          const requestOrigin = req.headers.origin as string | undefined;
-          const requestHost = req.headers.host as string | undefined;
-          const isPublicUrl = (u: string) => !!(u && u.startsWith('https://') && !u.includes('localhost') && !u.includes('127.0.0.1'));
-          
-          // Priority: request origin (if public HTTPS) → REPLIT_DEV_DOMAIN → stored callbackUrl base
-          const replitDomain = process.env.REPLIT_DEV_DOMAIN;
-          const publicBase = (isPublicUrl(requestOrigin || '') ? requestOrigin :
-            (requestHost && !requestHost.includes('localhost') ? `https://${requestHost}` :
-            (replitDomain ? `https://${replitDomain}` :
-            (pg.geidea?.callbackUrl ? pg.geidea.callbackUrl.replace(/\/[^/]+$/, '') : null))));
-          
-          // Use the provided returnUrl only if it's a public HTTPS URL, otherwise build from publicBase
-          const callbackBase = isPublicUrl(returnUrl)
-            ? returnUrl
-            : (publicBase ? `${publicBase}/api/payments/geidea/callback?orderNumber=${encodeURIComponent(merchantReferenceId)}` : null);
-
-          if (!callbackBase) {
-            return res.status(400).json({ error: "تعذّر تحديد عنوان رد الاتصال. يرجى نشر التطبيق أولاً." });
-          }
+          // Build the callback URL so Geidea appends its result params
+          const callbackBase = returnUrl || pg.geidea?.callbackUrl || '';
+          const callbackUrl = callbackBase.includes('?')
+            ? callbackBase
+            : callbackBase;
 
           const geideaBody: any = {
-            merchantPublicKey: publicKey,
-            amount: Number(amountFormatted),
+            amount: Number(amount),
             currency,
             merchantReferenceId,
-            callbackUrl: callbackBase,
-            timestamp,
-            signature,
-            language: 'ar',
+            customer: {
+              email: customerEmail || undefined,
+              phoneNumber: customerPhone || undefined,
+            },
           };
 
-          if (customerEmail) geideaBody.customer = { email: customerEmail, phoneNumber: customerPhone };
+          // Set callbackUrl (server-to-server webhook) and returnUrl (customer redirect)
+          if (callbackBase) {
+            geideaBody.callbackUrl = callbackBase;
+            geideaBody.returnUrl = callbackBase;
+          }
 
-          console.log('[Geidea] Sending session request to:', `${baseUrl}/payment-intent/api/v2/direct/session`);
-          console.log('[Geidea] Body:', JSON.stringify({ ...geideaBody, signature: '***' }));
-
-          const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
-
-          // Fetch with a 7s timeout so a slow Geidea response doesn't hang the user.
-          const geideaCtrl = new AbortController();
-          const geideaTimer = setTimeout(() => geideaCtrl.abort(), 7000);
-          const geideaResponse = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session`, {
+          const geideaResponse = await fetch(`${baseUrl}/payment-intent/api/v1/direct/eInvoice`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -3141,88 +3465,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
               'Accept': 'application/json',
             },
             body: JSON.stringify(geideaBody),
-            signal: geideaCtrl.signal,
-          }).finally(() => clearTimeout(geideaTimer));
+          });
 
           const geideaData = await geideaResponse.json() as any;
-          console.log('[Geidea] Session response:', JSON.stringify(geideaData));
+          console.log('[Geidea] eInvoice response:', JSON.stringify(geideaData));
 
-          // Only fall back to v1 when v2 truly doesn't exist (404). For business
-          // errors (4xx with a response body) the v1 endpoint will return the
-          // exact same error — re-trying just doubles the latency.
-          if (geideaResponse.status === 404) {
-            console.log('[Geidea] v2 not found, trying v1/session...');
-            const ctrl2 = new AbortController();
-            const timer2 = setTimeout(() => ctrl2.abort(), 7000);
-            const geideaResponse2 = await fetch(`${baseUrl}/payment-intent/api/v1/session`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Basic ${credentials}`,
-                'Accept': 'application/json',
-              },
-              body: JSON.stringify(geideaBody),
-              signal: ctrl2.signal,
-            }).finally(() => clearTimeout(timer2));
-            const geideaData2 = await geideaResponse2.json() as any;
-            console.log('[Geidea] v1/session response:', JSON.stringify(geideaData2));
+          const geideaEInvoiceId = geideaData.eInvoiceId || geideaData.paymentIntentId;
+          const geideaPaymentUrl = geideaData.paymentUrl || geideaData.redirectUrl;
 
-            const sessionId2 = geideaData2.session?.id || geideaData2.sessionId;
-            const paymentUrl2 = geideaData2.session?.paymentUrl || geideaData2.paymentUrl ||
-              (sessionId2 ? `${baseUrl}/payment-intent/checkout?session=${sessionId2}` : null);
-
-            if (sessionId2 || paymentUrl2) {
-              return res.json({
-                success: true,
-                sessionId: sessionId2 || internalSessionId,
-                redirectUrl: paymentUrl2,
-                paymentUrl: paymentUrl2,
-                provider: 'geidea',
-                merchantReferenceId,
-              });
-            }
-
-            return res.status(400).json({
-              error: "فشل في إنشاء جلسة الدفع عبر جيديا",
-              details: geideaData2.detailedResponseMessage || geideaData2.responseMessage || 'خطأ غير معروف',
-              raw: geideaData2,
+          if (geideaResponse.ok && geideaPaymentUrl) {
+            await logPayment({
+              tenantId,
+              event: 'init',
+              provider: 'geidea',
+              amount: Number(amount),
+              currency,
+              status: 'pending',
+              sessionId: geideaEInvoiceId || internalSessionId,
+              externalId: geideaEInvoiceId,
+              orderId: req.body.orderId,
+              customerPhone: req.body.customerPhone,
+              customerEmail: req.body.customerEmail,
+              ipAddress: req.ip,
             });
-          }
-
-          if (!geideaResponse.ok || geideaData.responseCode !== '000') {
+            return res.json({
+              success: true,
+              sessionId: geideaEInvoiceId || internalSessionId,
+              redirectUrl: geideaPaymentUrl,
+              paymentUrl: geideaPaymentUrl,
+              provider: 'geidea',
+              merchantReferenceId,
+              externalId: geideaEInvoiceId,
+            });
+          } else {
+            console.error('[Geidea] Payment init failed:', geideaData);
+            await logPayment({
+              tenantId,
+              event: 'failed',
+              provider: 'geidea',
+              amount: Number(amount),
+              currency,
+              status: 'failed',
+              orderId: req.body.orderId,
+              customerPhone: req.body.customerPhone,
+              errorMessage: geideaData.detailedResponseMessage || geideaData.responseMessage || 'فشل إنشاء eInvoice',
+              rawData: geideaData,
+              ipAddress: req.ip,
+            });
             return res.status(400).json({
-              error: "فشل في إنشاء جلسة الدفع عبر جيديا",
+              error: "فشل في إنشاء رابط الدفع عبر جيديا",
               details: geideaData.detailedResponseMessage || geideaData.responseMessage || 'خطأ غير معروف',
               raw: geideaData,
             });
           }
-
-          const sessionId = geideaData.session?.id || geideaData.sessionId;
-
-          // Build the correct hosted checkout URL based on the base URL
-          const buildCheckoutUrl = (sid: string) => {
-            if (baseUrl.includes('ksamerchant')) {
-              return `https://www.ksamerchant.geidea.net/sa/checkout/?sessionId=${sid}`;
-            }
-            if (baseUrl.includes('uat')) {
-              return `https://www.uat.geidea.net/checkout/?sessionId=${sid}`;
-            }
-            return `https://www.geidea.net/checkout/?sessionId=${sid}`;
-          };
-
-          const paymentUrl = geideaData.session?.paymentUrl || geideaData.paymentUrl ||
-            (sessionId ? buildCheckoutUrl(sessionId) : null);
-
-          return res.json({
-            success: true,
-            sessionId: sessionId || internalSessionId,
-            redirectUrl: paymentUrl,
-            paymentUrl,
-            provider: 'geidea',
-            merchantReferenceId,
-          });
         } catch (geideaError: any) {
           console.error('[Geidea] API error:', geideaError.message);
+          await logPayment({ tenantId, event: 'failed', provider: 'geidea', amount: Number(amount), currency, status: 'failed', errorMessage: geideaError.message, ipAddress: req.ip });
           return res.status(500).json({ error: "خطأ في الاتصال بجيديا", details: geideaError.message });
         }
       }
@@ -3297,12 +3595,122 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (pg.provider === 'paymob') {
+        const secretKey = pg.paymob?.secretKey || process.env.PAYMOB_SECRET_KEY;
+        const publicKey = pg.paymob?.publicKey || process.env.PAYMOB_PUBLIC_KEY;
+        const hasSACredentials = !!(secretKey && publicKey);
+
+        if (hasSACredentials) {
+          // ── PayMob Saudi Arabia — Unified Checkout (Intention API) ──
+          const baseUrl = pg.paymob?.baseUrl || 'https://ksa.paymob.com';
+          const cardIntegrationIds: number[] = pg.paymob?.integrationIds?.length
+            ? pg.paymob.integrationIds.map(Number).filter(Boolean)
+            : [];
+          const applePayId = pg.paymob?.applePayIntegrationId ? Number(pg.paymob.applePayIntegrationId) : null;
+          const isApplePayRequest = reqPaymentMethod === 'paymob-apple-pay';
+          const integrationIds: number[] = isApplePayRequest && applePayId
+            ? [...cardIntegrationIds, applePayId]
+            : cardIntegrationIds;
+
+          try {
+            const amountHalalas = Math.round(Number(amount) * 100);
+            const intentBody: any = {
+              amount: amountHalalas,
+              currency: currency || 'SAR',
+              payment_methods: integrationIds,
+              items: [],
+              billing_data: {
+                first_name: (customerName || 'Guest').split(' ')[0] || 'Guest',
+                last_name: (customerName || 'Guest').split(' ').slice(1).join(' ') || 'Guest',
+                email: customerEmail || 'guest@cluny.cafe',
+                phone_number: customerPhone || '0500000000',
+                street: 'N/A', building: 'N/A', floor: 'N/A',
+                apartment: 'N/A', city: 'Yanbu', country: 'SAU',
+                state: 'N/A', postal_code: 'N/A',
+              },
+              customer: {
+                first_name: (customerName || 'Guest').split(' ')[0] || 'Guest',
+                last_name: (customerName || 'Guest').split(' ').slice(1).join(' ') || 'Guest',
+                email: customerEmail || 'guest@cluny.cafe',
+                phone_number: customerPhone || '0500000000',
+              },
+              extras: { order_ref: orderId || internalSessionId },
+              special_reference: orderId || internalSessionId,
+              notification_url: `${getAppBaseUrl(req)}/api/payments/paymob/webhook`,
+              redirection_url: returnUrl
+                ? `${returnUrl}${returnUrl.includes('?') ? '&' : '?'}session=${internalSessionId}`
+                : `${getAppBaseUrl(req)}/payment-return-iframe?session=${internalSessionId}&orderRef=${encodeURIComponent(orderId || internalSessionId)}`,
+            };
+
+            const intentRes = await fetch(`${baseUrl}/v1/intention/`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${secretKey}`,
+              },
+              body: JSON.stringify(intentBody),
+            });
+            const intentData = await intentRes.json() as any;
+
+            if (!intentRes.ok || !intentData.client_secret) {
+              console.error('[Paymob SA] Intention API failed:', JSON.stringify(intentData));
+              return res.status(400).json({
+                error: "فشل في إنشاء جلسة Paymob",
+                details: intentData?.message || intentData?.detail || JSON.stringify(intentData).slice(0, 200),
+              });
+            }
+
+            const clientSecret = intentData.client_secret;
+            const intentionId = intentData.id;
+            const checkoutUrl = `${baseUrl}/unifiedcheckout/?publicKey=${publicKey}&clientSecret=${clientSecret}`;
+
+            // Store clientSecret + intentionId on the order for later server-side verification
+            if (orderId) {
+              await OrderModel.findOneAndUpdate(
+                { $or: [{ orderNumber: orderId }, { _id: orderId }], tenantId: 'demo-tenant' },
+                { $set: { paymobClientSecret: clientSecret, paymobIntentionId: String(intentionId || '') } }
+              ).catch(() => {});
+            }
+
+            console.log(`[Paymob SA] Intention created. Session: ${internalSessionId}, Order: ${orderId}, IntentionId: ${intentionId}, HasClientSecret: ${!!clientSecret}`);
+            await logPayment({
+              tenantId,
+              event: 'init',
+              provider: 'paymob',
+              amount: Number(amount),
+              currency: currency || 'SAR',
+              status: 'pending',
+              sessionId: internalSessionId,
+              externalId: String(intentionId || ''),
+              orderId: orderId || undefined,
+              customerPhone: customerPhone || undefined,
+              customerEmail: customerEmail || undefined,
+              rawData: { flow: 'sa-unified', intentionId },
+              ipAddress: req.ip,
+            });
+            return res.json({
+              success: true,
+              sessionId: internalSessionId,
+              redirectUrl: checkoutUrl,
+              paymentUrl: checkoutUrl,
+              publicKey,
+              clientSecret,
+              provider: 'paymob',
+              flow: 'sa-unified',
+            });
+          } catch (paymobError: any) {
+            console.error('[Paymob SA] Error:', paymobError.message);
+            await logPayment({ tenantId, event: 'failed', provider: 'paymob', amount: Number(amount), currency: currency || 'SAR', status: 'failed', errorMessage: paymobError.message, orderId: orderId || undefined, customerPhone: customerPhone || undefined, ipAddress: req.ip });
+            return res.status(500).json({ error: "خطأ في الاتصال بـ Paymob Saudi", details: paymobError.message });
+          }
+        }
+
+        // ── PayMob Legacy (Egypt) flow ──
         const apiKey = pg.paymob?.apiKey;
         const integrationId = pg.paymob?.integrationId;
         const iframeId = pg.paymob?.iframeId;
 
         if (!apiKey || !integrationId || !iframeId) {
-          return res.status(400).json({ error: "بيانات اعتماد Paymob غير مكتملة (API Key, Integration ID, Iframe ID)" });
+          return res.status(400).json({ error: "بيانات اعتماد Paymob غير مكتملة. أضف Secret Key و Public Key من لوحة التحكم." });
         }
 
         const isWallet = req.body.paymentMethod === 'paymob-wallet';
@@ -3311,7 +3719,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           : integrationId;
 
         try {
-          // Step 1: Get auth token
           const authRes = await fetch('https://accept.paymob.com/api/auth/tokens', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3319,31 +3726,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
           const authData = await authRes.json() as any;
           if (!authRes.ok || !authData.token) {
-            console.error('[Paymob] Auth failed:', authData);
             return res.status(400).json({ error: "فشل في مصادقة Paymob", details: authData.message || 'مفتاح API غير صحيح' });
           }
           const authToken = authData.token;
 
-          // Step 2: Create order
           const amountCents = Math.round(Number(amount) * 100);
           const orderRes = await fetch('https://accept.paymob.com/api/ecommerce/orders', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-            body: JSON.stringify({
-              amount_cents: amountCents,
-              currency: currency || 'SAR',
-              merchant_order_id: orderId || internalSessionId,
-              items: [],
-            }),
+            body: JSON.stringify({ amount_cents: amountCents, currency: currency || 'SAR', merchant_order_id: orderId || internalSessionId, items: [] }),
           });
           const orderData = await orderRes.json() as any;
           if (!orderRes.ok || !orderData.id) {
-            console.error('[Paymob] Order creation failed:', orderData);
-            return res.status(400).json({ error: "فشل في إنشاء طلب Paymob", details: orderData.message || 'خطأ غير معروف' });
+            return res.status(400).json({ error: "فشل في إنشاء طلب Paymob", details: orderData.message });
           }
-          const paymobOrderId = orderData.id;
 
-          // Step 3: Get payment key
           const billingData = {
             first_name: (customerName || 'Guest').split(' ')[0] || 'Guest',
             last_name: (customerName || 'Guest').split(' ').slice(1).join(' ') || 'Guest',
@@ -3356,36 +3753,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const pkRes = await fetch('https://accept.paymob.com/api/acceptance/payment_keys', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-            body: JSON.stringify({
-              amount_cents: amountCents,
-              expiration: 3600,
-              integration_id: Number(activeIntegrationId),
-              order: paymobOrderId,
-              billing_data: billingData,
-              currency: currency || 'SAR',
-              lock_order_when_paid: false,
-            }),
+            body: JSON.stringify({ amount_cents: amountCents, expiration: 3600, integration_id: Number(activeIntegrationId), order: orderData.id, billing_data: billingData, currency: currency || 'SAR', lock_order_when_paid: false }),
           });
           const pkData = await pkRes.json() as any;
           if (!pkRes.ok || !pkData.token) {
-            console.error('[Paymob] Payment key failed:', pkData);
-            return res.status(400).json({ error: "فشل في الحصول على مفتاح الدفع من Paymob", details: pkData.message || 'خطأ غير معروف' });
+            return res.status(400).json({ error: "فشل في الحصول على مفتاح الدفع", details: pkData.message });
           }
 
-          const paymentToken = pkData.token;
-          const redirectUrl = `https://accept.paymob.com/api/acceptance/iframes/${iframeId}?payment_token=${paymentToken}`;
-
-          return res.json({
-            success: true,
-            sessionId: internalSessionId,
-            redirectUrl,
-            paymentUrl: redirectUrl,
+          const redirectUrl = `https://accept.paymob.com/api/acceptance/iframes/${iframeId}?payment_token=${pkData.token}`;
+          await logPayment({
+            tenantId,
+            event: 'init',
             provider: 'paymob',
-            externalId: String(paymobOrderId),
-            paymobOrderId,
+            amount: Number(amount),
+            currency: currency || 'SAR',
+            status: 'pending',
+            sessionId: internalSessionId,
+            externalId: String(orderData.id),
+            orderId: orderId || undefined,
+            customerPhone: customerPhone || undefined,
+            customerEmail: customerEmail || undefined,
+            rawData: { flow: 'legacy', paymobOrderId: orderData.id },
+            ipAddress: req.ip,
           });
+          return res.json({ success: true, sessionId: internalSessionId, redirectUrl, paymentUrl: redirectUrl, provider: 'paymob', externalId: String(orderData.id) });
         } catch (paymobError: any) {
-          console.error('[Paymob] API error:', paymobError.message);
+          await logPayment({ tenantId, event: 'failed', provider: 'paymob', amount: Number(amount), currency: currency || 'SAR', status: 'failed', errorMessage: paymobError.message, orderId: orderId || undefined, customerPhone: customerPhone || undefined, ipAddress: req.ip });
           return res.status(500).json({ error: "خطأ في الاتصال بـ Paymob", details: paymobError.message });
         }
       }
@@ -3410,7 +3803,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ verified: false, error: "معرّف الجلسة مطلوب" });
       }
 
-      const tenantId = 'demo-tenant';
+      const tenantId = getTenantIdFromRequest(req) || await getDefaultTenantId();
       const config = await BusinessConfigModel.findOne({ tenantId });
       const pg = config?.paymentGateway;
       const provider = reqProvider || pg?.provider;
@@ -3589,6 +3982,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   const txData = await txRes.json() as any;
                   console.log(`[Paymob Verify] Transaction ${paymobTransactionId}:`, JSON.stringify({ success: txData.success, pending: txData.pending }));
                   const txPaid = txData.success === true && txData.pending === false;
+                  await logPayment({
+                    tenantId,
+                    event: 'verify',
+                    provider: 'paymob',
+                    amount: txData.amount_cents ? txData.amount_cents / 100 : undefined,
+                    currency: txData.currency || 'SAR',
+                    status: txPaid ? 'success' : 'failed',
+                    externalId: String(paymobTransactionId),
+                    orderId: txData.order?.merchant_order_id || undefined,
+                    customerPhone: txData.payment_key_claims?.billing_data?.phone_number || undefined,
+                    rawData: { success: txData.success, pending: txData.pending },
+                    ipAddress: req.ip,
+                  });
                   return res.json({
                     verified: txPaid,
                     transactionId: String(paymobTransactionId),
@@ -3602,6 +4008,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
             // Fallback: trust the callback param
             console.log(`[Paymob Verify] Trusting callback success=true, txId: ${paymobTransactionId}`);
+            await logPayment({
+              tenantId,
+              event: 'verify',
+              provider: 'paymob',
+              status: 'success',
+              externalId: String(paymobTransactionId || sessionId),
+              sessionId: sessionId || undefined,
+              rawData: { source: 'callback-trusted' },
+              ipAddress: req.ip,
+            });
             return res.json({
               verified: true,
               transactionId: String(paymobTransactionId || sessionId),
@@ -3609,11 +4025,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
           }
 
+          await logPayment({
+            tenantId,
+            event: 'verify',
+            provider: 'paymob',
+            status: 'failed',
+            sessionId: sessionId || undefined,
+            rawData: { paymobSuccess, paymobPending },
+            ipAddress: req.ip,
+          });
           return res.json({
             verified: false,
             error: "تم إلغاء الدفع أو فشل عبر Paymob",
             provider: 'paymob',
           });
+        }
+
+        // Method 2: No callback params — try PayMob SA Intention API to check status
+        const secretKey = pg?.paymob?.secretKey || process.env.PAYMOB_SECRET_KEY;
+        const baseUrl = pg?.paymob?.baseUrl || 'https://ksa.paymob.com';
+        if (secretKey && sessionId) {
+          try {
+            // Look up intention by special_reference (which is the orderId/sessionId we stored)
+            const intentLookupRes = await fetch(`${baseUrl}/v1/intention/?special_reference=${encodeURIComponent(sessionId)}`, {
+              headers: { 'Authorization': `Bearer ${secretKey}`, 'Content-Type': 'application/json' },
+            });
+            if (intentLookupRes.ok) {
+              const intentList = await intentLookupRes.json() as any;
+              const intentData = Array.isArray(intentList?.results) ? intentList.results[0] : intentList;
+              if (intentData) {
+                const intentStatus = intentData?.status || intentData?.intention_detail?.status || '';
+                const transactions: any[] = intentData?.transactions || intentData?.intention_detail?.transactions || [];
+                const isPaidByStatus = intentStatus === 'PAID' || intentStatus === 'SUCCESSFUL' || intentStatus === 'CONFIRMED' || intentData?.confirmed === true;
+                const successTx = transactions.find((tx: any) => tx?.success === true && tx?.pending === false);
+                const isPaid = isPaidByStatus || !!successTx;
+                console.log(`[Paymob SA Verify] Intention lookup for session ${sessionId}: status=${intentStatus}, isPaid=${isPaid}`);
+                await logPayment({
+                  tenantId,
+                  event: 'verify',
+                  provider: 'paymob',
+                  status: isPaid ? 'success' : 'failed',
+                  sessionId: sessionId || undefined,
+                  externalId: String(intentData?.id || successTx?.id || ''),
+                  rawData: { source: 'sa-intention-lookup', intentStatus, transactionId: successTx?.id },
+                  ipAddress: req.ip,
+                });
+                if (isPaid) {
+                  return res.json({
+                    verified: true,
+                    transactionId: String(successTx?.id || intentData?.id || sessionId),
+                    provider: 'paymob',
+                  });
+                }
+              }
+            }
+          } catch (e: any) {
+            console.warn('[Paymob SA Verify] Intention lookup failed:', e.message);
+          }
         }
 
         return res.json({ verified: false, error: "بيانات التحقق من Paymob غير كاملة" });
@@ -3628,15 +4096,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/payments/callback", async (req, res) => {
     try {
-      const { orderId, status, provider, transactionId } = req.body;
+      const { orderId, status, provider, transactionId, amount, currency } = req.body;
       console.log(`[Payment Callback] Provider: ${provider}, Order: ${orderId}, Status: ${status}, TxID: ${transactionId}`);
 
-      if (status === 'success' || status === 'paid') {
+      const tenantId = getTenantIdFromRequest(req) || await getDefaultTenantId();
+      const isSuccess = status === 'success' || status === 'paid';
+
+      if (isSuccess) {
         const order = await storage.getOrderByNumber(orderId);
         if (order) {
           await storage.updateOrderStatus(order.id || order._id, 'payment_confirmed');
         }
       }
+
+      // Log the callback event
+      await logPayment({
+        tenantId,
+        event: 'callback',
+        provider: provider || 'unknown',
+        amount: amount ? Number(amount) : undefined,
+        currency: currency || 'SAR',
+        status: isSuccess ? 'success' : 'failed',
+        externalId: transactionId,
+        orderId,
+        rawData: req.body,
+        ipAddress: req.ip,
+      });
 
       res.json({ received: true });
     } catch (error) {
@@ -3651,7 +4136,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const body = req.body;
       console.log('[Geidea Webhook] Received:', JSON.stringify(body));
 
-      const tenantId = 'demo-tenant';
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
       const config = await BusinessConfigModel.findOne({ tenantId });
       const pg = config?.paymentGateway;
 
@@ -3702,7 +4187,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!amount || Number(amount) <= 0) {
         return res.status(400).json({ error: "المبلغ مطلوب" });
       }
-      const tenantId = 'demo-tenant';
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
       const config = await BusinessConfigModel.findOne({ tenantId });
       const pg = config?.paymentGateway;
       if (!pg || pg.provider !== 'geidea' || !pg.geidea?.publicKey || !pg.geidea?.apiPassword) {
@@ -3727,7 +4212,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         callbackUrl: callbackUrl || '',
         signature,
         timestamp,
-        geideaSdkUrl: 'https://js.geidea.net/GeideaCheckoutSDK.js',
       });
     } catch (err: any) {
       console.error('[Geidea session-config]', err);
@@ -3735,215 +4219,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Standalone Geidea payment window — served as raw HTML (not in Replit iframe)
-  // Opens in new browser tab, loads SDK, shows payment form, posts result back via postMessage
-  app.get("/payment-window", async (req, res) => {
-    const {
-      sessionId = '',
-      orderAmount = '',
-      orderCurrency = 'SAR',
-      language = 'ar',
-      origin = '',
-    } = req.query as Record<string, string>;
-
-    const isAr = language === 'ar';
-    const html = `<!DOCTYPE html>
-<html lang="${isAr ? 'ar' : 'en'}" dir="${isAr ? 'rtl' : 'ltr'}">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${isAr ? 'إتمام الدفع — Cluny Cafe' : 'Complete Payment — Cluny Cafe'}</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; background: #f5f5f5; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-    .card { background: white; border-radius: 16px; padding: 40px; max-width: 440px; width: 90%; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
-    .logo { font-size: 28px; font-weight: 800; color: #1a1a2e; margin-bottom: 8px; }
-    .sub { color: #666; font-size: 14px; margin-bottom: 24px; }
-    .amount { font-size: 36px; font-weight: 800; color: #c8a97e; margin: 12px 0 24px; }
-    .spinner { display: inline-block; width: 40px; height: 40px; border: 4px solid #f0e6d3; border-top-color: #c8a97e; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 16px auto; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .status { margin-top: 12px; color: #555; font-size: 14px; }
-    .btn { background: #c8a97e; color: white; border: none; padding: 14px 32px; border-radius: 8px; font-size: 16px; cursor: pointer; margin-top: 20px; width: 100%; font-weight: 600; }
-    .btn:hover { background: #b8966a; }
-    .btn-sec { background: #e0e0e0; color: #333; }
-    .error { color: #e53e3e; margin-top: 12px; font-size: 13px; }
-    #state-loading, #state-success, #state-error { display: none; }
-    #state-loading.active, #state-success.active, #state-error.active { display: block; }
-  </style>
-</head>
-<body>
-<div class="card">
-  <div class="logo">☕ Cluny Cafe</div>
-  <div class="sub">${isAr ? 'بوابة الدفع الآمنة' : 'Secure Payment Gateway'}</div>
-  <div class="amount">${orderAmount} ${orderCurrency}</div>
-
-  <div id="state-loading" class="active">
-    <div class="spinner"></div>
-    <div class="status" id="status-msg">${isAr ? 'جاري تحميل بوابة الدفع...' : 'Loading payment gateway...'}</div>
-  </div>
-
-  <div id="state-success">
-    <div style="font-size:56px;margin:16px 0;">✅</div>
-    <div style="color:#38a169;font-weight:700;font-size:18px">${isAr ? 'تم الدفع بنجاح!' : 'Payment Successful!'}</div>
-    <div class="status">${isAr ? 'سيتم إغلاق هذه النافذة تلقائياً...' : 'This window will close automatically...'}</div>
-    <button class="btn" onclick="window.close()">${isAr ? 'إغلاق' : 'Close'}</button>
-  </div>
-
-  <div id="state-error">
-    <div style="font-size:56px;margin:16px 0;">⚠️</div>
-    <div class="error" id="error-msg">${isAr ? 'تعذّر إتمام الدفع' : 'Payment failed'}</div>
-    <button class="btn" onclick="startPayment()">${isAr ? 'إعادة المحاولة' : 'Retry'}</button>
-    <button class="btn btn-sec" style="margin-top:8px" onclick="window.close()">${isAr ? 'إغلاق' : 'Close'}</button>
-  </div>
-</div>
-
-<script>
-  var SESSION_ID = ${JSON.stringify(sessionId)};
-  var OPENER_ORIGIN = ${JSON.stringify(origin || '*')};
-
-  function setState(n) {
-    document.querySelectorAll('[id^="state-"]').forEach(function(el){ el.classList.remove('active'); });
-    var el = document.getElementById('state-' + n);
-    if (el) el.classList.add('active');
-  }
-  function setStatus(msg) {
-    var el = document.getElementById('status-msg');
-    if (el) el.textContent = msg;
-  }
-  function notify(type, data) {
-    var msg = Object.assign({ source: 'geidea-payment-window', type: type }, data || {});
-    if (window.opener) {
-      try { window.opener.postMessage(msg, OPENER_ORIGIN === '*' ? '*' : OPENER_ORIGIN); } catch(e) {}
-    }
-  }
-
-  function onSuccess(data) {
-    setState('success');
-    notify('payment-success', { data: data });
-    setTimeout(function(){ window.close(); }, 3000);
-  }
-  function onError(data) {
-    var msg = (data && (data.responseMessage || data.detailedResponseMessage)) || '${isAr ? 'حدث خطأ في الدفع' : 'Payment error'}';
-    var el = document.getElementById('error-msg');
-    if (el) el.textContent = msg;
-    setState('error');
-    notify('payment-error', { data: data, message: msg });
-  }
-  function onCancel(data) {
-    notify('payment-cancel', {});
-    window.close();
-  }
-
-  function startPayment() {
-    if (!SESSION_ID) {
-      onError({ responseMessage: '${isAr ? 'لم يتم إنشاء جلسة الدفع' : 'No payment session'}' });
-      return;
-    }
-    if (typeof GeideaCheckout === 'undefined') {
-      onError({ responseMessage: '${isAr ? 'تعذّر تحميل مكتبة جيديا' : 'Geidea SDK not loaded'}' });
-      return;
-    }
-    try {
-      setState('loading');
-      setStatus('${isAr ? 'جاري فتح نموذج الدفع...' : 'Opening payment form...'}');
-      var payment = new GeideaCheckout(onSuccess, onError, onCancel);
-      payment.startPayment(SESSION_ID);
-    } catch(e) {
-      onError({ responseMessage: String(e) });
-    }
-  }
-
-  function loadSDK(urls, index) {
-    if (index >= urls.length) {
-      onError({ responseMessage: '${isAr ? 'تعذّر تحميل مكتبة الدفع. تأكد من الاتصال بالإنترنت.' : 'Could not load payment library.'}' });
-      return;
-    }
-    var url = urls[index];
-    setStatus('${isAr ? 'جاري التحميل...' : 'Loading...'}');
-    var s = document.createElement('script');
-    s.src = url;
-    s.onload = function() {
-      if (typeof GeideaCheckout !== 'undefined') {
-        setTimeout(startPayment, 300);
-      } else {
-        loadSDK(urls, index + 1);
-      }
-    };
-    s.onerror = function() { loadSDK(urls, index + 1); };
-    document.head.appendChild(s);
-  }
-
-  // KSA SDK is at ksamerchant.geidea.net/hpp/geideaCheckout.min.js
-  // Also try local cached copy as primary source for reliability
-  var SDK_URLS = [
-    window.location.origin + '/geideaCheckout.min.js',
-    'https://www.ksamerchant.geidea.net/hpp/geideaCheckout.min.js',
-  ];
-
-  window.addEventListener('DOMContentLoaded', function() {
-    loadSDK(SDK_URLS, 0);
-  });
-</script>
-</body>
-</html>`;
-
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('Content-Security-Policy',
-      "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.ksamerchant.geidea.net; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.ksamerchant.geidea.net https://*.geidea.net; frame-src 'self' https://*.ksamerchant.geidea.net https://*.geidea.net; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com;"
-    );
-    res.send(html);
-  });
-
-  // Mark an order as paid after client-side Geidea payment completes
-  app.post("/api/payments/mark-paid", async (req, res) => {
-    try {
-      const { orderNumber, sessionId, transactionId } = req.body;
-      if (!orderNumber) return res.status(400).json({ error: "رقم الطلب مطلوب" });
-
-      const tenantId = 'demo-tenant';
-      const orConditions: any[] = [
-        { orderNumber },
-        { paymentReference: orderNumber },
-      ];
-      // Only add _id match if it looks like a valid MongoDB ObjectId
-      if (/^[a-f\d]{24}$/i.test(orderNumber)) {
-        orConditions.push({ _id: orderNumber });
-      }
-
-      const order = await OrderModel.findOneAndUpdate(
-        { tenantId, $or: orConditions },
-        {
-          $set: {
-            paymentStatus: 'paid',
-            status: 'payment_confirmed',
-            ...(sessionId ? { paymentSessionId: sessionId } : {}),
-            ...(transactionId ? { paymentTransactionId: transactionId } : {}),
-          }
-        },
-        { new: true }
-      );
-
-      if (!order) {
-        console.warn(`[mark-paid] Order not found: ${orderNumber}`);
-        return res.status(404).json({ error: "الطلب غير موجود" });
-      }
-
-      console.log(`[mark-paid] Order ${orderNumber} marked as paid`);
-      res.json({ success: true, orderNumber: order.orderNumber });
-    } catch (err) {
-      console.error('[mark-paid] Error:', err);
-      res.status(500).json({ error: "فشل في تحديث حالة الدفع" });
-    }
-  });
-
   // Payment simulation endpoint — only works when paymentTestMode is enabled
   app.post("/api/payments/simulate-success", async (req, res) => {
     try {
-      const tenantId = 'demo-tenant';
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
       const config = await BusinessConfigModel.findOne({ tenantId });
       const pg = config?.paymentGateway;
-      if (!pg?.paymentTestMode && !pg?.geidea?.testMode) {
+      if (!pg?.paymentTestMode) {
         return res.status(403).json({ error: "وضع الاختبار غير مفعّل" });
       }
       const { orderNumber, amount, currency = 'SAR' } = req.body;
@@ -3966,108 +4248,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // SDK fallback — simulates payment when Geidea SDK is unreachable (development/staging only)
-  // This does NOT require paymentTestMode and is intended for SDK-unavailable fallback
-  app.post("/api/payments/sdk-fallback", async (req, res) => {
-    try {
-      const { orderNumber, amount, currency = 'SAR' } = req.body;
-      if (!orderNumber) return res.status(400).json({ error: "رقم الطلب مطلوب" });
-      const fakeOrderId = `DEV-${Date.now()}`;
-      console.log(`[PaymentFallback] SDK-unavailable fallback for order ${orderNumber} — amount ${amount} ${currency}`);
-      return res.json({
-        success: true,
-        simulated: true,
-        fallback: true,
-        orderId: fakeOrderId,
-        merchantReferenceId: orderNumber,
-        amount,
-        currency,
-        responseCode: '000',
-        responseMessage: 'محاكاة دفع (SDK غير متاح)',
-      });
-    } catch (err: any) {
-      console.error('[PaymentFallback]', err);
-      res.status(500).json({ error: "خطأ في معالجة الدفع الاحتياطي" });
-    }
-  });
-
-  // Public endpoint to confirm payment and update order status
-  app.post("/api/payments/confirm-order", async (req, res) => {
-    try {
-      const { orderNumber, paymentMethod } = req.body;
-      if (!orderNumber) return res.status(400).json({ error: "رقم الطلب مطلوب" });
-      const order = await OrderModel.findOne({ orderNumber });
-      if (!order) return res.status(404).json({ error: "الطلب غير موجود" });
-      if (order.status !== 'cancelled') {
-        order.status = 'payment_confirmed';
-        if (paymentMethod) order.paymentMethod = paymentMethod;
-        order.updatedAt = new Date();
-        await order.save();
-        console.log(`[PaymentConfirm] Order ${orderNumber} status → payment_confirmed`);
-      }
-      res.json({ success: true, orderNumber, status: order.status });
-    } catch (err: any) {
-      console.error('[PaymentConfirm]', err);
-      res.status(500).json({ error: "خطأ في تأكيد الدفع" });
-    }
-  });
-
   // Business config — expose paymentTestMode to frontend (no auth needed, read-only)
   app.get("/api/payments/config", async (req, res) => {
     try {
-      const tenantId = 'demo-tenant';
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
       const config = await BusinessConfigModel.findOne({ tenantId });
       const pg = config?.paymentGateway;
-      const geideaBaseUrl = pg?.geidea?.baseUrl || 'https://api.merchant.geidea.net';
-      const isUat = geideaBaseUrl.includes('uat');
-      const isKsa = geideaBaseUrl.includes('ksamerchant');
-      const geideaSdkUrl = isUat
-        ? 'https://js.uat.geidea.net/GeideaCheckoutSDK.js'
-        : isKsa
-        ? 'https://js.ksamerchant.geidea.net/GeideaCheckoutSDK.js'
-        : 'https://js.geidea.net/GeideaCheckoutSDK.js';
       return res.json({
         provider: pg?.provider || 'none',
-        paymentTestMode: !!(pg?.paymentTestMode || pg?.geidea?.testMode),
+        paymentTestMode: !!pg?.paymentTestMode,
         geideaConfigured: !!(pg?.provider === 'geidea' && pg?.geidea?.publicKey && pg?.geidea?.apiPassword),
-        geideaBaseUrl,
-        geideaSdkUrl,
       });
     } catch (err: any) {
       res.status(500).json({ error: "فشل جلب إعدادات الدفع" });
-    }
-  });
-
-  // Geidea SDK proxy — caches and serves the JS SDK from our server to avoid CSP/network blocks
-  let geideaSdkCache: { content: string; fetched: number; url: string } | null = null;
-  app.get("/api/geidea-sdk.js", async (req, res) => {
-    try {
-      const CACHE_TTL = 3600_000; // 1 hour
-      const now = Date.now();
-      const tenantId = 'demo-tenant';
-      const config = await BusinessConfigModel.findOne({ tenantId });
-      const pg = config?.paymentGateway;
-      const geideaBaseUrl = pg?.geidea?.baseUrl || 'https://api.merchant.geidea.net';
-      const isUat = geideaBaseUrl.includes('uat');
-      const isKsa = geideaBaseUrl.includes('ksamerchant');
-      const sdkUrl = isUat
-        ? 'https://js.uat.geidea.net/GeideaCheckoutSDK.js'
-        : isKsa
-        ? 'https://js.ksamerchant.geidea.net/GeideaCheckoutSDK.js'
-        : 'https://js.geidea.net/GeideaCheckoutSDK.js';
-
-      if (!geideaSdkCache || now - geideaSdkCache.fetched > CACHE_TTL || geideaSdkCache.url !== sdkUrl) {
-        const sdkRes = await fetch(sdkUrl);
-        if (!sdkRes.ok) throw new Error(`Geidea SDK fetch failed: ${sdkRes.status}`);
-        const content = await sdkRes.text();
-        geideaSdkCache = { content, fetched: now, url: sdkUrl };
-      }
-      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-      res.setHeader('Cache-Control', 'public, max-age=3600');
-      res.send(geideaSdkCache.content);
-    } catch (err: any) {
-      console.error('[Geidea SDK proxy]', err.message);
-      res.status(502).send('// Geidea SDK unavailable');
     }
   });
 
@@ -4148,35 +4341,410 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Geidea GET callback (some configurations redirect browser with GET)
   app.get("/api/payments/geidea/callback", async (req, res) => {
-    const params = req.query as Record<string, string>;
+    const params = req.query;
     console.log('[Geidea GET Callback]', params);
-
-    const { responseCode, orderId, merchantReferenceId, orderNumber } = params;
-    const refId = merchantReferenceId || orderNumber;
-    const isPaid = responseCode === '000';
-
-    if (isPaid && refId) {
-      try {
-        const tenantId = 'demo-tenant';
-        await OrderModel.findOneAndUpdate(
-          {
-            tenantId,
-            $or: [
-              { orderNumber: refId },
-              { paymentReference: refId },
-              { _id: refId },
-            ]
-          },
-          { $set: { paymentStatus: 'paid', status: 'payment_confirmed', paymentTransactionId: orderId } }
-        );
-        console.log(`[Geidea Callback] Marked ${refId} as paid (orderId: ${orderId})`);
-      } catch (e) {
-        console.error('[Geidea Callback] DB update error:', e);
-      }
-    }
-
-    const qs = new URLSearchParams(params).toString();
+    // Redirect to payment-return page with all params
+    const qs = new URLSearchParams(params as Record<string, string>).toString();
     res.redirect(`/payment-return?${qs}`);
+  });
+
+  // ── PayMob iframe return page (returns bare HTML, no SPA — sends postMessage reliably) ──
+  app.get("/payment-return-iframe", (req, res) => {
+    const p = req.query as Record<string, string>;
+    console.log('[Paymob SA Return] Query params:', JSON.stringify(p));
+    // 'success' param may not be present in PayMob SA redirect — treat missing as pending
+    const successParam = p.success;
+    const success = successParam === 'true';
+    const pending = p.pending === 'true';
+    const hasSuccessParam = successParam !== undefined;
+    const session = p.session || '';
+    const orderRef = p.orderRef || '';
+    const transactionId = p.id || p.transaction_id || '';
+    // If success param is absent entirely, treat as pending (webhook may have fired already)
+    const type = success && !pending ? 'PAYMOB_SUCCESS'
+               : pending ? 'PAYMOB_PENDING'
+               : !hasSuccessParam ? 'PAYMOB_PENDING'
+               : 'PAYMOB_ERROR';
+    const icon = type === 'PAYMOB_SUCCESS' ? '✅' : type === 'PAYMOB_PENDING' ? '⏳' : '❌';
+    const label = type === 'PAYMOB_SUCCESS' ? 'تم الدفع بنجاح' : type === 'PAYMOB_PENDING' ? 'جارٍ التحقق...' : 'فشل الدفع';
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!DOCTYPE html><html lang="ar" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f8f9fa;direction:rtl}
+.box{text-align:center;padding:40px 24px}.icon{font-size:3rem;margin-bottom:16px}.msg{font-size:1.1rem;color:#333;font-weight:600}</style></head>
+<body><div class="box"><div class="icon">${icon}</div><div class="msg">${label}</div></div>
+<script>
+(function(){
+  var data={type:${JSON.stringify(type)},success:${JSON.stringify(success&&!pending)},session:${JSON.stringify(session)},orderRef:${JSON.stringify(orderRef)},transactionId:${JSON.stringify(transactionId)}};
+  try{window.parent&&window.parent.postMessage(data,'*')}catch(e){}
+  try{window.opener&&window.opener.postMessage(data,'*')}catch(e){}
+  if(window.self===window.top){
+    var orderParam=orderRef?'&orderRef='+encodeURIComponent(orderRef):'';
+    setTimeout(function(){location.replace('/payment-return?success=${success}&pending=${pending}&session='+encodeURIComponent(${JSON.stringify(session)})+orderParam)},600);
+  }
+})();
+</script></body></html>`);
+  });
+
+  // ── Create a one-time Payment Session Token ─────────────────────────────────
+  // Called by checkout BEFORE initiating PayMob redirect.
+  // Stores order data + customer identity server-side; returns an opaque token.
+  app.post("/api/payments/create-session-token", async (req, res) => {
+    try {
+      const { customerPhone, customerId, customerName, orderData } = req.body;
+      if (!customerPhone || !orderData) {
+        return res.status(400).json({ error: "customerPhone and orderData are required" });
+      }
+      const token = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 25 * 60 * 1000); // 25 minutes
+      await PaymentSessionTokenModel.create({ token, customerPhone, customerId: customerId || null, customerName: customerName || "", orderData, expiresAt });
+      return res.json({ token });
+    } catch (err: any) {
+      console.error("[PaymentSessionToken] create error:", err);
+      return res.status(500).json({ error: "فشل إنشاء رمز الدفع" });
+    }
+  });
+
+  // ── Resolve a Payment Session Token ──────────────────────────────────────────
+  // Called by /payment-return after PayMob redirect.
+  // Validates token (one-time), auto-logs in the customer, returns order data.
+  app.post("/api/payments/resolve-session-token", async (req, res) => {
+    try {
+      const { token } = req.body;
+      if (!token) return res.status(400).json({ error: "token is required" });
+
+      const record = await PaymentSessionTokenModel.findOne({ token }) as any;
+      if (!record) return res.status(404).json({ error: "رمز الدفع غير موجود" });
+      if (record.used) return res.status(410).json({ error: "رمز الدفع استُخدم بالفعل", alreadyUsed: true });
+      if (record.expiresAt < new Date()) return res.status(410).json({ error: "انتهت صلاحية رمز الدفع" });
+
+      // Mark as used immediately (atomic)
+      record.used = true;
+      await record.save();
+
+      // Auto-login customer by phone (no password check — token already proves identity)
+      let customerData: any = null;
+      if (record.customerPhone) {
+        const normalizedPhone = record.customerPhone.replace(/\D/g, '')
+          .replace(/^00966/, '').replace(/^\+?966/, '').replace(/^0/, '');
+        const customer = await CustomerModel.findOne({
+          phone: { $in: [record.customerPhone, normalizedPhone, `0${normalizedPhone}`, `966${normalizedPhone}`, `+966${normalizedPhone}`] }
+        }).lean() as any;
+
+        if (customer) {
+          const serialized = serializeDoc(customer);
+          const { password: _, ...safeCustomer } = serialized;
+          customerData = safeCustomer;
+          // Set customer session so subsequent API calls are authenticated
+          (req.session as any).customer = safeCustomer;
+          await new Promise<void>((resolve) => req.session.save(() => resolve()));
+        }
+      }
+
+      return res.json({
+        success: true,
+        orderData: record.orderData,
+        customerPhone: record.customerPhone,
+        customerId: record.customerId,
+        customerName: record.customerName,
+        customer: customerData,
+      });
+    } catch (err: any) {
+      console.error("[PaymentSessionToken] resolve error:", err);
+      return res.status(500).json({ error: "فشل التحقق من رمز الدفع" });
+    }
+  });
+
+  // ── Atomic: confirm payment + auto-login + create order in one request ────────
+  // Called by /payment-return after PayMob redirect.
+  // This replaces the old 2-step (resolve-token → POST /api/orders) with a single
+  // atomic operation so session propagation issues are completely eliminated.
+  app.post("/api/payments/confirm-payment-order", async (req, res) => {
+    try {
+      const { token, paymobTxId, paymobSuccess, session: internalSession } = req.body;
+      if (!token) return res.status(400).json({ error: "token is required" });
+
+      const record = await PaymentSessionTokenModel.findOne({ token }) as any;
+      if (!record) return res.status(404).json({ error: "رمز الدفع غير موجود أو انتهت صلاحيته" });
+
+      // ── Helper: auto-login customer by phone ────────────────────────────
+      const autoLoginCustomer = async () => {
+        if (!record.customerPhone) return null;
+        const normalizedPhone = record.customerPhone.replace(/\D/g, '')
+          .replace(/^00966/, '').replace(/^\+?966/, '').replace(/^0/, '');
+        const customer = await CustomerModel.findOne({
+          phone: { $in: [record.customerPhone, normalizedPhone, `0${normalizedPhone}`, `966${normalizedPhone}`, `+966${normalizedPhone}`] }
+        }).lean() as any;
+        if (!customer) return null;
+        const { password: _, ...safe } = serializeDoc(customer);
+        (req.session as any).customer = safe;
+        await new Promise<void>(r => req.session.save(() => r()));
+        return safe;
+      };
+
+      // ── Idempotency: token already used and order was created ────────────
+      if (record.used && record.confirmedOrderNumber) {
+        const customerData = await autoLoginCustomer();
+        return res.json({
+          success: true,
+          alreadyConfirmed: true,
+          orderNumber: record.confirmedOrderNumber,
+          customer: customerData,
+        });
+      }
+
+      if (record.used) {
+        return res.status(410).json({ error: "رمز الدفع استُخدم بالفعل", alreadyUsed: true });
+      }
+      if (record.expiresAt < new Date()) {
+        return res.status(410).json({ error: "انتهت صلاحية رمز الدفع" });
+      }
+
+      // ── Verify payment with PayMob SA when success param is absent/unclear ──
+      // paymobSuccess === "true"  → trust it (PayMob sent explicit success)
+      // paymobSuccess === "false" → reject immediately
+      // paymobSuccess is null/undefined → query PayMob API to confirm
+      if (paymobSuccess === "false") {
+        return res.status(402).json({ error: "لم تتم عملية الدفع", paymentFailed: true });
+      }
+
+      if (!paymobSuccess || paymobSuccess !== "true") {
+        // Query PayMob SA API to check the actual payment status
+        try {
+          const tenantId = record.orderData?.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId();
+          const config = await BusinessConfigModel.findOne({ tenantId }).lean() as any;
+          const pg = config?.paymentGateway;
+          const secretKey = pg?.paymob?.secretKey || process.env.PAYMOB_SECRET_KEY;
+          const baseUrl = pg?.paymob?.baseUrl || 'https://ksa.paymob.com';
+
+          if (secretKey) {
+            let intentStatus: string | null = null;
+
+            // Try by transaction ID first
+            if (paymobTxId) {
+              const r = await fetch(`${baseUrl}/v1/transaction/${paymobTxId}/`, {
+                headers: { 'Authorization': `Bearer ${secretKey}` },
+              });
+              if (r.ok) {
+                const txData = await r.json() as any;
+                const txSuccess = txData?.success || txData?.is_auth || txData?.is_capture;
+                if (txSuccess === true) intentStatus = 'PAID';
+                else if (txSuccess === false) intentStatus = 'FAILED';
+              }
+            }
+
+            // Fallback: query intention by special_reference (internalSession or token)
+            if (!intentStatus) {
+              const ref = internalSession || token.slice(0, 16);
+              const r = await fetch(`${baseUrl}/v1/intention/?special_reference=${encodeURIComponent(ref)}`, {
+                headers: { 'Authorization': `Bearer ${secretKey}` },
+              });
+              if (r.ok) {
+                const list = await r.json() as any;
+                const item = Array.isArray(list?.results) ? list.results[0] : list;
+                const s = item?.status || item?.intention_detail?.status || '';
+                if (['PAID', 'SUCCESSFUL', 'CONFIRMED'].includes(s.toUpperCase())) intentStatus = 'PAID';
+                else if (['FAILED', 'DECLINED', 'EXPIRED', 'CANCELLED'].includes(s.toUpperCase())) intentStatus = 'FAILED';
+                else if (s) intentStatus = 'PENDING';
+              }
+            }
+
+            if (intentStatus === 'FAILED') {
+              return res.status(402).json({ error: "لم تتم عملية الدفع", paymentFailed: true });
+            }
+
+            if (!intentStatus || intentStatus === 'PENDING') {
+              // Payment not yet confirmed by PayMob — tell frontend to retry
+              return res.json({ waiting: true, message: "الدفع قيد المعالجة" });
+            }
+            // intentStatus === 'PAID' → fall through to order creation
+          } else {
+            // No credentials to verify — allow if paymobTxId is present (best effort)
+            if (!paymobTxId) {
+              return res.json({ waiting: true, message: "جاري التحقق من الدفع" });
+            }
+          }
+        } catch (verifyErr: any) {
+          console.warn("[confirm-payment-order] PayMob verify failed, proceeding with txId:", verifyErr?.message);
+          // If verification call itself fails but we have a txId, proceed cautiously
+          if (!paymobTxId) {
+            return res.json({ waiting: true, message: "جاري التحقق من الدفع" });
+          }
+        }
+      }
+
+      // ── Mark as used now (payment verified or explicitly success=true) ──
+      record.used = true;
+      await record.save();
+
+      // ── Auto-login customer (by phone, no password needed — token proves identity) ──
+      const customerData = await autoLoginCustomer();
+
+      // ── Build order data ────────────────────────────────────────────────
+      const tenantId = record.orderData?.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId();
+      const VAT = 0.15;
+      const rawTotal = Number(record.orderData?.totalAmount) || 0;
+      const orderData: any = {
+        ...record.orderData,
+        tenantId,
+        paymentStatus: "paid",
+        status: "pending",
+        paymentMethod: record.orderData?.paymentMethod || "paymob-card",
+        ...(paymobTxId ? { paymentTransactionId: paymobTxId } : {}),
+        customerInfo: record.orderData?.customerInfo || {
+          customerName: record.customerName || record.orderData?.customerName,
+          customerPhone: record.customerPhone || record.orderData?.customerPhone,
+        },
+      };
+      // Ensure subtotal/tax are stored
+      if (rawTotal > 0 && (orderData.subtotal == null || orderData.tax == null)) {
+        const sub = rawTotal / (1 + VAT);
+        if (orderData.subtotal == null) orderData.subtotal = sub;
+        if (orderData.tax == null) orderData.tax = rawTotal - sub;
+      }
+      delete orderData.total;
+
+      // ── Create order via storage (handles orderNumber generation + retries) ──
+      let order: any;
+      try {
+        order = await storage.createOrder(orderData);
+      } catch (createErr: any) {
+        console.error("[confirm-payment-order] Order creation failed:", createErr);
+        return res.status(500).json({ error: "تم الدفع لكن فشل تأكيد الطلب. يرجى التواصل مع الدعم.", details: createErr?.message });
+      }
+
+      const serializedOrder = serializeDoc(order);
+
+      // ── Store orderNumber for idempotency (refresh won't create duplicate) ──
+      record.confirmedOrderNumber = serializedOrder.orderNumber;
+      await record.save();
+
+      // ── Cache invalidation + WebSocket broadcast ────────────────────────
+      cache.invalidate('live-orders:');
+      cache.invalidate('analytics:advanced:');
+      wsManager.broadcastNewOrder(serializedOrder);
+
+      // ── Loyalty points (async, non-blocking) ───────────────────────────
+      setImmediate(async () => {
+        try {
+          const phone = record.customerPhone;
+          if (phone && rawTotal > 0) {
+            const { LoyaltyCardModel: LCM, BusinessConfigModel: BCM } = await import("@shared/schema");
+            const biz = await BCM.findOne({ tenantId }).lean() as any;
+            const ptsPerDrink = Number(biz?.loyalty?.pointsPerDrink) || 10;
+            const itemCount = Array.isArray(orderData.items) ? orderData.items.reduce((s: number, i: any) => s + (Number(i.quantity) || 1), 0) : 1;
+            const earnedPts = ptsPerDrink * itemCount;
+            const phoneVariants = [phone, phone.replace(/\D/g,'').replace(/^00966/,'').replace(/^\+?966/,'').replace(/^0/,'')];
+            await LCM.findOneAndUpdate(
+              { phoneNumber: { $in: phoneVariants } },
+              { $inc: { points: earnedPts, totalPointsEarned: earnedPts } }
+            );
+          }
+        } catch (e) { /* non-critical */ }
+      });
+
+      return res.json({
+        success: true,
+        orderNumber: serializedOrder.orderNumber,
+        orderId: serializedOrder.id,
+        customer: customerData,
+      });
+    } catch (err: any) {
+      console.error("[confirm-payment-order] Error:", err);
+      return res.status(500).json({ error: "حدث خطأ أثناء تأكيد الطلب" });
+    }
+  });
+
+  // ── Check PayMob order payment status (by orderNumber) ──
+  app.get("/api/payments/order-status/:orderNumber", async (req, res) => {
+    try {
+      const { orderNumber } = req.params;
+      // Search by orderNumber only (no tenantId) — customer polling has no server session
+      const order = await OrderModel.findOne({ orderNumber }).lean() as any;
+      if (!order) {
+        // Fallback: try with tenantId for safety
+        const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+        const orderByTenant = await OrderModel.findOne({ tenantId, orderNumber }).lean() as any;
+        if (!orderByTenant) return res.json({ found: false, paid: false });
+        const paid2 = orderByTenant.paymentStatus === 'paid' || orderByTenant.status === 'payment_confirmed';
+        return res.json({ found: true, paid: paid2, status: orderByTenant.status, paymentStatus: orderByTenant.paymentStatus });
+      }
+      const tenantId = (order as any).tenantId;
+
+      const alreadyPaid = order.paymentStatus === 'paid' || order.status === 'payment_confirmed';
+      if (alreadyPaid) {
+        return res.json({ found: true, paid: true, status: order.status, paymentStatus: order.paymentStatus });
+      }
+
+      // Not yet marked as paid — try direct PayMob SA API verification if we have clientSecret
+      const clientSecret = order.paymobClientSecret;
+      if (clientSecret) {
+        try {
+          const config = await BusinessConfigModel.findOne({ tenantId });
+          const pg = config?.paymentGateway;
+          const secretKey = pg?.paymob?.secretKey;
+          const baseUrl = pg?.paymob?.baseUrl || 'https://ksa.paymob.com';
+
+          if (secretKey) {
+            const intentionId = order.paymobIntentionId;
+
+            // Try fetching intention by ID (preferred) or by client_secret
+            let intentData: any = null;
+            if (intentionId) {
+              const r = await fetch(`${baseUrl}/v1/intention/${intentionId}/`, {
+                headers: { 'Authorization': `Bearer ${secretKey}` },
+              });
+              if (r.ok) intentData = await r.json();
+            }
+
+            // Fallback: search transactions by special_reference (orderNumber)
+            if (!intentData) {
+              const r = await fetch(`${baseUrl}/v1/intention/?special_reference=${encodeURIComponent(orderNumber)}`, {
+                headers: { 'Authorization': `Bearer ${secretKey}` },
+              });
+              if (r.ok) {
+                const list = await r.json() as any;
+                intentData = Array.isArray(list?.results) ? list.results[0] : list;
+              }
+            }
+
+            if (intentData) {
+              console.log(`[PaymobSA OrderStatus] intention data for ${orderNumber}:`, JSON.stringify(intentData).slice(0, 500));
+              // Check multiple possible status fields across PayMob SA versions
+              const intentStatus = intentData?.status || intentData?.intention_detail?.status || '';
+              const isPaid = intentStatus === 'PAID' || intentStatus === 'SUCCESSFUL' || intentStatus === 'CONFIRMED' ||
+                             intentData?.confirmed === true ||
+                             intentData?.intention_detail?.confirmed === true;
+
+              // Also check nested transactions inside the intention
+              const transactions: any[] = intentData?.transactions || intentData?.intention_detail?.transactions || [];
+              const hasSuccessfulTx = transactions.some((tx: any) => tx?.success === true && tx?.pending === false);
+
+              if (isPaid || hasSuccessfulTx) {
+                const txId = String(transactions.find((t: any) => t?.success)?.id || intentData?.id || intentionId || '');
+                const updatedOrder = await OrderModel.findOneAndUpdate(
+                  { orderNumber, tenantId },
+                  { $set: { paymentStatus: 'paid', status: 'pending', paymentTransactionId: txId } },
+                  { new: true }
+                ).lean().catch(() => null);
+                // Notify employees now that payment is confirmed
+                if (updatedOrder) {
+                  cache.invalidate('live-orders:');
+                  wsManager.broadcastNewOrder(serializeDoc(updatedOrder));
+                }
+                return res.json({ found: true, paid: true, status: 'pending', paymentStatus: 'paid' });
+              }
+            }
+          }
+        } catch (apiErr: any) {
+          console.warn('[PaymobSA OrderStatus] Direct API check failed:', apiErr.message);
+        }
+      }
+
+      return res.json({ found: true, paid: false, status: order.status, paymentStatus: order.paymentStatus });
+    } catch (err) {
+      return res.json({ found: false, paid: false });
+    }
   });
 
   // Paymob transaction callback (browser redirect after payment)
@@ -4193,7 +4761,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const body = req.body;
       console.log('[Paymob Webhook]', JSON.stringify(body));
 
-      const tenantId = 'demo-tenant';
+      const tenantId = getTenantIdFromRequest(req) || await getDefaultTenantId();
       const config = await BusinessConfigModel.findOne({ tenantId });
       const hmacSecret = config?.paymentGateway?.paymob?.hmacSecret;
 
@@ -4213,20 +4781,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const dataString = fields.map(v => String(v ?? '')).join('');
           const calculatedHmac = crypto.createHmac('sha512', hmacSecret).update(dataString).digest('hex');
           if (calculatedHmac !== receivedHmac) {
-            console.warn('[Paymob Webhook] HMAC mismatch');
+            console.warn('[Paymob Webhook] HMAC mismatch — rejected');
+            return res.status(400).json({ error: 'Invalid signature' });
           }
         }
       }
 
       const transaction = body?.obj;
       if (transaction?.success === true) {
-        const merchantOrderId = transaction?.order?.merchant_order_id;
+        const merchantOrderId = transaction?.order?.merchant_order_id
+          || transaction?.special_reference
+          || body?.special_reference;
+
         if (merchantOrderId && !merchantOrderId.startsWith('temp-')) {
-          await OrderModel.findOneAndUpdate(
-            { _id: merchantOrderId, tenantId },
-            { $set: { paymentStatus: 'paid', paymentTransactionId: String(transaction.id) } }
-          ).catch(() => {});
+          const paymentUpdate = {
+            paymentStatus: 'paid',
+            paymentTransactionId: String(transaction.id),
+            status: 'payment_confirmed',
+          };
+
+          // Try by orderNumber first (most common for PayMob SA flow)
+          // NOTE: No tenantId filter — webhook comes from PayMob server with no session.
+          // We find the order first to get its real tenantId, then update it.
+          let confirmedOrder = await OrderModel.findOneAndUpdate(
+            { orderNumber: merchantOrderId },
+            { $set: paymentUpdate },
+            { new: true }
+          ).lean().catch(() => null);
+
+          if (!confirmedOrder) {
+            // Fallback: try by MongoDB _id (for legacy flow)
+            confirmedOrder = await OrderModel.findOneAndUpdate(
+              { _id: isValidObjectId(merchantOrderId) ? merchantOrderId : null },
+              { $set: paymentUpdate },
+              { new: true }
+            ).lean().catch(() => null);
+          }
+
+          // Notify employees via WebSocket (handles awaiting_payment → confirmed transition)
+          if (confirmedOrder) {
+            cache.invalidate('live-orders:');
+            wsManager.broadcastNewOrder(serializeDoc(confirmedOrder));
+          }
+
+          console.log(`[Paymob Webhook] Payment confirmed + status=payment_confirmed for order: ${merchantOrderId}`);
         }
+
+        // Log successful webhook
+        await logPayment({
+          tenantId,
+          event: 'webhook',
+          provider: 'paymob',
+          amount: transaction.amount_cents ? transaction.amount_cents / 100 : undefined,
+          currency: transaction.currency || 'SAR',
+          status: 'success',
+          externalId: String(transaction.id || ''),
+          orderId: merchantOrderId || undefined,
+          rawData: { type: body?.type, transactionId: transaction.id },
+          ipAddress: req.ip,
+        });
+      } else if (transaction) {
+        // Failed/pending transaction
+        await logPayment({
+          tenantId,
+          event: 'webhook',
+          provider: 'paymob',
+          amount: transaction.amount_cents ? transaction.amount_cents / 100 : undefined,
+          currency: transaction.currency || 'SAR',
+          status: transaction.pending ? 'pending' : 'failed',
+          externalId: String(transaction.id || ''),
+          orderId: transaction?.order?.merchant_order_id || transaction?.special_reference || undefined,
+          errorMessage: transaction.data?.message || undefined,
+          rawData: { type: body?.type, success: transaction.success, pending: transaction.pending },
+          ipAddress: req.ip,
+        });
+      }
+
+      // Also handle PayMob SA Intention API format (body.type = "TRANSACTION")
+      if (body?.type === 'TRANSACTION' && body?.obj?.success === false && body?.obj?.pending === false) {
+        console.log('[Paymob Webhook] Failed transaction received:', body?.obj?.id);
       }
 
       res.json({ success: true });
@@ -4387,11 +5020,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const { orderNumber, receiptData } = req.body;
       
-      // In a real implementation, this would:
-      // 1. Format the receipt data for thermal printer (ESC/POS commands)
-      // 2. Send to the connected printer via serial port or network
-      // 3. Handle printer errors
-      
       res.json({ 
         success: true,
         message: "تمت الطباعة بنجاح",
@@ -4404,21 +5032,1022 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Temporary test route for email
-
-  app.get("/api/pos/hardware-status", requireAuth, (req: AuthRequest, res) => {
+  // ─── Network Printer (LAN/TCP) — supports ProPos, Epson LAN, Xprinter, etc. ───
+  // Sends raw ESC/POS bytes to a thermal printer via TCP socket (port 9100)
+  app.post("/api/print/network", requireAuth, async (req: AuthRequest, res) => {
+    const net = await import('net');
     try {
-      // In a real implementation, this would check actual hardware connections
-      res.json({
-        pos: posDeviceStatus,
-        printer: { connected: true, status: "ready" },
-        cashDrawer: { connected: true, status: "closed" },
-        scanner: { connected: true, status: "ready" }
+      const { ip, port = 9100, data, timeout = 8000 } = req.body;
+
+      if (!ip || !data) {
+        return res.status(400).json({ error: "IP وبيانات الطباعة مطلوبة" });
+      }
+
+      // data can be base64-encoded bytes or a plain string
+      let printBuffer: Buffer;
+      if (typeof data === 'string') {
+        // Try to decode as base64 first
+        const decoded = Buffer.from(data, 'base64');
+        // If decoded looks like valid binary (has non-UTF8 bytes) treat as binary, else as text
+        printBuffer = decoded;
+      } else if (Array.isArray(data)) {
+        printBuffer = Buffer.from(data);
+      } else {
+        return res.status(400).json({ error: "صيغة بيانات الطباعة غير صحيحة" });
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const socket = new net.Socket();
+        let resolved    = false;
+        let writeStarted = false;
+
+        // Dynamic timeout: minimum 10s + 1s per 10KB — handles large raster receipts
+        const dynamicTimeout = Math.max(Number(timeout) || 10000, Math.ceil(printBuffer.length / 10000) * 1000);
+
+        const onError = (err: Error) => {
+          if (resolved) return;
+          resolved = true;
+          socket.destroy();
+          reject(err);
+        };
+
+        const onDone = () => {
+          if (resolved) return;
+          resolved = true;
+          resolve();
+        };
+
+        socket.setTimeout(dynamicTimeout);
+        socket.on('error', (err) => onError(err));
+        socket.on('timeout', () => {
+          if (!writeStarted) {
+            onError(new Error(`انتهت مهلة الاتصال بـ ${ip}:${port}`));
+          } else {
+            // Timeout after write started — close gracefully
+            socket.destroy();
+            onDone();
+          }
+        });
+        // Resolve when connection fully closes = all data flushed to printer
+        socket.on('close', onDone);
+
+        socket.connect(Number(port), ip, async () => {
+          writeStarted = true;
+          // ── Chunked write — prevents printer buffer overflow on large receipts ──
+          // Most thermal printers (Xprinter, Sunmi, Epson clones) have a 4-8 KB
+          // internal receive buffer. Sending the full payload at once causes garbled
+          // output on receipts with 5+ items. We split into 512-byte chunks and add
+          // a 30 ms delay between each to give the printer time to process.
+          const CHUNK_SIZE  = 512;
+          const CHUNK_DELAY = 30; // ms between chunks
+
+          try {
+            for (let offset = 0; offset < printBuffer.length; offset += CHUNK_SIZE) {
+              if (resolved) return; // socket already errored
+              const chunk = printBuffer.slice(offset, offset + CHUNK_SIZE);
+              await new Promise<void>((res, rej) => {
+                socket.write(chunk, (err) => (err ? rej(err) : res()));
+              });
+              // Add delay between chunks (not after the last one)
+              if (offset + CHUNK_SIZE < printBuffer.length) {
+                await new Promise(r => setTimeout(r, CHUNK_DELAY));
+              }
+            }
+            // All chunks sent — graceful close (FIN) so buffered data is flushed
+            socket.end();
+          } catch (err: any) {
+            onError(err);
+          }
+        });
       });
-    } catch (error) {
-      res.status(500).json({ error: "Failed to get hardware status" });
+
+      res.json({ success: true, message: `تمت الطباعة على ${ip}:${port}`, timestamp: new Date().toISOString() });
+    } catch (error: any) {
+      console.error('[Network Print] Error:', error.message);
+      res.status(500).json({ error: error.message || "فشل الاتصال بالطابعة الشبكية" });
     }
   });
+
+  // Test network printer connectivity (ping TCP)
+  app.post("/api/print/network-test", requireAuth, async (req: AuthRequest, res) => {
+    const net = await import('net');
+    try {
+      const { ip, port = 9100, timeout = 5000 } = req.body;
+      if (!ip) return res.status(400).json({ error: "IP مطلوب" });
+
+      await new Promise<void>((resolve, reject) => {
+        const socket = new net.Socket();
+        let resolved = false;
+        const cleanup = (err?: Error) => {
+          if (resolved) return;
+          resolved = true;
+          socket.destroy();
+          if (err) reject(err);
+          else resolve();
+        };
+        socket.setTimeout(Number(timeout));
+        socket.on('error', cleanup);
+        socket.on('timeout', () => cleanup(new Error('timeout')));
+        socket.connect(Number(port), ip, () => cleanup());
+      });
+
+      res.json({ success: true, connected: true, ip, port, message: `الطابعة ${ip}:${port} متاحة ✓` });
+    } catch (err: any) {
+      res.json({ success: false, connected: false, error: `لا يمكن الاتصال بـ ${req.body.ip}:${req.body.port || 9100}` });
+    }
+  });
+
+  // ── Automatic network printer discovery ──────────────────────────────────────
+  // Scans the server's local subnet(s) for open ESC/POS ports (default 9100).
+  // Uses parallel TCP probes with a short timeout so the scan finishes quickly.
+  app.post("/api/print/discover", requireAuth, async (req: AuthRequest, res) => {
+    const net   = await import('net');
+    const os    = await import('os');
+
+    const port       = Number(req.body?.port) || 9100;
+    const timeoutMs  = Number(req.body?.timeout) || 300; // ms per probe
+    const batchSize  = 50; // parallel probes at once
+    const subnetHint: string | undefined = req.body?.subnet; // e.g. "192.168.8."
+
+    // Collect subnets to scan:
+    // 1. If caller provided a subnet hint (e.g. "192.168.8."), use that exclusively.
+    // 2. Otherwise fall back to the server's own network interfaces.
+    const subnets: string[] = [];
+
+    if (subnetHint && /^\d+\.\d+\.\d+\.$/.test(subnetHint.trim())) {
+      // Caller gave us the subnet — trust it
+      subnets.push(subnetHint.trim());
+    } else {
+      // Detect server's own IPv4 interfaces (excludes loopback)
+      const ifaces = os.networkInterfaces();
+      for (const iface of Object.values(ifaces)) {
+        if (!iface) continue;
+        for (const addr of iface) {
+          if (addr.family !== 'IPv4' || addr.internal) continue;
+          const parts = addr.address.split('.');
+          if (parts.length === 4) subnets.push(parts.slice(0, 3).join('.') + '.');
+        }
+      }
+    }
+
+    if (subnets.length === 0) {
+      return res.json({ success: true, found: [], message: 'لم يُعثر على شبكة محلية' });
+    }
+
+    // Probe a single IP:port — resolves with ip on success, null on failure
+    function probe(ip: string): Promise<string | null> {
+      return new Promise((resolve) => {
+        const socket = new net.Socket();
+        let done = false;
+        const finish = (ok: boolean) => {
+          if (done) return;
+          done = true;
+          socket.destroy();
+          resolve(ok ? ip : null);
+        };
+        socket.setTimeout(timeoutMs);
+        socket.on('connect',  () => finish(true));
+        socket.on('error',    () => finish(false));
+        socket.on('timeout',  () => finish(false));
+        socket.connect(port, ip);
+      });
+    }
+
+    const found: Array<{ ip: string; port: number }> = [];
+
+    for (const subnet of subnets) {
+      // Scan 1..254 in batches
+      for (let start = 1; start <= 254; start += batchSize) {
+        const batch: string[] = [];
+        for (let i = start; i < start + batchSize && i <= 254; i++) {
+          batch.push(subnet + i);
+        }
+        const results = await Promise.all(batch.map(probe));
+        for (const ip of results) {
+          if (ip) found.push({ ip, port });
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      found,
+      scanned: subnets.map(s => `${s}1-254:${port}`),
+      message: found.length
+        ? `✅ تم العثور على ${found.length} طابعة`
+        : `لم يُعثر على طابعات على المنفذ ${port}`,
+    });
+  });
+
+  // ==================== CASHIER SHIFT MANAGEMENT ====================
+
+  // ─── Helper: aggregate order items into productsByCategory ──────────────────
+  async function aggregateShiftProducts(tenantId: string, orders: any[]): Promise<Array<{categoryNameAr: string; items: Array<{nameAr: string; quantity: number; totalAmount: number}>}>> {
+    try {
+      const categories = await MenuCategoryModel.find({ tenantId }).select('id nameAr').lean();
+      const categoryMap = new Map<string, string>(categories.map((c: any) => [c.id, c.nameAr]));
+
+      const productMap = new Map<string, {nameAr: string; categoryId: string; categoryNameAr: string; quantity: number; totalAmount: number}>();
+
+      for (const order of orders) {
+        let items: any[] = [];
+        try {
+          items = Array.isArray((order as any).items) ? (order as any).items : JSON.parse((order as any).items || '[]');
+        } catch { continue; }
+
+        for (const item of items) {
+          const nameAr = item.coffeeItem?.nameAr || item.nameAr || item.name || 'منتج';
+          const qty = Number(item.quantity) || 1;
+          const price = Number(item.price) || 0;
+          const categoryId = item.category || item.coffeeItem?.category || '';
+          const categoryNameAr = categoryMap.get(categoryId) || 'أخرى';
+          const key = `${categoryId}::${nameAr}`;
+          if (productMap.has(key)) {
+            const ex = productMap.get(key)!;
+            ex.quantity += qty;
+            ex.totalAmount += qty * price;
+          } else {
+            productMap.set(key, { nameAr, categoryId, categoryNameAr, quantity: qty, totalAmount: qty * price });
+          }
+        }
+      }
+
+      const grouped = new Map<string, {categoryNameAr: string; items: any[]}>();
+      for (const p of productMap.values()) {
+        if (!grouped.has(p.categoryId)) grouped.set(p.categoryId, { categoryNameAr: p.categoryNameAr, items: [] });
+        grouped.get(p.categoryId)!.items.push({ nameAr: p.nameAr, quantity: p.quantity, totalAmount: p.totalAmount });
+      }
+      return Array.from(grouped.values())
+        .map(cat => ({ ...cat, items: cat.items.sort((a: any, b: any) => b.quantity - a.quantity) }))
+        .sort((a, b) => a.categoryNameAr.localeCompare(b.categoryNameAr, 'ar'));
+    } catch { return []; }
+  }
+
+  // ─── Helper: get start-of-day UTC for a given local offset ─────────────────
+  function getLocalStartOfDay(now: Date, tzOffset: number): Date {
+    const localDate = new Date(now.getTime() + tzOffset * 3600000);
+    const localMidnight = new Date(Date.UTC(localDate.getUTCFullYear(), localDate.getUTCMonth(), localDate.getUTCDate(), 0, 0, 0, 0));
+    return new Date(localMidnight.getTime() - tzOffset * 3600000);
+  }
+
+  // Open a new cashier shift
+  app.post("/api/shifts/open", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const allowedRoles = ['cashier', 'manager', 'admin', 'owner'];
+      if (!req.employee || !allowedRoles.includes(req.employee.role)) {
+        return res.status(403).json({ error: "غير مصرح لك بفتح وردية" });
+      }
+
+      const { openingCash, notes } = req.body;
+      const employeeId = (req.employee as any)._id?.toString() || (req.employee as any).id;
+
+      // Check if employee already has an open shift
+      const existingShift = await CashierShiftModel.findOne({ 
+        employeeId, 
+        status: 'open' 
+      });
+
+      if (existingShift) {
+        return res.status(400).json({ 
+          error: "لديك وردية مفتوحة بالفعل. يجب إغلاقها أولاً",
+          shift: existingShift
+        });
+      }
+
+      const shiftCount = await CashierShiftModel.countDocuments({
+        branchId: req.employee.branchId || 'main'
+      });
+      const shiftNumber = `SH-${Date.now().toString(36).toUpperCase()}-${(shiftCount + 1).toString().padStart(4, '0')}`;
+
+      const newShift = await CashierShiftModel.create({
+        shiftNumber,
+        employeeId,
+        employeeName: req.employee.fullName || req.employee.username,
+        branchId: req.employee.branchId || 'main',
+        branchName: '',
+        status: 'open',
+        openedAt: new Date(),
+        openingCash: Number(openingCash) || 0,
+        notes: notes || '',
+        totalSales: 0,
+        totalOrders: 0,
+        totalCashSales: 0,
+        totalCardSales: 0,
+        totalDigitalSales: 0,
+        totalRefunds: 0,
+        totalDiscounts: 0,
+        totalCancelledOrders: 0,
+        totalVAT: 0,
+        netRevenue: 0,
+        orderIds: [],
+      });
+
+      console.log(`[SHIFT] Opened shift ${shiftNumber} by ${req.employee.username}`);
+      res.status(201).json(newShift);
+    } catch (error: any) {
+      console.error("[SHIFT] Error opening shift:", error);
+      res.status(500).json({ error: "فشل في فتح الوردية" });
+    }
+  });
+
+  // Get active shift for current employee
+  app.get("/api/shifts/active", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const empMongo = (req.employee as any)?._id?.toString();
+      const empNano  = (req.employee as any)?.id;
+      if (!empMongo && !empNano) return res.json(null);
+
+      // Short cache — employee shift data refreshes every ~15s on the client; 10s cache avoids Atlas round-trip
+      const shiftActiveCk = cacheKey('shift-active', empNano || empMongo);
+      const shiftActiveCached = cache.get<any>(shiftActiveCk);
+      if (shiftActiveCached !== null) return res.json(shiftActiveCached);
+
+      // Try both id formats — also scope to the employee's branch to prevent cross-branch shift bleed
+      const empBranchIdForQuery = (req.employee as any)?.branchId;
+      const shiftFindQuery: any = {
+        employeeId: { $in: [empMongo, empNano].filter(Boolean) },
+        status: 'open',
+      };
+      if (empBranchIdForQuery) {
+        shiftFindQuery.branchId = empBranchIdForQuery;
+      }
+      const activeShift = await CashierShiftModel.findOne(shiftFindQuery).lean() as any;
+
+      if (!activeShift) return res.json(null);
+
+      // ── Real-time recalculation from orders placed since shift opened ──────
+      try {
+        const { OrderModel: OM } = await import('@shared/schema');
+        const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+        const empBranchId = (req.employee as any)?.branchId;
+        // Build a flexible query — match by employeeId (any format) OR channel=pos in the same branch
+        const shiftQuery: any = {
+          tenantId,
+          createdAt: { $gte: new Date(activeShift.openedAt) },
+          status: { $nin: ['cancelled', 'awaiting_payment'] },
+        };
+        if (empBranchId) {
+          // Only count POS orders from this branch during the shift window
+          shiftQuery.branchId = empBranchId;
+          shiftQuery.channel = 'pos';
+        } else {
+          // Fallback: filter by employeeId in any format
+          const empIds = [empMongo, empNano].filter(Boolean);
+          if (empIds.length) shiftQuery.employeeId = { $in: empIds };
+        }
+        const shiftOrders = await OM.find(shiftQuery).lean();
+
+        let totalOrders = shiftOrders.length;
+        let totalSales = 0, totalCashSales = 0, totalCardSales = 0, totalDigitalSales = 0;
+        const paymentBreakdown: Record<string, number> = { cash: 0, card: 0, loyalty: 0 };
+
+        for (const o of shiftOrders) {
+          const amt = Number((o as any).totalAmount) || 0;
+          totalSales += amt;
+          const m = ((o as any).paymentMethod || '').toLowerCase();
+          if (m === 'cash') { totalCashSales += amt; paymentBreakdown.cash += amt; }
+          else if (m === 'qahwa-card' || m === 'qirox-card' || m === 'loyalty-card' || m === 'loyalty') { totalDigitalSales += amt; paymentBreakdown.loyalty += amt; }
+          else { totalCardSales += amt; paymentBreakdown.card += amt; }
+        }
+
+        const shiftResponse = {
+          ...activeShift,
+          totalOrders,
+          totalSales: Math.round(totalSales * 100) / 100,
+          totalCashSales: Math.round(totalCashSales * 100) / 100,
+          totalCardSales: Math.round(totalCardSales * 100) / 100,
+          totalDigitalSales: Math.round(totalDigitalSales * 100) / 100,
+          paymentBreakdown,
+        };
+        cache.set(shiftActiveCk, shiftResponse, 10);
+        return res.json(shiftResponse);
+      } catch (_) {
+        // Fallback to stored values if recalculation fails
+        cache.set(shiftActiveCk, activeShift, 10);
+        return res.json(activeShift);
+      }
+    } catch (error) {
+      console.error("[SHIFT] Error getting active shift:", error);
+      res.status(500).json({ error: "فشل في جلب الوردية النشطة" });
+    }
+  });
+
+  // Add order to active shift (called after order creation)
+  app.post("/api/shifts/add-order", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const employeeId = (req.employee as any)?._id?.toString() || (req.employee as any)?.id;
+      const { orderId, totalAmount, paymentMethod, orderType, discount, vat } = req.body;
+
+      const activeShift = await CashierShiftModel.findOne({ 
+        employeeId, 
+        status: 'open' 
+      });
+
+      if (!activeShift) {
+        return res.json({ success: true, message: "لا توجد وردية مفتوحة" });
+      }
+
+      const amount = Number(totalAmount) || 0;
+      const discountAmt = Number(discount) || 0;
+      const vatAmt = Number(vat) || 0;
+      const method = (paymentMethod || '').toLowerCase();
+      const type = (orderType || 'takeaway').toLowerCase();
+
+      activeShift.totalSales += amount;
+      activeShift.totalOrders += 1;
+      activeShift.totalDiscounts += discountAmt;
+      activeShift.totalVAT += vatAmt;
+      activeShift.netRevenue += (amount - vatAmt);
+      activeShift.orderIds.push(orderId);
+
+      if (method === 'cash') {
+        activeShift.totalCashSales += amount;
+        activeShift.paymentBreakdown.cash += amount;
+      } else if (method === 'qahwa-card' || method === 'qirox-card' || method === 'loyalty-card' || method === 'loyalty') {
+        activeShift.totalDigitalSales += amount;
+        activeShift.paymentBreakdown.loyalty += amount;
+      } else {
+        activeShift.totalCardSales += amount;
+        activeShift.paymentBreakdown.card += amount;
+      }
+
+      if (type === 'dine_in') activeShift.orderTypeBreakdown.dine_in += 1;
+      else if (type === 'takeaway') activeShift.orderTypeBreakdown.takeaway += 1;
+      else if (type === 'car_pickup') activeShift.orderTypeBreakdown.car_pickup += 1;
+      else if (type === 'delivery') activeShift.orderTypeBreakdown.delivery += 1;
+      else if (type === 'online') activeShift.orderTypeBreakdown.online += 1;
+
+      activeShift.updatedAt = new Date();
+      await activeShift.save();
+
+      res.json({ success: true, shift: activeShift });
+    } catch (error) {
+      console.error("[SHIFT] Error adding order to shift:", error);
+      res.status(500).json({ error: "فشل في تحديث الوردية" });
+    }
+  });
+
+  // Record cancelled order in shift
+  app.post("/api/shifts/cancel-order", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const employeeId = (req.employee as any)?._id?.toString() || (req.employee as any)?.id;
+      const { orderId, refundAmount } = req.body;
+
+      const activeShift = await CashierShiftModel.findOne({ employeeId, status: 'open' });
+      if (!activeShift) return res.json({ success: true });
+
+      activeShift.totalCancelledOrders += 1;
+      activeShift.totalRefunds += Number(refundAmount) || 0;
+      activeShift.updatedAt = new Date();
+      await activeShift.save();
+
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "فشل في تحديث الوردية" });
+    }
+  });
+
+  // Cash movement (cash in/out during shift)
+  app.post("/api/shifts/cash-movement", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const allowedRoles = ['cashier', 'manager', 'admin', 'owner'];
+      if (!req.employee || !allowedRoles.includes(req.employee.role)) {
+        return res.status(403).json({ error: "غير مصرح" });
+      }
+
+      const employeeId = (req.employee as any)?._id?.toString() || (req.employee as any)?.id;
+      const { type, amount, reason } = req.body;
+
+      if (!['cash_in', 'cash_out', 'paid_in', 'paid_out'].includes(type)) {
+        return res.status(400).json({ error: "نوع العملية غير صحيح" });
+      }
+
+      const activeShift = await CashierShiftModel.findOne({ employeeId, status: 'open' });
+      if (!activeShift) {
+        return res.status(400).json({ error: "لا توجد وردية مفتوحة" });
+      }
+
+      activeShift.cashMovements.push({
+        type,
+        amount: Number(amount) || 0,
+        reason: reason || '',
+        timestamp: new Date(),
+        performedBy: req.employee.username || req.employee.fullName,
+      });
+      activeShift.updatedAt = new Date();
+      await activeShift.save();
+
+      res.json({ success: true, shift: activeShift });
+    } catch (error) {
+      res.status(500).json({ error: "فشل في تسجيل حركة النقد" });
+    }
+  });
+
+  // Close shift and generate Z-Report
+  app.post("/api/shifts/close", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const allowedRoles = ['cashier', 'manager', 'admin', 'owner'];
+      if (!req.employee || !allowedRoles.includes(req.employee.role)) {
+        return res.status(403).json({ error: "غير مصرح لك بإغلاق الوردية" });
+      }
+
+      const employeeId = (req.employee as any)?._id?.toString() || (req.employee as any)?.id;
+      const { closingCash, closingNotes } = req.body;
+
+      const activeShift = await CashierShiftModel.findOne({ employeeId, status: 'open' });
+      if (!activeShift) {
+        return res.status(400).json({ error: "لا توجد وردية مفتوحة" });
+      }
+
+      const closingCashAmount = Number(closingCash) || 0;
+
+      // Calculate expected cash: opening + cash sales + cash_in - cash_out - cash refunds
+      let cashIn = 0, cashOut = 0;
+      for (const mov of activeShift.cashMovements) {
+        if (mov.type === 'cash_in' || mov.type === 'paid_in') cashIn += mov.amount;
+        if (mov.type === 'cash_out' || mov.type === 'paid_out') cashOut += mov.amount;
+      }
+      const expectedCash = activeShift.openingCash + activeShift.totalCashSales + cashIn - cashOut;
+      const cashDifference = closingCashAmount - expectedCash;
+
+      activeShift.status = 'closed';
+      activeShift.closedAt = new Date();
+      activeShift.closingCash = closingCashAmount;
+      activeShift.expectedCash = expectedCash;
+      activeShift.cashDifference = cashDifference;
+      activeShift.closingNotes = closingNotes || '';
+      activeShift.updatedAt = new Date();
+      await activeShift.save();
+
+      console.log(`[SHIFT] Closed shift ${activeShift.shiftNumber} by ${req.employee.username} | Diff: ${cashDifference}`);
+
+      res.json({
+        success: true,
+        shift: activeShift,
+        zReport: {
+          shiftNumber: activeShift.shiftNumber,
+          employeeName: activeShift.employeeName,
+          branchName: activeShift.branchName,
+          openedAt: activeShift.openedAt,
+          closedAt: activeShift.closedAt,
+          duration: Math.round(((activeShift.closedAt as any) - (activeShift.openedAt as any)) / 60000),
+          openingCash: activeShift.openingCash,
+          closingCash: closingCashAmount,
+          expectedCash,
+          cashDifference,
+          totalSales: activeShift.totalSales,
+          totalOrders: activeShift.totalOrders,
+          totalCashSales: activeShift.totalCashSales,
+          totalCardSales: activeShift.totalCardSales,
+          totalDigitalSales: activeShift.totalDigitalSales,
+          totalRefunds: activeShift.totalRefunds,
+          totalDiscounts: activeShift.totalDiscounts,
+          totalCancelledOrders: activeShift.totalCancelledOrders,
+          totalVAT: activeShift.totalVAT,
+          netRevenue: activeShift.netRevenue,
+          paymentBreakdown: activeShift.paymentBreakdown,
+          orderTypeBreakdown: activeShift.orderTypeBreakdown,
+          cashMovements: activeShift.cashMovements,
+        }
+      });
+    } catch (error: any) {
+      console.error("[SHIFT] Error closing shift:", error);
+      res.status(500).json({ error: "فشل في إغلاق الوردية" });
+    }
+  });
+
+  // Get Z-Report for a specific shift
+  app.get("/api/shifts/:shiftId/z-report", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const shift = await CashierShiftModel.findById(req.params.shiftId).lean();
+      if (!shift) return res.status(404).json({ error: "الوردية غير موجودة" });
+
+      res.json(shift);
+    } catch (error) {
+      res.status(500).json({ error: "فشل في جلب التقرير" });
+    }
+  });
+
+  // Get shift history (for manager)
+  app.get("/api/shifts/history", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { branchId, employeeId, startDate, endDate, status, limit: limitParam } = req.query;
+      const filter: any = {};
+
+      // Enforce branch isolation: non-admin users only see their branch's shifts
+      const isAdminOrOwner = req.employee?.role === 'admin' || req.employee?.role === 'owner';
+      if (!isAdminOrOwner && req.employee?.branchId) {
+        filter.branchId = (branchId as string) || req.employee.branchId;
+      } else if (branchId) {
+        filter.branchId = branchId;
+      }
+      if (employeeId) filter.employeeId = employeeId;
+      if (status) filter.status = status;
+      if (startDate || endDate) {
+        filter.openedAt = {};
+        if (startDate) filter.openedAt.$gte = new Date(startDate as string);
+        if (endDate) filter.openedAt.$lte = new Date(endDate as string);
+      }
+
+      const shifts = await CashierShiftModel.find(filter)
+        .sort({ openedAt: -1 })
+        .limit(Number(limitParam) || 50)
+        .lean();
+
+      res.json(shifts);
+    } catch (error) {
+      res.status(500).json({ error: "فشل في جلب سجل الورديات" });
+    }
+  });
+
+  // Get daily Z-Report summary (all shifts for a day)
+  app.get("/api/shifts/daily-summary", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { date, branchId } = req.query;
+      const targetDate = date ? new Date(date as string) : new Date();
+      const startOfDay = getSaudiStartOfDay(targetDate);
+      const endOfDay = getSaudiEndOfDay(targetDate);
+
+      const filter: any = {
+        openedAt: { $gte: startOfDay, $lte: endOfDay },
+        status: 'closed',
+      };
+      if (branchId) filter.branchId = branchId;
+
+      const shifts = await CashierShiftModel.find(filter).lean();
+
+      const summary = {
+        date: targetDate.toISOString().split('T')[0],
+        totalShifts: shifts.length,
+        totalSales: 0,
+        totalOrders: 0,
+        totalCashSales: 0,
+        totalCardSales: 0,
+        totalDigitalSales: 0,
+        totalRefunds: 0,
+        totalDiscounts: 0,
+        totalCancelledOrders: 0,
+        totalVAT: 0,
+        netRevenue: 0,
+        totalOpeningCash: 0,
+        totalClosingCash: 0,
+        totalExpectedCash: 0,
+        totalCashDifference: 0,
+        paymentBreakdown: { cash: 0, card: 0, loyalty: 0 },
+        orderTypeBreakdown: { dine_in: 0, takeaway: 0, car_pickup: 0, delivery: 0, online: 0 },
+        shifts: shifts.map(s => ({
+          shiftNumber: s.shiftNumber,
+          employeeName: s.employeeName,
+          openedAt: s.openedAt,
+          closedAt: s.closedAt,
+          totalSales: s.totalSales,
+          totalOrders: s.totalOrders,
+          cashDifference: s.cashDifference,
+        })),
+      };
+
+      for (const s of shifts) {
+        summary.totalSales += s.totalSales || 0;
+        summary.totalOrders += s.totalOrders || 0;
+        summary.totalCashSales += s.totalCashSales || 0;
+        summary.totalCardSales += s.totalCardSales || 0;
+        summary.totalDigitalSales += s.totalDigitalSales || 0;
+        summary.totalRefunds += s.totalRefunds || 0;
+        summary.totalDiscounts += s.totalDiscounts || 0;
+        summary.totalCancelledOrders += s.totalCancelledOrders || 0;
+        summary.totalVAT += s.totalVAT || 0;
+        summary.netRevenue += s.netRevenue || 0;
+        summary.totalOpeningCash += s.openingCash || 0;
+        summary.totalClosingCash += s.closingCash || 0;
+        summary.totalExpectedCash += s.expectedCash || 0;
+        summary.totalCashDifference += s.cashDifference || 0;
+
+        const pb = s.paymentBreakdown || {} as any;
+        for (const key of Object.keys(summary.paymentBreakdown)) {
+          (summary.paymentBreakdown as any)[key] += (pb as any)[key] || 0;
+        }
+        const ob = s.orderTypeBreakdown || {} as any;
+        for (const key of Object.keys(summary.orderTypeBreakdown)) {
+          (summary.orderTypeBreakdown as any)[key] += (ob as any)[key] || 0;
+        }
+      }
+
+      res.json(summary);
+    } catch (error) {
+      res.status(500).json({ error: "فشل في جلب الملخص اليومي" });
+    }
+  });
+
+  // ─── Auto-Shift: compute current 12h window from orders (no DB record needed) ───
+  app.get("/api/shifts/auto-current", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+
+      // Scope to the employee's branch (admins/owners see all branches combined)
+      const empRole = req.employee?.role || '';
+      const isAdminOrOwner = empRole === 'admin' || empRole === 'owner';
+      const empBranchId: string | null = isAdminOrOwner ? null : (req.employee?.branchId || null);
+
+      // Cache per-branch so different branches get their own window data
+      const autoCurrentCk = cacheKey('shift-auto-current', tenantId, empBranchId || 'all');
+      const autoCurrentCached = cache.get<any>(autoCurrentCk);
+      if (autoCurrentCached !== null) return res.json(autoCurrentCached);
+
+      const bizConfig = await BusinessConfigModel.findOne({ tenantId }).lean();
+
+      // If auto-shifts are disabled, signal the client so it waits for a manual shift
+      if ((bizConfig as any)?.autoShiftsEnabled === false) {
+        return res.json({ isAuto: false, disabled: true });
+      }
+
+      const tzOffset: number = Number((bizConfig as any)?.timezoneOffsetHours ?? 3);
+      const now = new Date();
+      const localDayOfWeek = ((now.getUTCDay() + Math.floor((now.getUTCHours() + tzOffset) / 24)) % 7 + 7) % 7;
+
+      // Use per-day config if available, otherwise fall back to global shiftPeriods
+      const dayShiftConfig: Record<string, Array<{start: number; end: number}>> = (bizConfig as any)?.dayShiftConfig || {};
+      const shiftPeriods: Array<{start: number; end: number}> =
+        dayShiftConfig[String(localDayOfWeek)]?.length
+          ? dayShiftConfig[String(localDayOfWeek)]
+          : (bizConfig as any)?.shiftPeriods || [{start: 6, end: 18}, {start: 18, end: 6}];
+
+      const currentLocalHour = (now.getUTCHours() + tzOffset) % 24;
+
+      // Find which period we're in
+      const period = shiftPeriods.find(p => {
+        if (p.end > p.start) return currentLocalHour >= p.start && currentLocalHour < p.end;
+        return currentLocalHour >= p.start || currentLocalHour < p.end; // overnight
+      }) || shiftPeriods[0] || {start: 6, end: 18};
+
+      // Compute UTC window boundaries using configured offset
+      const dayStartUTC = getLocalStartOfDay(now, tzOffset);
+      let windowStartUTC = new Date(dayStartUTC.getTime() + period.start * 3600000);
+      let windowEndUTC: Date;
+      if (period.end > period.start) {
+        windowEndUTC = new Date(dayStartUTC.getTime() + period.end * 3600000);
+      } else {
+        if (currentLocalHour >= period.start) {
+          windowEndUTC = new Date(dayStartUTC.getTime() + (period.end + 24) * 3600000);
+        } else {
+          windowStartUTC = new Date(dayStartUTC.getTime() - (24 - period.start) * 3600000);
+          windowEndUTC = new Date(dayStartUTC.getTime() + period.end * 3600000);
+        }
+      }
+
+      // Query orders in this window — scoped to employee's branch
+      const orderQuery: Record<string, any> = {
+        tenantId,
+        createdAt: { $gte: windowStartUTC, $lte: now },
+        status: { $nin: ['cancelled', 'refunded'] },
+      };
+      if (empBranchId) orderQuery.branchId = empBranchId;
+
+      const orders = await OrderModel.find(orderQuery)
+        .select('totalAmount paymentMethod createdAt items').lean();
+
+      let totalSales = 0, totalCash = 0, totalCard = 0, totalDigital = 0;
+      for (const o of orders) {
+        const amt = Number((o as any).totalAmount) || 0;
+        totalSales += amt;
+        const method = ((o as any).paymentMethod || '').toLowerCase();
+        if (method === 'cash') totalCash += amt;
+        else if (method === 'qahwa-card' || method === 'qirox-card' || method === 'loyalty-card' || method === 'loyalty') totalDigital += amt;
+        else totalCard += amt;
+      }
+
+      const productsByCategory = await aggregateShiftProducts(tenantId, orders);
+
+      const autoCurrentResponse = {
+        isAuto: true,
+        windowStart: windowStartUTC.toISOString(),
+        windowEnd: windowEndUTC.toISOString(),
+        totalOrders: orders.length,
+        totalSales,
+        totalCash,
+        totalCard,
+        totalDigital,
+        periodLabel: `${period.start}:00 — ${period.end}:00`,
+        productsByCategory,
+      };
+      cache.set(autoCurrentCk, autoCurrentResponse, 15);
+      res.json(autoCurrentResponse);
+    } catch (error) {
+      console.error('[SHIFT] auto-current error:', error);
+      res.status(500).json({ error: 'فشل في حساب الوردية التلقائية' });
+    }
+  });
+
+  // ─── Auto-Shift Periods: all periods for a given date (or today) ─────────────
+  app.get("/api/shifts/auto-periods", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const bizConfig = await BusinessConfigModel.findOne({ tenantId }).lean();
+
+      // If auto-shifts disabled, return empty periods list
+      if ((bizConfig as any)?.autoShiftsEnabled === false) {
+        return res.json({ periods: [], disabled: true });
+      }
+
+      const tzOffset: number = Number((bizConfig as any)?.timezoneOffsetHours ?? 3);
+      const now = new Date();
+
+      // Support optional ?date=YYYY-MM-DD for historical queries
+      let targetDate: Date;
+      if (req.query.date && typeof req.query.date === 'string') {
+        const [y, m, d] = req.query.date.split('-').map(Number);
+        targetDate = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0) - tzOffset * 3600000);
+      } else {
+        targetDate = now;
+      }
+
+      const isHistorical = !!(req.query.date && req.query.date !== new Date(now.getTime() + tzOffset * 3600000).toISOString().slice(0, 10));
+      const dayStartUTC = getLocalStartOfDay(targetDate, tzOffset);
+      const prevDayStartUTC = new Date(dayStartUTC.getTime() - 24 * 3600000);
+      const results: any[] = [];
+
+      // Determine which shift periods to use for the target date (per-day or default)
+      const targetLocalDayOfWeek = new Date(dayStartUTC.getTime() + tzOffset * 3600000).getUTCDay();
+      const dayShiftConfigP: Record<string, Array<{start: number; end: number}>> = (bizConfig as any)?.dayShiftConfig || {};
+      const shiftPeriods: Array<{start: number; end: number}> =
+        dayShiftConfigP[String(targetLocalDayOfWeek)]?.length
+          ? dayShiftConfigP[String(targetLocalDayOfWeek)]
+          : (bizConfig as any)?.shiftPeriods || [{start: 6, end: 18}, {start: 18, end: 6}];
+
+      // Build all candidate windows for the requested date.
+      // For overnight periods (end < start) we check TWO instances:
+      //   - "prev instance": started previous calendar day, ends this calendar day (early morning)
+      //   - "cur instance":  starts this calendar day (evening), ends next calendar day
+      // This ensures orders made between midnight and the first shift start are captured.
+      type Window = { windowStartUTC: Date; windowEndUTC: Date; label: string };
+      const windows: Window[] = [];
+
+      for (const period of shiftPeriods) {
+        const isOvernight = period.end <= period.start;
+
+        if (!isOvernight) {
+          // Normal same-day period (e.g. 06:00–18:00)
+          windows.push({
+            windowStartUTC: new Date(dayStartUTC.getTime() + period.start * 3600000),
+            windowEndUTC:   new Date(dayStartUTC.getTime() + period.end   * 3600000),
+            label: `${String(period.start).padStart(2,'0')}:00 — ${String(period.end).padStart(2,'0')}:00`,
+          });
+        } else {
+          // Overnight period (e.g. 18:00–06:00).
+          // Instance that started YESTERDAY and ends TODAY (early morning):
+          const prevStart = new Date(prevDayStartUTC.getTime() + period.start * 3600000);
+          const prevEnd   = new Date(dayStartUTC.getTime()     + period.end   * 3600000);
+          windows.push({ windowStartUTC: prevStart, windowEndUTC: prevEnd, label: `${String(period.start).padStart(2,'0')}:00 — ${String(period.end).padStart(2,'0')}:00` });
+
+          // Instance that STARTS TODAY and ends tomorrow:
+          const curStart = new Date(dayStartUTC.getTime()     + period.start * 3600000);
+          const curEnd   = new Date(dayStartUTC.getTime()     + (period.end + 24) * 3600000);
+          windows.push({ windowStartUTC: curStart, windowEndUTC: curEnd, label: `${String(period.start).padStart(2,'0')}:00 — ${String(period.end).padStart(2,'0')}:00` });
+        }
+      }
+
+      for (const { windowStartUTC, windowEndUTC, label } of windows) {
+        // For today: skip periods that haven't started yet
+        if (!isHistorical && windowStartUTC > now) continue;
+        // Skip windows entirely before the requested calendar day (to avoid double-counting previous days)
+        if (windowEndUTC <= prevDayStartUTC) continue;
+
+        const effectiveEnd = isHistorical
+          ? windowEndUTC
+          : new Date(Math.min(windowEndUTC.getTime(), now.getTime()));
+
+        const orders = await OrderModel.find({
+          tenantId,
+          createdAt: { $gte: windowStartUTC, $lte: effectiveEnd },
+          status: { $nin: ['cancelled', 'refunded'] },
+        }).select('totalAmount paymentMethod items').lean();
+
+        if (orders.length === 0) continue; // always skip empty windows
+
+        let totalSales = 0, totalCash = 0, totalCard = 0;
+        for (const o of orders) {
+          const amt = Number((o as any).totalAmount) || 0;
+          totalSales += amt;
+          const method = ((o as any).paymentMethod || '').toLowerCase();
+          if (method === 'cash') totalCash += amt;
+          else totalCard += amt;
+        }
+
+        const productsByCategory = await aggregateShiftProducts(tenantId, orders);
+
+        results.push({
+          periodLabel: label,
+          windowStart: windowStartUTC.toISOString(),
+          windowEnd: windowEndUTC.toISOString(),
+          isOngoing: !isHistorical && windowEndUTC > now,
+          totalOrders: orders.length,
+          totalSales,
+          totalCash,
+          totalCard,
+          productsByCategory,
+        });
+      }
+
+      // Sort by window start time ascending
+      results.sort((a, b) => new Date(a.windowStart).getTime() - new Date(b.windowStart).getTime());
+
+      res.json(results);
+    } catch (error) {
+      console.error('[SHIFT] auto-periods error:', error);
+      res.status(500).json({ error: 'فشل في جلب الورديات التلقائية' });
+    }
+  });
+
+  // Custom time-range merge report
+  // GET /api/shifts/custom-range?date=YYYY-MM-DD&fromTime=HH:MM&toTime=HH:MM
+  app.get("/api/shifts/custom-range", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const bizConfig = await BusinessConfigModel.findOne({ tenantId }).lean();
+      const tzOffset: number = Number((bizConfig as any)?.timezoneOffsetHours ?? 3);
+
+      const dateStr = (req.query.date as string) || new Date(Date.now() + tzOffset * 3600000).toISOString().slice(0, 10);
+      const fromTime = (req.query.fromTime as string) || '00:00';
+      const toTime   = (req.query.toTime   as string) || '23:59';
+
+      const [fy, fm, fd] = dateStr.split('-').map(Number);
+      const [fh, fmin]   = fromTime.split(':').map(Number);
+      const [th, tmin]   = toTime.split(':').map(Number);
+
+      // Build UTC boundaries from local (Saudi) time
+      const dayStartUTC = new Date(Date.UTC(fy, fm - 1, fd, 0, 0, 0) - tzOffset * 3600000);
+      const fromUTC = new Date(dayStartUTC.getTime() + (fh * 60 + fmin) * 60000);
+      let   toUTC   = new Date(dayStartUTC.getTime() + (th * 60 + tmin) * 60000);
+
+      // If toTime <= fromTime, assume it crosses midnight (next day)
+      if (toUTC <= fromUTC) toUTC = new Date(toUTC.getTime() + 24 * 3600000);
+
+      const orders = await OrderModel.find({
+        tenantId,
+        createdAt: { $gte: fromUTC, $lte: toUTC },
+        status: { $nin: ['cancelled', 'refunded'] },
+      }).select('totalAmount paymentMethod items').lean();
+
+      let totalSales = 0, totalCash = 0, totalCard = 0;
+      for (const o of orders) {
+        const amt = Number((o as any).totalAmount) || 0;
+        totalSales += amt;
+        const method = ((o as any).paymentMethod || '').toLowerCase();
+        if (method === 'cash') totalCash += amt;
+        else totalCard += amt;
+      }
+
+      const productsByCategory = await aggregateShiftProducts(tenantId, orders);
+
+      res.json({
+        periodLabel: `${fromTime} — ${toTime}`,
+        reportTitle: `تقرير مخصص — ${dateStr}  (${fromTime} → ${toTime})`,
+        windowStart: fromUTC.toISOString(),
+        windowEnd: toUTC.toISOString(),
+        isOngoing: false,
+        totalOrders: orders.length,
+        totalSales,
+        totalCash,
+        totalCard,
+        productsByCategory,
+      });
+    } catch (error) {
+      console.error('[SHIFT] custom-range error:', error);
+      res.status(500).json({ error: 'فشل في جلب بيانات النطاق المخصص' });
+    }
+  });
+
+  // ─── Dates with orders (for historical navigation) ───────────────────────────
+  app.get("/api/shifts/order-dates", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const bizConfig = await BusinessConfigModel.findOne({ tenantId }).lean();
+      const tzOffset: number = Number((bizConfig as any)?.timezoneOffsetHours ?? 3);
+
+      // Get distinct dates from orders (last 365 days)
+      const since = new Date(Date.now() - 365 * 24 * 3600000);
+      const orders = await OrderModel.find({
+        tenantId,
+        createdAt: { $gte: since },
+        status: { $nin: ['cancelled', 'refunded'] },
+      }).select('createdAt').lean();
+
+      // Convert each order's createdAt to a local date string YYYY-MM-DD
+      const dateSet = new Set<string>();
+      for (const o of orders) {
+        const localDate = new Date((o as any).createdAt.getTime() + tzOffset * 3600000);
+        const dateStr = localDate.toISOString().slice(0, 10);
+        dateSet.add(dateStr);
+      }
+
+      // Return sorted desc
+      const dates = Array.from(dateSet).sort((a, b) => b.localeCompare(a));
+      res.json(dates);
+    } catch (error) {
+      res.status(500).json({ error: 'فشل في جلب التواريخ' });
+    }
+  });
+
+  // Temporary test route for email
 
   // FILE UPLOAD ROUTES
   
@@ -4429,7 +6058,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No file uploaded" });
       }
 
-      const { ObjectStorageService } = await import("./replit_integrations/object_storage");
+      const { ObjectStorageService } = await import("./qirox_studio_integrations/object_storage");
       const storageService = new ObjectStorageService();
 
       try {
@@ -4441,7 +6070,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const uploadResponse = await fetch(uploadURL, {
           method: 'PUT',
-          body: fileBuffer,
+          body: fileBuffer as unknown as BodyInit,
           headers: {
             'Content-Type': req.file.mimetype || 'application/octet-stream',
           },
@@ -4506,7 +6135,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const restoreKey = crypto.randomBytes(32).toString('hex');
       req.session.restoreKey = restoreKey;
-      await EmployeeModel.findByIdAndUpdate(employee._id, { $set: { lastRestoreKey: restoreKey } });
+      await EmployeeModel.findByIdAndUpdate(employee._id, { $set: { lastRestoreKey: restoreKey, restoreKeyIssuedAt: new Date() } });
 
       // Save session before responding
       req.session.save((err) => {
@@ -4528,16 +6157,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Employee login via username/password
+  app.post("/api/employees/verify-phone", async (req, res) => {
+    try {
+      const { username, phone } = req.body;
+      if (!username || !phone) {
+        return res.status(400).json({ error: "الرجاء إدخال اسم المستخدم ورقم الجوال" });
+      }
+      const isEmail = username.includes("@");
+      const employee = await EmployeeModel.findOne(
+        isEmail ? { email: username.toLowerCase().trim() } : { username }
+      );
+      if (!employee) {
+        return res.status(401).json({ error: "اسم المستخدم أو رقم الجوال غير صحيح" });
+      }
+      const normalize = (p: string) => p.replace(/\s|-/g, "").replace(/^00966/, "0").replace(/^\+966/, "0");
+      const inputPhone = normalize(String(phone));
+      const storedPhone = normalize(String(employee.phone || ""));
+      if (!storedPhone || inputPhone !== storedPhone) {
+        return res.status(401).json({ error: "اسم المستخدم أو رقم الجوال غير صحيح" });
+      }
+      return res.json({ verified: true });
+    } catch (err) {
+      console.error("[AUTH] verify-phone error:", err);
+      return res.status(500).json({ error: "خطأ في التحقق" });
+    }
+  });
+
   app.post("/api/employees/login", async (req, res) => {
     try {
       const { username, password } = req.body;
 
       if (!username || !password) {
-        return res.status(400).json({ error: "الرجاء إدخال اسم المستخدم وكلمة المرور" });
+        return res.status(400).json({ error: "الرجاء إدخال اسم المستخدم أو البريد الإلكتروني وكلمة المرور" });
       }
 
       console.log(`[AUTH] Login attempt for: ${username}`);
-      const employee = await EmployeeModel.findOne({ username });
+
+      // Support login by username, email, or phone number (case-insensitive)
+      const trimmedUsername = username.trim();
+      const isEmail = trimmedUsername.includes("@");
+      // Phone detection: starts with 05, 5, +966, or 00966
+      const isPhone = /^(\+966|00966|05|5)\d{7,9}$/.test(trimmedUsername.replace(/\s/g, ''));
+
+      let employee: any = null;
+
+      if (isEmail) {
+        employee = await EmployeeModel.findOne({ email: trimmedUsername.toLowerCase() });
+      } else if (isPhone) {
+        // Normalize phone to 9-digit format starting with 5
+        const normalizedPhone = trimmedUsername.replace(/\D/g, '').replace(/^00966/, '').replace(/^\+966/, '').replace(/^966/, '').replace(/^0/, '');
+        employee = await EmployeeModel.findOne({ phone: { $in: [normalizedPhone, `0${normalizedPhone}`, `+966${normalizedPhone}`, `966${normalizedPhone}`] } });
+      } else {
+        // Username search — case-insensitive
+        employee = await EmployeeModel.findOne({ username: { $regex: `^${trimmedUsername}$`, $options: 'i' } });
+      }
 
       if (!employee || !employee.password) {
         console.log(`[AUTH] Employee not found or no password: ${username}`);
@@ -4552,8 +6225,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
       }
 
-      if (employee.isActivated === 0) {
-        return res.status(403).json({ error: "هذا الحساب غير مفعل" });
+      // Check activation — isActivated can be 0, false, or "0" to mean inactive
+      const notActivated = employee.isActivated === 0 || employee.isActivated === false || employee.isActivated === "0";
+      if (notActivated) {
+        return res.status(403).json({ error: "هذا الحساب غير مفعل. تواصل مع المدير لتفعيل الحساب" });
       }
 
       // Create session
@@ -4568,7 +6243,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const restoreKey = crypto.randomBytes(32).toString('hex');
       req.session.restoreKey = restoreKey;
-      await EmployeeModel.findByIdAndUpdate(employee._id, { $set: { lastRestoreKey: restoreKey } });
+      await EmployeeModel.findByIdAndUpdate(employee._id, { $set: { lastRestoreKey: restoreKey, restoreKeyIssuedAt: new Date() } });
 
       // Save session before responding
       req.session.save((err) => {
@@ -4578,6 +6253,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         console.log(`[AUTH] Login successful: ${username} (${employee.role})`);
+        // Audit log for login
+        logAudit({
+          tenantId: employee.tenantId || 'demo-tenant',
+          branchId: employee.branchId,
+          action: 'employee.login',
+          entityType: 'employee',
+          entityId: employee.id || (employee._id as any)?.toString(),
+          entityLabel: employee.nameAr || employee.nameEn || username,
+          actorType: (employee.role === 'admin' || employee.role === 'owner') ? 'admin' : employee.role === 'manager' ? 'manager' : 'employee',
+          actorId: employee.id || (employee._id as any)?.toString(),
+          actorName: employee.nameAr || employee.nameEn || username,
+          actorRole: employee.role,
+          ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress,
+          details: { method: 'password' },
+        });
         // Don't send password back
         const employeeData = serializeDoc(employee);
         delete employeeData.password;
@@ -4677,7 +6367,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "يجب أن تكون النقاط من مضاعفات 100" });
       }
 
-      const customer = await CustomerModel.findById(customerId);
+      const customer = await CustomerModel.findOne({ id: customerId });
       if (!customer || (customer.points || 0) < points) {
         return res.status(400).json({ error: "النقاط غير كافية" });
       }
@@ -4708,7 +6398,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const fromId = (req as any).customer?.id || req.employee?.id;
       if (!fromId) return res.status(401).json({ error: "غير مصرح لك" });
 
-      const fromCustomer = await CustomerModel.findById(fromId);
+      const fromCustomer = await CustomerModel.findOne({ id: fromId });
       if (!fromCustomer) return res.status(404).json({ error: "حساب المرسل غير موجود" });
 
       // Verify PIN
@@ -4815,7 +6505,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         attempts: 0,
       });
 
-      const customer = await CustomerModel.findById(loyaltyCard.customerId);
+      const customer = await CustomerModel.findOne({ id: loyaltyCard.customerId });
       const customerEmail = customer?.email;
       const customerName = customer?.name || loyaltyCard.customerName || 'عميل';
 
@@ -4907,7 +6597,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/wallet/pay", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { customerId, amount } = req.body;
-      const customer = await CustomerModel.findById(customerId);
+      const customer = await CustomerModel.findOne({ id: customerId });
       if (!customer) return res.status(404).json({ error: "العميل غير موجود" });
       
       if ((customer.walletBalance || 0) < amount) {
@@ -4923,7 +6613,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Employee profile endpoint (must use this instead of /api/employees/:id for self)
+  app.get("/api/permissions/matrix", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const role = req.employee!.role;
+      const allPermissions = PermissionsEngine.getAllPermissionsList();
+      const allPages = PermissionsEngine.getAllPagesList();
+      const rolePermissions = PermissionsEngine.getPermissions(role);
+      const defaultPages = PermissionsEngine.getDefaultPagesForRole(role);
+      const roles = PermissionsEngine.getAllRoles();
+      res.json({ allPermissions, allPages, rolePermissions, defaultPages, roles });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/employees/me", requireAuth, async (req: AuthRequest, res) => {
     try {
       const employee = await storage.getEmployee(req.employee!.id);
@@ -4979,28 +6682,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tenantId = req.employee?.tenantId || 'demo-tenant';
       const bodyData = req.body;
 
-      // For non-admin managers, enforce their branch ID
-      if (req.employee?.role !== "admin") {
+      if (req.employee?.role !== "admin" && req.employee?.role !== "owner") {
         if (req.employee?.branchId) {
-          // Manager can only create employees in their branch
-          if (bodyData.branchId && bodyData.branchId !== req.employee.branchId) {
-            return res.status(403).json({ error: "Cannot create employee in different branch" });
-          }
+          // Manager can only create in their own branch
           bodyData.branchId = req.employee.branchId;
-        } else {
-          return res.status(403).json({ error: "Manager must have a branch assigned" });
         }
+        // If manager has no branchId, allow creation with whatever branchId was sent
+      }
+
+      // Normalize phone number — accept 05xxxxxxxx, +9665xxxxxxxx, Arabic numerals
+      if (bodyData.phone) {
+        let ph = String(bodyData.phone).trim();
+        // Convert Arabic/Eastern numerals to Western
+        ph = ph.replace(/[\u0660-\u0669]/g, (d: string) => String(d.charCodeAt(0) - 0x0660));
+        ph = ph.replace(/[\u06F0-\u06F9]/g, (d: string) => String(d.charCodeAt(0) - 0x06F0));
+        // Strip non-digit chars
+        ph = ph.replace(/\D/g, '');
+        // Strip leading country code
+        if (ph.startsWith('966')) ph = ph.slice(3);
+        if (ph.startsWith('00966')) ph = ph.slice(5);
+        if (ph.startsWith('0') && ph.length === 10) ph = ph.slice(1);
+        bodyData.phone = ph;
       }
 
       // Check if username already exists
       const existing = await storage.getEmployeeByUsername(bodyData.username);
       if (existing) {
-        return res.status(400).json({ error: "Username already exists" });
+        return res.status(400).json({ error: "اسم المستخدم مستخدم مسبقاً" });
+      }
+
+      // Hash password if provided
+      let hashedPassword = bodyData.password;
+      if (bodyData.password) {
+        const bcrypt = await import('bcryptjs');
+        hashedPassword = await bcrypt.hash(bodyData.password, 10);
       }
 
       // Directly create using Model for robustness
       const newEmployee = await EmployeeModel.create({
         ...bodyData,
+        password: hashedPassword,
         permissions: bodyData.permissions || [],
         allowedPages: bodyData.allowedPages || [],
         tenantId: tenantId as any,
@@ -5015,8 +6736,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Don't send password back
       const { password: _, ...employeeData } = employee;
       res.status(201).json(employeeData);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating employee:", error);
+      if (error?.code === 11000 || error?.name === 'MongoServerError') {
+        const key = Object.keys(error?.keyValue || {})[0] || '';
+        if (key === 'username' || key.includes('username')) return res.status(400).json({ error: "اسم المستخدم مستخدم مسبقاً" });
+        if (key === 'phone' || key.includes('phone')) return res.status(400).json({ error: "رقم الجوال مستخدم مسبقاً" });
+        return res.status(400).json({ error: "البيانات مسجلة مسبقاً" });
+      }
       res.status(500).json({ error: "Failed to create employee" });
     }
   });
@@ -5026,15 +6753,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const allEmployees = await storage.getEmployees();
       
-      // Filter by branch for non-admin/owner managers
-      let employees = filterByBranch(allEmployees, req.employee);
-
-      // For non-admin/owner users, hide managers and admin roles
-      if (req.employee?.role !== "admin" && req.employee?.role !== "owner") {
+      let employees = allEmployees;
+      
+      if (req.employee?.role === "admin" || req.employee?.role === "owner") {
+        // Admin/Owner see all employees
+      } else {
+        employees = filterByBranch(allEmployees, req.employee);
         employees = employees.filter(emp => 
           emp.role !== "admin" && 
-          emp.role !== "owner" && 
-          emp.role !== "manager"
+          emp.role !== "owner"
         );
       }
 
@@ -5062,8 +6789,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Employee not found" });
       }
 
-      // Verify branch access for non-admin managers
-      if (req.employee?.role !== "admin" && existingEmployee.branchId !== req.employee?.branchId) {
+      if (req.employee?.role !== "admin" && req.employee?.role !== "owner" && existingEmployee.branchId !== req.employee?.branchId) {
         return res.status(403).json({ error: "Access denied - different branch" });
       }
 
@@ -5073,11 +6799,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Employee not found" });
       }
 
-      // Don't send password back, transform _id to id
       const { password: _, _id, ...employeeData } = updatedEmployee as any;
       res.json({ ...employeeData, id: _id || employeeData.id });
     } catch (error) {
       res.status(500).json({ error: "Failed to update employee" });
+    }
+  });
+
+  app.patch("/api/employees/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+
+      const existingEmployee = await storage.getEmployee(id);
+      if (!existingEmployee) {
+        return res.status(404).json({ error: "Employee not found" });
+      }
+
+      if (req.employee?.role !== "admin" && req.employee?.role !== "owner" && existingEmployee.branchId !== req.employee?.branchId) {
+        return res.status(403).json({ error: "Access denied - different branch" });
+      }
+
+      const managerLevel = PermissionsEngine.getRoleLevel(req.employee!.role);
+      const targetLevel = PermissionsEngine.getRoleLevel(existingEmployee.role);
+      if (managerLevel <= targetLevel && req.employee?.role !== "admin" && req.employee?.role !== "owner") {
+        return res.status(403).json({ error: "Cannot edit employee of same or higher role" });
+      }
+
+      if (updates.role) {
+        const newRoleLevel = PermissionsEngine.getRoleLevel(updates.role);
+        if (newRoleLevel >= managerLevel && req.employee?.role !== "admin" && req.employee?.role !== "owner") {
+          return res.status(403).json({ error: "Cannot assign role equal or higher than your own" });
+        }
+      }
+
+      const updatedEmployee = await storage.updateEmployee(id, updates);
+      if (!updatedEmployee) {
+        return res.status(404).json({ error: "Employee not found" });
+      }
+
+      const { password: _, _id, ...employeeData } = updatedEmployee as any;
+      res.json({ ...employeeData, id: _id || employeeData.id });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update employee" });
+    }
+  });
+
+  app.delete("/api/employees/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+
+      const existingEmployee = await storage.getEmployee(id);
+      if (!existingEmployee) {
+        return res.status(404).json({ error: "Employee not found" });
+      }
+
+      if (req.employee?.role !== "admin" && req.employee?.role !== "owner" && existingEmployee.branchId !== req.employee?.branchId) {
+        return res.status(403).json({ error: "Access denied - different branch" });
+      }
+
+      const managerLevel = PermissionsEngine.getRoleLevel(req.employee!.role);
+      const targetLevel = PermissionsEngine.getRoleLevel(existingEmployee.role);
+      if (existingEmployee.role === "owner" && req.employee?.role !== "owner") {
+        return res.status(403).json({ error: "Only an owner can delete another owner account" });
+      }
+      if (managerLevel <= targetLevel && req.employee?.role !== "admin" && req.employee?.role !== "owner") {
+        return res.status(403).json({ error: "Cannot delete employee of same or higher role" });
+      }
+
+      const { EmployeeModel } = await import("@shared/schema");
+      await EmployeeModel.deleteOne({ $or: [{ id }, { _id: id }] });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete employee" });
     }
   });
 
@@ -5127,7 +6921,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Reset employee password by username
-  app.post("/api/employees/reset-password-by-username", async (req, res) => {
+  app.post("/api/employees/reset-password-by-username", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
       const { username, newPassword } = req.body;
 
@@ -5230,7 +7024,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update discount code (toggle active status or visibility)
-  app.patch("/api/discount-codes/:id", async (req, res) => {
+  app.patch("/api/discount-codes/:id", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
       const { isActive, visibleToCustomers, employeeId } = req.body;
@@ -5240,13 +7034,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: "Employee authentication required" });
       }
 
-      // Verify the discount code exists and belongs to this employee
+      // Verify the discount code exists
       const existingCode = await storage.getDiscountCode(id);
       if (!existingCode) {
         return res.status(404).json({ error: "Discount code not found" });
       }
 
-      if (existingCode.employeeId !== employeeId) {
+      // Ownership check: code creator OR an admin/manager/owner may update.
+      // The 'admin' string is the legacy marker used by admin-settings UI.
+      const sessionEmp: any = (req as any).session?.employee || (req as any).employee;
+      const sessionRole = sessionEmp?.role || '';
+      const elevatedRoles = ['admin', 'owner', 'manager', 'branch_manager'];
+      const isElevated = elevatedRoles.includes(sessionRole) || employeeId === 'admin';
+      if (existingCode.employeeId !== employeeId && !isElevated) {
         return res.status(403).json({ error: "Unauthorized: You can only update your own discount codes" });
       }
 
@@ -5383,7 +7183,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // SALES REPORTS ROUTES
 
   // Get sales report for a specific period
-  app.get("/api/reports/sales", async (req, res) => {
+  app.get("/api/reports/sales", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { period, startDate, endDate, branchId } = req.query;
       
@@ -5395,13 +7195,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         start = new Date(startDate as string);
         end = new Date(endDate as string);
       } else if (period === 'daily') {
-        start = getSaudiToday();
+        start = getSaudiStartOfDay(now);
       } else if (period === 'weekly') {
         start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       } else if (period === 'monthly') {
-        start = getSaudiMonthStart();
+        start = new Date(getSaudiStartOfDay(now).getTime() - 29 * 24 * 60 * 60 * 1000);
       } else {
-        start = getSaudiToday();
+        start = getSaudiStartOfDay(now);
       }
 
       const { OrderModel } = await import("@shared/schema");
@@ -5492,9 +7292,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Check if customer already exists with this email
-      const existingCustomerByEmail = await storage.getCustomerByEmail(email);
-      if (existingCustomerByEmail) {
-        return res.status(400).json({ error: "البريد الإلكتروني مسجل مسبقاً" });
+      const cleanEmail = email ? email.trim().toLowerCase() : '';
+      if (cleanEmail) {
+        const existingCustomerByEmail = await storage.getCustomerByEmail(cleanEmail);
+        if (existingCustomerByEmail) {
+          return res.status(400).json({ error: "البريد الإلكتروني مسجل مسبقاً" });
+        }
       }
 
       // Hash password before saving
@@ -5503,7 +7306,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Create new customer
       const customer = await storage.createCustomer({ 
         phone: cleanPhone, 
-        email: email.trim().toLowerCase(),
+        ...(cleanEmail ? { email: cleanEmail } : {}),
         name: name.trim(),
         password: hashedPassword
       });
@@ -5516,12 +7319,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Create loyalty card for new customer
       let newLoyaltyCard: any = null;
       try {
+        const cardNumber = `QC${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+        const qrToken = nanoid(12);
+        const serializedCustomer = serializeDoc(customer);
         newLoyaltyCard = await storage.createLoyaltyCard({ 
           customerName: name.trim(), 
-          phoneNumber: cleanPhone 
+          phoneNumber: cleanPhone,
+          cardNumber,
+          qrToken,
+          customerId: serializedCustomer.id || serializedCustomer._id,
         });
       } catch (cardError) {
-        // Don't fail registration if card creation fails, but log the error
         console.error("[REGISTRATION] Failed to create loyalty card for new customer:", cardError);
       }
 
@@ -5594,7 +7402,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       (req.session as any).customer = customerData;
 
       res.status(201).json(customerData);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.code === 11000 || error?.name === 'MongoServerError') {
+        const key = Object.keys(error?.keyValue || {})[0] || '';
+        if (key === 'phone' || key.includes('phone')) return res.status(400).json({ error: "رقم الهاتف مسجل مسبقاً" });
+        if (key === 'email' || key.includes('email')) return res.status(400).json({ error: "البريد الإلكتروني مسجل مسبقاً" });
+        return res.status(400).json({ error: "البيانات مسجلة مسبقاً" });
+      }
       res.status(500).json({ error: "فشل إنشاء الحساب" });
     }
   });
@@ -5633,12 +7447,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
       } else {
-        // Login with phone
-        if (!/^5\d{8}$/.test(cleanIdentifier)) {
-          return res.status(400).json({ error: "صيغة رقم الهاتف أو البريد الإلكتروني غير صحيحة" });
+        // Login with phone — normalize: strip leading 0, +966, 00966, 966
+        const normalizedPhone = cleanIdentifier.replace(/\D/g, '').replace(/^00966/, '').replace(/^\+966/, '').replace(/^966/, '').replace(/^0/, '');
+        if (!/^5\d{8}$/.test(normalizedPhone)) {
+          return res.status(400).json({ error: "صيغة رقم الهاتف غير صحيحة (يجب أن يكون 10 أرقام مثل 0512345678)" });
         }
         
-        foundCustomer = await storage.getCustomerByPhone(cleanIdentifier);
+        foundCustomer = await storage.getCustomerByPhone(normalizedPhone);
         if (foundCustomer) {
           if (!foundCustomer.password) {
             // Customer exists but has no password (cashier-registered)
@@ -5648,7 +7463,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               requiresPasswordSetup: true
             });
           }
-          customer = await storage.verifyCustomerPassword(cleanIdentifier, password);
+          customer = await storage.verifyCustomerPassword(normalizedPhone, password);
         }
       }
 
@@ -5667,6 +7482,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       res.status(500).json({ error: "فشل تسجيل الدخول" });
     }
+  });
+
+  // Customer logout - تسجيل خروج العميل
+  app.post("/api/customers/logout", (req, res) => {
+    if ((req.session as any).customer) {
+      delete (req.session as any).customer;
+    }
+    req.session.destroy((err) => {
+      if (err) console.error("[CUSTOMER_LOGOUT] Session destroy error:", err);
+      res.clearCookie('connect.sid');
+      res.json({ success: true });
+    });
   });
 
   // Request password reset - طلب إعادة تعيين كلمة المرور
@@ -5789,6 +7616,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Verify phone matches email - التحقق من تطابق رقم الجوال مع البريد
+  // Verify phone + name for password recovery (no email needed)
+  app.post("/api/customers/verify-phone-name", async (req, res) => {
+    try {
+      const { phone, name } = req.body;
+
+      if (!phone || !name) {
+        return res.status(400).json({ error: "رقم الجوال والاسم مطلوبان" });
+      }
+
+      const cleanPhone = phone.trim().replace(/\s/g, '');
+      const cleanName = name.trim().toLowerCase();
+
+      const customer = await storage.getCustomerByPhone(cleanPhone);
+
+      if (!customer) {
+        return res.json({ valid: false });
+      }
+
+      const customerName = (customer.name || "").trim().toLowerCase();
+      const valid = customerName === cleanName || customerName.includes(cleanName) || cleanName.includes(customerName);
+      res.json({ valid });
+    } catch (error) {
+      res.status(500).json({ error: "فشل التحقق من البيانات" });
+    }
+  });
+
+  // Reset password using phone + name (no email required)
+  app.post("/api/customers/reset-password-by-phone-name", async (req, res) => {
+    try {
+      const { phone, name, newPassword } = req.body;
+
+      if (!phone || !name || !newPassword) {
+        return res.status(400).json({ error: "جميع الحقول مطلوبة" });
+      }
+
+      if (newPassword.length < 4) {
+        return res.status(400).json({ error: "كلمة المرور يجب أن تكون على الأقل 4 أحرف" });
+      }
+
+      const cleanPhone = phone.trim().replace(/\s/g, '');
+      const cleanName = name.trim().toLowerCase();
+
+      const customer = await storage.getCustomerByPhone(cleanPhone);
+
+      if (!customer) {
+        return res.status(400).json({ error: "البيانات غير صحيحة" });
+      }
+
+      const customerName = (customer.name || "").trim().toLowerCase();
+      const nameMatch = customerName === cleanName || customerName.includes(cleanName) || cleanName.includes(customerName);
+
+      if (!nameMatch) {
+        return res.status(400).json({ error: "البيانات غير صحيحة" });
+      }
+
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+      const updated = await storage.updateCustomer((customer as any)._id.toString(), {
+        password: hashedPassword,
+      });
+
+      if (!updated) {
+        return res.status(500).json({ error: "فشل تحديث كلمة المرور" });
+      }
+
+      res.json({ success: true, message: "تم تغيير كلمة المرور بنجاح" });
+    } catch (error) {
+      res.status(500).json({ error: "فشل تغيير كلمة المرور" });
+    }
+  });
+
   app.post("/api/customers/verify-phone-email", async (req, res) => {
     try {
       const { email, phone } = req.body;
@@ -5873,10 +7771,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Phone number required" });
       }
 
-      // Validate phone format
-      const cleanPhone = phone.trim().replace(/\s/g, '');
+      // Validate phone format — accept 05xxxxxxxx, 5xxxxxxxx, +9665xxxxxxxx
+      const rawPhone = phone.trim().replace(/\s/g, '');
+      const cleanPhone = rawPhone.replace(/\D/g, '').replace(/^00966/, '').replace(/^\+966/, '').replace(/^966/, '').replace(/^0/, '');
       if (!/^5\d{8}$/.test(cleanPhone)) {
-        return res.status(400).json({ error: "Invalid phone number format" });
+        return res.status(400).json({ error: "رقم الجوال غير صحيح. أدخل الرقم بصيغة 0512345678" });
       }
 
       // If password provided, try login first
@@ -5910,7 +7809,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get all customers (for admin/manager dashboard)
-  app.get("/api/customers", async (req, res) => {
+  app.get("/api/customers", requireAuth, async (req: AuthRequest, res) => {
     try {
       const customers = await storage.getCustomers();
       const serializedCustomers = customers.map(customer => {
@@ -5937,7 +7836,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
    */
   
   // Customer lookup by phone for cashier - البحث عن عميل برقم الجوال من الكاشير
-  app.post("/api/customers/lookup-by-phone", async (req, res) => {
+  app.post("/api/customers/lookup-by-phone", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { phone } = req.body;
 
@@ -6055,7 +7954,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         { "customerInfo.phoneNumber": identifier },
         { "customerInfo.phoneNumber": cleanPhone },
         { "phone": identifier },
-        { "phone": cleanPhone }
+        { "phone": cleanPhone },
+        { "customerPhone": identifier },
+        { "customerPhone": cleanPhone },
       ];
       
       // Add customerId conditions
@@ -6288,12 +8189,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Helper: normalize Saudi phone to 9-digit format (starting with 5)
+  const normalizeSaudiPhone = (p: string): string =>
+    String(p).replace(/\D/g, '').replace(/^00966/, '').replace(/^\+966/, '').replace(/^966/, '').replace(/^0/, '');
+
+  const phoneQuery = (p: string) => {
+    const n = normalizeSaudiPhone(p);
+    return { $in: [n, `0${n}`, `+966${n}`, `966${n}`] };
+  };
+
   app.get("/api/customers/favorites", async (req, res) => {
     try {
       const { CustomerModel } = await import("@shared/schema");
       const { phone, customerId } = req.query;
       const query: any = {};
-      if (phone) query.phone = String(phone).replace(/^0/, '');
+      if (phone) query.phone = phoneQuery(String(phone));
       else if (customerId) query._id = customerId;
       else return res.status(400).json({ error: "يجب تحديد العميل" });
       const customer = await CustomerModel.findOne(query);
@@ -6309,7 +8219,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { CustomerModel } = await import("@shared/schema");
       const { phone, customerId } = req.body;
       const query: any = {};
-      if (phone) query.phone = String(phone).replace(/^0/, '');
+      if (phone) query.phone = phoneQuery(String(phone));
       else if (customerId) query._id = customerId;
       else return res.status(400).json({ error: "يجب تحديد العميل" });
       const customer = await CustomerModel.findOne(query);
@@ -6330,7 +8240,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { CustomerModel } = await import("@shared/schema");
       const { phone, customerId } = req.query;
       const query: any = {};
-      if (phone) query.phone = String(phone).replace(/^0/, '');
+      if (phone) query.phone = phoneQuery(String(phone));
       else if (customerId) query._id = customerId;
       else return res.status(400).json({ error: "يجب تحديد العميل" });
       const customer = await CustomerModel.findOne(query);
@@ -6427,18 +8337,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // For managers: shows all items with full branch availability data
   app.get("/api/coffee-items", async (req: any, res) => {
     try {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      
       const requestedBranchId = (req.query.branchId as string);
       const isEmployee = !!req.session?.employee;
       const tenantId = getTenantIdFromRequest(req) || "demo-tenant";
+
+      // Serve from in-memory cache when possible (60 second TTL)
+      const ck = cacheKey('coffee-items', tenantId, requestedBranchId || 'all', isEmployee ? 'emp' : 'cust');
+      const cached = cache.get<any[]>(ck);
+      if (cached) return res.json(cached);
       
       const query: any = { tenantId };
       if (requestedBranchId && requestedBranchId !== 'all' && requestedBranchId !== 'undefined' && requestedBranchId !== 'null') {
         query.$or = [
           { publishedBranches: requestedBranchId },
+          { publishedBranches: '*' },
+          { publishedBranches: { $size: 0 } },
+          { publishedBranches: { $exists: false } },
           { createdByBranchId: requestedBranchId },
           { branchId: requestedBranchId }
         ];
@@ -6483,12 +8397,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         coffeeItemId: { $in: itemIds } 
       }).lean().exec() : [];
       
-      const rawItemIds = recipes.map((r: any) => r.rawItemId);
+      const rawItemIds = recipes.map((r: any) => r.rawItemId).filter(Boolean);
       const rawItems = rawItemIds.length > 0 ? await RawItemModel.find({ 
-        _id: { $in: rawItemIds } 
+        id: { $in: rawItemIds } 
       }).lean().exec() : [];
       
-      const rawItemMap = new Map(rawItems.map((r: any) => [r._id?.toString(), r]));
+      const rawItemMap = new Map(rawItems.map((r: any) => [r.id || r._id?.toString(), r]));
       const recipesByItem = new Map<string, any[]>();
       recipes.forEach((r: any) => {
         const itemId = r.coffeeItemId;
@@ -6550,7 +8464,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return publishedBranches.includes('*') || publishedBranches.length === 0 || publishedBranches.includes(requestedBranchId);
         });
       }
-      
+
+      // Sort by salesCount descending so best-sellers appear first
+      finalItems.sort((a: any, b: any) => (b.salesCount || 0) - (a.salesCount || 0));
+
+      // Store in memory cache for next requests (60 seconds)
+      cache.set(ck, finalItems, CACHE_TTL.COFFEE_ITEMS);
       res.json(finalItems);
     } catch (error) {
       console.error("Error fetching coffee items:", error);
@@ -6582,9 +8501,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }).lean().exec();
       
       // Get drinks that are NOT published in this branch but exist in other branches
+      // Items with '*' (all branches) or empty publishedBranches are already available everywhere — exclude from this list
       const filteredItems = items.filter((item: any) => {
         const publishedBranches = item.publishedBranches || [];
-        return !publishedBranches.includes(req.employee!.branchId) && publishedBranches.length > 0;
+        if (publishedBranches.includes('*') || publishedBranches.length === 0) return false;
+        return !publishedBranches.includes(req.employee!.branchId);
       });
       
       res.json(filteredItems);
@@ -6635,11 +8556,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (req.employee?.role === "manager") {
         validatedData.publishedBranches = [branchId];
       } else if (req.employee?.role === "admin" || req.employee?.role === "owner") {
-        // Admin/Owner can choose which branches to publish to
+        // Admin/Owner: if no specific branches chosen, publish to ALL branches by default
         if (!validatedData.publishedBranches || validatedData.publishedBranches.length === 0) {
-          // If no branches specified by admin, default to current branch or all? 
-          // Better to keep it as provided but ensure it's an array
-          validatedData.publishedBranches = validatedData.publishedBranches || [branchId];
+          validatedData.publishedBranches = ['*'];
         }
       } else {
         // Default for other roles
@@ -6685,6 +8604,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         availableSizes: validatedData.availableSizes || [],
         addons: (validatedData as any).addons || [],
         isGiftable: (validatedData as any).isGiftable || false,
+        bundledItems: (validatedData as any).bundledItems || [],
+        isReservation: (validatedData as any).isReservation || false,
+        reservationPackages: (validatedData as any).reservationPackages || [],
+        menuType: (validatedData as any).menuType || 'drinks',
         branchAvailability: (validatedData.publishedBranches || [branchId]).map(bId => ({
           branchId: bId,
           isAvailable: 1
@@ -6735,7 +8658,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         publishedBranches: itemData.publishedBranches
       });
 
-      cacheInvalidate('coffeeItems');
+      invalidateCoffeeItemsCache(tenantId);
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.status(201).json(itemData);
     } catch (error) {
@@ -6754,7 +8677,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!updatedItem) {
         return res.status(404).json({ error: "المنتج غير موجود" });
       }
-      cacheInvalidate('coffeeItems');
+      invalidateCoffeeItemsCache(req.employee?.tenantId || 'demo-tenant');
       res.json(updatedItem);
     } catch (error) {
       console.error("[PATCH /api/coffee-items/:id] Error:", error);
@@ -6763,6 +8686,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get coffee items by category (optimized)
+  // Returns array of coffeeItemIds that have at least one addon — used by POS to open customization dialog
+  app.get("/api/coffee-items/with-addons", async (req: any, res) => {
+    try {
+      const links = await CoffeeItemAddonModel.find({}).select("coffeeItemId").lean().exec();
+      const ids = [...new Set(links.map((l: any) => l.coffeeItemId).filter(Boolean))];
+      res.set('Cache-Control', 'public, max-age=60');
+      res.json(ids);
+    } catch (error) {
+      res.json([]);
+    }
+  });
+
+  // Bulk preview of addons per item — used by customer menu to show options on cards
+  // Returns: { [itemId]: { nameAr: string; category: string; price: number }[] }
+  app.get("/api/coffee-items/addons-preview", async (req: any, res) => {
+    try {
+      const { ProductAddonModel } = await import("@shared/schema");
+      const links = await CoffeeItemAddonModel.find({}).lean().exec();
+      if (links.length === 0) { res.set('Cache-Control', 'public, max-age=120'); return res.json({}); }
+      const addonIds = [...new Set(links.map((l: any) => l.addonId).filter(Boolean))];
+      const addons = await ProductAddonModel.find({ id: { $in: addonIds }, isAvailable: 1 }).select("id nameAr nameEn category price").lean().exec();
+      const addonMap: Record<string, any> = {};
+      addons.forEach((a: any) => { addonMap[a.id] = a; });
+      const result: Record<string, { nameAr: string; nameEn?: string; category: string; price: number }[]> = {};
+      links.forEach((link: any) => {
+        const addon = addonMap[link.addonId];
+        if (!addon) return;
+        if (!result[link.coffeeItemId]) result[link.coffeeItemId] = [];
+        result[link.coffeeItemId].push({ nameAr: addon.nameAr, nameEn: addon.nameEn, category: addon.category, price: addon.price || 0 });
+      });
+      res.set('Cache-Control', 'public, max-age=120');
+      res.json(result);
+    } catch (error) {
+      res.json({});
+    }
+  });
+
   app.get("/api/coffee-items/category/:category", async (req: any, res) => {
     try {
       res.set('Cache-Control', 'public, max-age=120');
@@ -6915,59 +8875,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const updatedItem = await storage.updateCoffeeItem(id, { branchAvailability });
+      invalidateCoffeeItemsCache((item as any).tenantId || 'demo-tenant');
       res.json(serializeDoc(updatedItem));
     } catch (error) {
       res.status(500).json({ error: "Failed to update coffee item branches" });
     }
   });
 
-  // Get cart items for session - OPTIMIZED
+  // Get cart items for session - BATCH OPTIMIZED (3 queries total regardless of cart size)
   app.get("/api/cart/:sessionId", async (req, res) => {
     try {
       const { sessionId } = req.params;
+
+      // Short-term cache to avoid redundant Atlas round-trips on rapid re-renders
+      const cartCk = cacheKey('cart-session', sessionId);
+      const cartCached = cache.get<any[]>(cartCk);
+      if (cartCached) return res.json(cartCached);
+
       const cartItems = await CartItemModel.find({ sessionId }).lean();
 
       if (!cartItems || cartItems.length === 0) {
+        cache.set(cartCk, [], CACHE_TTL.CART_SESSION);
         return res.json([]);
       }
 
-      // Enrich cart items with coffee details efficiently
-      const enrichedItems = await Promise.all(cartItems.map(async (cartItem: any) => {
-        try {
-          const coffeeItem = await CoffeeItemModel.findOne({ id: cartItem.coffeeItemId }).lean();
-          const doc = serializeDoc(cartItem);
-          
-          // Fetch addons to get their prices and names
-          const addons = await Promise.all(
-            (cartItem.selectedAddons || []).map((addonId: string) => ProductAddonModel.findById(addonId).lean())
-          );
-          
-          // CRITICAL: Force the ID to be the custom 'id' (composite) if available, otherwise use coffeeItemId
-          // This ensures the frontend ALWAYS receives an ID it can use for DELETE/PUT consistently
-          const finalId = cartItem.id || cartItem.coffeeItemId;
-          
-          // console.log(`[CART] Enriching item ${cartItem.coffeeItemId}: Found coffee=${!!coffeeItem}, addons=${addons.length}`);
-          
-          return {
-            ...doc,
-            id: finalId,
-            coffeeItem: coffeeItem ? serializeDoc(coffeeItem) : null,
-            enrichedAddons: addons.filter(Boolean).map(serializeDoc)
-          };
-        } catch (err) {
-          console.error(`Error enriching cart item:`, err);
-          return { 
-            ...serializeDoc(cartItem), 
-            id: cartItem.id || cartItem.coffeeItemId, 
-            coffeeItem: null,
-            enrichedAddons: []
-          };
-        }
-      }));
+      // Collect all unique IDs in one pass — then batch-fetch in parallel (2 queries instead of N×M)
+      const coffeeItemIds = [...new Set(cartItems.map((ci: any) => ci.coffeeItemId).filter(Boolean))];
+      const addonIds = [...new Set(cartItems.flatMap((ci: any) => ci.selectedAddons || []).filter(Boolean))];
 
-      // Filter out items where coffee details couldn't be found
-      // For debugging, we'll keep them but the UI might break if coffeeItem is null
-      // res.json(enrichedItems.filter(item => item && item.coffeeItem));
+      const [coffeeItemDocs, addonDocs] = await Promise.all([
+        coffeeItemIds.length > 0 ? CoffeeItemModel.find({ id: { $in: coffeeItemIds } }).lean() : Promise.resolve([]),
+        addonIds.length > 0 ? ProductAddonModel.find({ id: { $in: addonIds } }).lean() : Promise.resolve([]),
+      ]);
+
+      const coffeeItemMap = new Map<string, any>(coffeeItemDocs.map((d: any) => [d.id, serializeDoc(d)]));
+      const addonMap = new Map<string, any>(addonDocs.map((d: any) => [d.id, serializeDoc(d)]));
+
+      const enrichedItems = cartItems.map((cartItem: any) => {
+        const doc = serializeDoc(cartItem);
+        return {
+          ...doc,
+          id: cartItem.id || cartItem.coffeeItemId,
+          coffeeItem: coffeeItemMap.get(cartItem.coffeeItemId) || null,
+          enrichedAddons: (cartItem.selectedAddons || []).map((id: string) => addonMap.get(id)).filter(Boolean),
+        };
+      });
+
+      cache.set(cartCk, enrichedItems, CACHE_TTL.CART_SESSION);
       res.json(enrichedItems);
     } catch (error) {
       console.error("Fetch cart error:", error);
@@ -6978,7 +8932,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Add item to cart
   app.post("/api/cart", async (req, res) => {
     try {
-      const { sessionId, coffeeItemId, quantity, selectedSize, selectedAddons, selectedItemAddons } = req.body;
+      const { sessionId, coffeeItemId, quantity, selectedSize, selectedAddons, selectedItemAddons, selectedReservationPackage } = req.body;
       // console.log(`[CART] POST: item=${coffeeItemId}, size=${selectedSize}, qty=${quantity}`);
 
       if (!sessionId || !coffeeItemId) {
@@ -6994,7 +8948,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const normalizedSize = sizeName || "default";
       const normalizedAddons = Array.isArray(addons) ? addons.sort().join(",") : "";
       const normalizedItemAddons = itemAddons.map((a: any) => a.nameAr).sort().join(",");
-      const compositeId = `${coffeeItemId}-${normalizedSize}-${normalizedAddons}-${normalizedItemAddons}`;
+      const reservationPkgKey = selectedReservationPackage ? `-pkg:${selectedReservationPackage.packageName}` : "";
+      const compositeId = `${coffeeItemId}-${normalizedSize}-${normalizedAddons}-${normalizedItemAddons}${reservationPkgKey}`;
       
       let cartItem = await CartItemModel.findOne({ sessionId, id: compositeId });
       
@@ -7010,12 +8965,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           selectedSize: normalizedSize,
           selectedAddons: addons,
           selectedItemAddons: itemAddons,
+          selectedReservationPackage: selectedReservationPackage || null,
           createdAt: new Date()
         });
       }
       
       const result = serializeDoc(cartItem);
       result.id = compositeId; // Ensure we always return the composite ID
+      cache.invalidateKey(cacheKey('cart-session', sessionId));
       res.status(201).json(result);
     } catch (error) {
       console.error("[CART] Post error:", error);
@@ -7043,6 +9000,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (deleteResult.deletedCount === 0 && mongoose.Types.ObjectId.isValid(cartItemId)) {
           deleteResult = await CartItemModel.deleteOne({ sessionId, _id: cartItemId });
         }
+        cache.invalidateKey(cacheKey('cart-session', sessionId));
         return res.json({ message: "Item removed" });
       }
 
@@ -7077,6 +9035,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = serializeDoc(cartItem);
       // Ensure the returned ID matches what the client expects (the search key)
       result.id = cartItem.id || cartItem.coffeeItemId;
+      cache.invalidateKey(cacheKey('cart-session', sessionId));
       res.json(result);
     } catch (error) {
       console.error("[CART] Update error:", error);
@@ -7088,7 +9047,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/cart/:sessionId/:cartItemId", async (req, res) => {
     try {
       const { sessionId, cartItemId } = req.params;
-      // console.log(`[CART] DELETE: session=${sessionId}, id=${cartItemId}`);
       
       // Try multiple deletion strategies
       let result = await CartItemModel.deleteOne({ sessionId, id: cartItemId });
@@ -7105,6 +9063,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Cart item not found" });
       }
 
+      cache.invalidateKey(cacheKey('cart-session', sessionId));
       res.json({ message: "Item removed" });
     } catch (error) {
       console.error("[CART] Delete error:", error);
@@ -7117,576 +9076,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { sessionId } = req.params;
       await storage.clearCart(sessionId);
+      cache.invalidateKey(cacheKey('cart-session', sessionId));
       res.json({ message: "Cart cleared" });
     } catch (error) {
       res.status(500).json({ error: "Failed to clear cart" });
     }
   });
 
-  // DUPLICATE: This POST /api/orders handler is superseded by the one defined earlier (line ~573).
-  // Wrapped in a never-called function to prevent duplicate route registration.
-  const _unusedDuplicateOrderPost = () => { app.post("/api/orders-duplicate-disabled", async (req: AuthRequest, res) => {
-    try {
-      console.log("Creating order with body:", JSON.stringify(req.body, null, 2));
-      const { 
-        items, totalAmount, paymentMethod, paymentDetails, paymentReceiptUrl,
-        customerInfo, customerId, customerNotes, freeItemsDiscount, usedFreeDrinks, 
-        discountCode, discountPercentage,
-        deliveryType, deliveryAddress, deliveryFee, branchId,
-        tableNumber, tableId, orderType,
-        carType, carColor, plateNumber, arrivalTime,
-        scheduledPickupTime,
-        pointsRedeemed, pointsValue, pointsVerificationToken
-      } = req.body;
-
-      // Validate required fields
-      if (!items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: "Items are required" });
-      }
-
-      if (totalAmount === undefined || totalAmount === null || isNaN(parseFloat(totalAmount))) {
-        return res.status(400).json({ error: "Valid total amount is required" });
-      }
-
-      if (!paymentMethod) {
-        return res.status(400).json({ error: "Payment method is required" });
-      }
-
-      // Check for customerName either in root body or nested in customerInfo
-      const finalCustomerName = req.body.customerName || customerInfo?.customerName || req.body.customerPhone || "عميل";
-
-      // Determine branch ID from request body or employee session
-      const finalBranchId = branchId || req.employee?.branchId;
-
-      if (!finalCustomerName) {
-        console.error("Missing customer name in request. customerInfo:", JSON.stringify(customerInfo), "req.body:", JSON.stringify(req.body));
-        return res.status(400).json({ error: "Customer name is required" });
-      }
-
-      // Ensure items is always an array before processing
-      let processedItems = items;
-      if (typeof items === 'string') {
-        try {
-          processedItems = JSON.parse(items);
-        } catch (e) {
-          processedItems = [];
-        }
-      }
-
-      // Validate payment receipt for electronic payment methods
-      const electronicPaymentMethods = ['alinma', 'ur', 'barq', 'rajhi'];
-      if (electronicPaymentMethods.includes(paymentMethod) && !paymentReceiptUrl) {
-        return res.status(400).json({ error: "Payment receipt is required for electronic payment methods" });
-      }
-
-      // Validate delivery data when deliveryType is 'delivery'
-      if (deliveryType === 'delivery') {
-        if (!deliveryAddress || !deliveryAddress.lat || !deliveryAddress.lng) {
-          return res.status(400).json({ error: "Delivery address with coordinates is required for delivery orders" });
-        }
-        if (deliveryFee === undefined || deliveryFee === null) {
-          return res.status(400).json({ error: "Delivery fee is required for delivery orders" });
-        }
-      }
-
-      // Get or create customer if phone number provided
-      let finalCustomerId = customerId;
-
-      const phoneNumberForLookup = customerInfo?.phoneNumber || req.body.customerPhone;
-      if (phoneNumberForLookup && !customerId) {
-        try {
-          const existingCustomer = await storage.getCustomerByPhone(phoneNumberForLookup);
-          if (existingCustomer) {
-            finalCustomerId = existingCustomer.id;
-          }
-        } catch (error) {
-        }
-      }
-
-      // Determine initial status based on payment method
-      const isAutoConfirm = ['pos', 'apple_pay', 'pos-network', 'alinma', 'rajhi', 'ur', 'barq', 'cash', 'mada', 'stc-pay', 'online', 'neoleap', 'neoleap-apple-pay'].includes(paymentMethod);
-      // PAID orders go to 'payment_confirmed' (which notifies kitchen), others go to 'pending'
-      const initialStatus = isAutoConfirm ? 'payment_confirmed' : 'pending';
-      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
-
-      console.log(`[ORDER] Payment method: ${paymentMethod}, Initial status: ${initialStatus}`);
-
-      if (discountCode) {
-        try {
-          const { DiscountCodeModel: DCModel } = await import("@shared/schema");
-          const coupon = await DCModel.findOne({ 
-            code: discountCode.toUpperCase(), 
-            isActive: 1 
-          });
-          if (coupon) {
-            coupon.usageCount = (coupon.usageCount || 0) + 1;
-            await coupon.save();
-            console.log(`[ORDER] Coupon ${discountCode} usage count updated to ${coupon.usageCount}`);
-          }
-        } catch (couponErr) {
-          console.error("[ORDER] Failed to update coupon usage count:", couponErr);
-        }
-      }
-
-      // Update or create order
-      let order;
-      if (tableId && (orderType === 'table' || orderType === 'dine-in')) {
-        // Look for an existing 'open' order for this table
-        const existingOrder = await OrderModel.findOne({ 
-          tableId, 
-          status: { $in: ['open', 'pending', 'payment_confirmed'] },
-          branchId: finalBranchId 
-        });
-
-        if (existingOrder) {
-          // Add new items to existing order
-          existingOrder.items = [...(existingOrder.items || []), ...processedItems];
-          existingOrder.totalAmount += Number(totalAmount);
-          existingOrder.updatedAt = new Date();
-          
-          // If the order was just "open", and this addition is "paid/confirmed", upgrade status
-          if (existingOrder.status === 'open' && initialStatus === 'payment_confirmed') {
-             existingOrder.status = 'payment_confirmed';
-          }
-          
-          order = await existingOrder.save();
-          
-          // Broadcast update to kitchen for additions
-          const serializedOrder = serializeDoc(order);
-          wsManager.broadcastOrderUpdate(serializedOrder);
-          if (order.status === 'payment_confirmed' || order.status === 'confirmed') {
-            wsManager.broadcastNewOrder(serializedOrder);
-          }
-        } else {
-          const isOpenTab = req.body.isOpenTab === true;
-          const tableOrderStatus = isOpenTab ? 'open' : initialStatus;
-          const orderData: any = {
-            orderNumber: `T-${nanoid(6).toUpperCase()}`,
-            items: processedItems,
-            totalAmount: Number(totalAmount),
-            paymentMethod: isOpenTab ? 'cash' : (paymentMethod || 'cash'),
-            status: tableOrderStatus,
-            tableStatus: isOpenTab ? 'open' : 'pending',
-            orderType: 'table',
-            tableId,
-            tableNumber,
-            branchId: finalBranchId,
-            tenantId,
-            employeeId: req.employee?.id || null,
-            customerInfo: customerInfo || { 
-              customerName: finalCustomerName, 
-              phoneNumber: req.body.customerPhone || "", 
-              customerEmail: req.body.customerEmail || "" 
-            },
-            createdAt: new Date(),
-            updatedAt: new Date()
-          };
-          order = await storage.createOrder(orderData);
-          
-          if (order) {
-            const serializedOrder = serializeDoc(order);
-            if (!isOpenTab) {
-              wsManager.broadcastNewOrder(serializedOrder);
-            }
-            wsManager.broadcastOrderUpdate(serializedOrder);
-          }
-          
-          // Update table status
-          await storage.updateTableOccupancy(tableId, true, order.id);
-        }
-      } else {
-        const orderData: any = {
-          customerId: finalCustomerId || null,
-          totalAmount: Number(totalAmount),
-          paymentMethod,
-          paymentDetails: paymentDetails || "",
-          paymentReceiptUrl: paymentReceiptUrl || null,
-          customerInfo: customerInfo || { 
-            customerName: finalCustomerName, 
-            phoneNumber: req.body.customerPhone || "", 
-            customerEmail: req.body.customerEmail || "" 
-          },
-          customerNotes: customerNotes || req.body.notes || "",
-          discountCode: discountCode || null,
-          discountPercentage: discountPercentage ? Number(discountPercentage) : 0,
-          deliveryType: deliveryType || null,
-          deliveryAddress: deliveryAddress || null,
-          deliveryFee: deliveryFee ? Number(deliveryFee) : 0,
-          carType: carType || null,
-          carColor: carColor || null,
-          plateNumber: plateNumber || null,
-          arrivalTime: arrivalTime || null,
-          scheduledPickupTime: scheduledPickupTime || null,
-          preparationHoldUntil: (() => {
-            const pickupTime = scheduledPickupTime || (orderType === 'pickup' ? arrivalTime : null);
-            if (!pickupTime) return null;
-            try {
-              const totalItems = Array.isArray(processedItems)
-                ? processedItems.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 1), 0)
-                : 1;
-              const holdMinutes = Math.max(10, 10 + (totalItems - 2) * 2);
-              const [hours, minutes] = pickupTime.split(':').map(Number);
-              const arrivalDate = new Date();
-              arrivalDate.setHours(hours, minutes, 0, 0);
-              const holdDate = new Date(arrivalDate.getTime() - holdMinutes * 60 * 1000);
-              return holdDate.toISOString();
-            } catch { return null; }
-          })(),
-          branchId: finalBranchId,
-          tenantId,
-          status: initialStatus,
-          employeeId: req.employee?.id || null,
-          createdBy: req.employee?.username || 'system',
-          tableNumber: tableNumber || null,
-          tableId: tableId || null,
-          orderType: orderType || (tableNumber || tableId ? 'dine-in' : 'regular'),
-          items: processedItems,
-          createdAt: new Date(),
-          updatedAt: new Date()
-        };
-        order = await storage.createOrder(orderData);
-
-        // Broadcast new order to WebSocket
-        if (order) {
-          const serializedOrder = serializeDoc(order);
-          wsManager.broadcastNewOrder(serializedOrder);
-          wsManager.broadcastOrderUpdate(serializedOrder);
-        }
-      }
-
-      // ===== Points Redemption: Deduct points from loyalty card =====
-      if (pointsRedeemed && Number(pointsRedeemed) > 0) {
-        try {
-          const redeemPoints = Number(pointsRedeemed);
-          const redeemValue = Number(pointsValue) || (redeemPoints / 100) * 5;
-          const phoneForPoints = req.body.customerPhone || customerInfo?.phoneNumber;
-          const cleanPhoneForPoints = phoneForPoints?.replace(/\D/g, '');
-
-          if (cleanPhoneForPoints) {
-            const entry = pointsVerificationCodes.get(cleanPhoneForPoints);
-            const bypassVerification = !!(req.body.bypassPointsVerification || req.employee || customerId);
-            const canProceed = (entry && entry.verified) || bypassVerification;
-            if (!canProceed) {
-              console.warn(`[POINTS] Verification not completed for ${cleanPhoneForPoints}. Points NOT deducted.`);
-            } else {
-              const loyaltyCard = await storage.getLoyaltyCardByPhone(cleanPhoneForPoints);
-              if (loyaltyCard) {
-                const currentPoints = Number(loyaltyCard.points) || 0;
-                if (currentPoints >= redeemPoints) {
-                  await storage.updateLoyaltyCard(loyaltyCard.id, {
-                    points: currentPoints - redeemPoints,
-                    lastUsedAt: new Date(),
-                  });
-
-                  const LoyaltyTransactionModel = mongoose.model('LoyaltyTransaction');
-                  await LoyaltyTransactionModel.create({
-                    cardId: loyaltyCard.id,
-                    type: 'points_redeemed',
-                    pointsChange: -redeemPoints,
-                    description: `استخدام ${redeemPoints} نقطة (${redeemValue.toFixed(2)} ريال) - طلب #${order.orderNumber}`,
-                    orderId: order.id,
-                    createdAt: new Date(),
-                  });
-
-                  await OrderModel.findByIdAndUpdate(order.id, {
-                    pointsRedeemed: redeemPoints,
-                    pointsValue: redeemValue,
-                  });
-
-                  if (entry) pointsVerificationCodes.delete(cleanPhoneForPoints);
-                  console.log(`[POINTS] Deducted ${redeemPoints} points (${redeemValue} SAR) from ${cleanPhoneForPoints} for order ${order.orderNumber}`);
-                } else {
-                  console.warn(`[POINTS] Insufficient points for ${cleanPhoneForPoints}: has ${currentPoints}, needs ${redeemPoints}`);
-                }
-              }
-            }
-          }
-        } catch (pointsError) {
-          console.error("[POINTS] Error deducting points:", pointsError);
-        }
-      }
-
-      // Send initial order email notification
-      const initialCustomerInfo = typeof order.customerInfo === 'string' ? JSON.parse(order.customerInfo) : order.customerInfo;
-      const customerEmail = initialCustomerInfo?.email;
-      const customerName = initialCustomerInfo?.name;
-
-      if (customerEmail) {
-        // Use setImmediate to send email asynchronously without blocking the response
-        setImmediate(async () => {
-          try {
-            console.log(`📧 Triggering INITIAL email for order ${order.orderNumber} to ${customerEmail}`);
-            const { sendOrderNotificationEmail } = await import("./mail-service");
-            const emailSent = await sendOrderNotificationEmail(
-              customerEmail,
-              customerName || 'عميل CLUNY CAFE',
-              order.orderNumber,
-              "pending",
-              parseFloat(order.totalAmount.toString())
-            );
-            console.log(`📧 INITIAL Email sent result for ${order.orderNumber}: ${emailSent}`);
-          } catch (emailError) {
-            console.error("❌ Error in initial order email trigger:", emailError);
-          }
-        });
-      }
-      
-      // Append to Google Sheets for tracking
-      try {
-        const { appendOrderToSheet } = await import("./google-sheets");
-        // Notify customer and Admin/Cashier
-        await appendOrderToSheet(order, 'NEW_ORDER');
-        await appendOrderToSheet(order, 'ADMIN_ALERT');
-        
-        // Note: Email notification is now handled by Google Apps Script within the sheet
-      } catch (err) {
-        console.error("Sheets Error:", err);
-      }
-
-      // Smart Inventory Deduction - deduct raw materials based on recipes
-      let deductionReport: {
-        success: boolean;
-        costOfGoods: number;
-        grossProfit: number;
-        deductionDetails: Array<{
-          rawItemId: string;
-          rawItemName: string;
-          quantity: number;
-          unit: string;
-          unitCost: number;
-          totalCost: number;
-          previousQuantity: number;
-          newQuantity: number;
-          status: string;
-          message: string;
-        }>;
-        shortages: Array<{
-          rawItemId: string;
-          rawItemName: string;
-          required: number;
-          available: number;
-          unit: string;
-        }>;
-        warnings: string[];
-        errors: string[];
-      } | null = null;
-
-      if (finalBranchId && items && items.length > 0) {
-        try {
-          // Extract order items with addon customizations for inventory deduction
-          const orderItems = items.map((item: any) => {
-            const orderItem: {
-              coffeeItemId: string;
-              quantity: number;
-              addons?: Array<{ rawItemId: string; quantity: number; unit: string }>;
-            } = {
-              coffeeItemId: item.id || item.coffeeItemId,
-              quantity: item.quantity || 1,
-            };
-
-            // Extract addon raw materials from customization selectedAddons
-            // Note: We calculate the FULL raw material quantity here (addon qty * quantityPerUnit * order item qty)
-            // so storage.deductInventoryForOrder does NOT multiply by item.quantity again for addons
-            if (item.customization?.selectedAddons && Array.isArray(item.customization.selectedAddons)) {
-              const itemQuantity = item.quantity || 1;
-              orderItem.addons = item.customization.selectedAddons
-                .filter((addon: any) => addon.rawItemId && addon.quantity > 0)
-                .map((addon: any) => ({
-                  rawItemId: addon.rawItemId,
-                  // Total raw material = addon selection qty * raw material per unit * order item qty
-                  quantity: (addon.quantity || 1) * (addon.quantityPerUnit || 1) * itemQuantity,
-                  unit: addon.unit || 'g',
-                }));
-            }
-
-            return orderItem;
-          });
-
-          deductionReport = await storage.deductInventoryForOrder(
-            order.id,
-            finalBranchId,
-            orderItems,
-            req.employee?.username || 'system'
-          );
-
-          if (deductionReport && !deductionReport.success) {
-            if (deductionReport.warnings && deductionReport.warnings.length > 0) {
-              console.warn(`[ORDER ${order.orderNumber}] Inventory warnings:`, deductionReport.warnings);
-            }
-            if (deductionReport.errors && deductionReport.errors.length > 0) {
-            }
-          }
-
-        } catch (error) {
-          // Continue with order - don't fail the order if inventory deduction fails
-        }
-      }
-
-      // Update table occupancy if this is a table order
-      if (tableId) {
-        try {
-          await storage.updateTableOccupancy(tableId, true, order.id);
-        } catch (error) {
-          // Continue anyway - order was created successfully
-        }
-      }
-
-      // Add stamps automatically if customer has phone number (works for guests and registered users)
-      let phoneForStamps = customerInfo?.phoneNumber || req.body.customerPhone;
-      
-      // FIX: Ensure phoneForStamps is normalized
-      if (phoneForStamps) {
-        phoneForStamps = phoneForStamps.toString().trim();
-      }
-
-      if (finalCustomerId) {
-        try {
-          const customer = await storage.getCustomer(finalCustomerId);
-          phoneForStamps = customer?.phone || phoneForStamps;
-        } catch (e) {}
-      }
-
-      console.log(`[LOYALTY] Attempting to add points for phone: ${phoneForStamps}`);
-
-      if (phoneForStamps) {
-        try {
-          let loyaltyCard = await storage.getLoyaltyCardByPhone(phoneForStamps);
-
-          // Create loyalty card if doesn't exist
-          if (!loyaltyCard) {
-            console.log(`[LOYALTY] Creating new card for ${phoneForStamps}`);
-            loyaltyCard = await storage.createLoyaltyCard({
-              customerName: finalCustomerName || customerInfo?.customerName || 'عميل',
-              phoneNumber: phoneForStamps,
-              isActive: 1,
-              stamps: 0,
-              freeCupsEarned: 0,
-              totalSpent: 0,
-              points: 0,
-              pendingPoints: 0,
-            } as any);
-          }
-
-          // Calculate points (10 points per drink)
-          const itemsToProcess = Array.isArray(processedItems) ? processedItems : 
-                                (Array.isArray(items) ? items : []);
-          
-          const drinksCount = itemsToProcess.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 0), 0);
-          const pointsToAdd = drinksCount * 10; // 10 points per drink
-
-          console.log(`[LOYALTY] Points to add: ${pointsToAdd}, Drinks: ${drinksCount}, Current points: ${loyaltyCard.points || 0}`);
-
-          if (pointsToAdd > 0) {
-            const currentPoints = Number(loyaltyCard.points) || 0;
-            const currentPendingPoints = Number(loyaltyCard.pendingPoints) || 0;
-            const currentTotalSpent = parseFloat(loyaltyCard.totalSpent?.toString() || "0");
-            
-            // Add points as pending until order is completed
-            await storage.updateLoyaltyCard(loyaltyCard.id, {
-              pendingPoints: currentPendingPoints + pointsToAdd,
-              totalSpent: currentTotalSpent + parseFloat(totalAmount.toString()),
-              lastUsedAt: new Date()
-            });
-
-            console.log(`[LOYALTY] Updated card ${loyaltyCard.id}: Pending Points ${currentPendingPoints + pointsToAdd}`);
-
-            // Create loyalty transaction for pending points
-            await storage.createLoyaltyTransaction({
-              cardId: loyaltyCard.id,
-              type: 'points_pending',
-              pointsChange: pointsToAdd,
-              discountAmount: 0,
-              orderAmount: Number(totalAmount),
-              orderId: order.id,
-              description: `نقاط معلقة: ${pointsToAdd} نقطة من الطلب رقم ${order.orderNumber} (ستضاف عند اكتمال الطلب)`,
-            });
-          }
-        } catch (error) {
-          console.error("[LOYALTY] Error processing points:", error);
-        }
-      }
-
-      // Parse items from JSON string and serialize the order
-      const serializedOrder = serializeDoc(order);
-      if (serializedOrder.items && typeof serializedOrder.items === 'string') {
-        try {
-          serializedOrder.items = JSON.parse(serializedOrder.items);
-        } catch (e) {
-        }
-      }
-
-      // Broadcast new order via WebSocket
-      wsManager.broadcastNewOrder(serializedOrder);
-      
-      // Generate and send tax invoice if customer has email
-      if (customerInfo && customerInfo.customerEmail) {
-        try {
-          const taxRate = 0.15;
-          const invoiceSubtotal = parseFloat(totalAmount.toString()) / (1 + taxRate);
-          const invoiceTax = invoiceSubtotal * taxRate;
-          const invoiceNumber = `INV-${Date.now()}-${nanoid(6)}`;
-          
-          const invoiceData = {
-            customerName: customerInfo.customerName,
-            customerPhone: customerInfo.phoneNumber,
-            items: Array.isArray(items) ? items : JSON.parse(items),
-            subtotal: invoiceSubtotal - (parseFloat(discountPercentage?.toString() || '0') / 100 * invoiceSubtotal),
-            discountAmount: parseFloat(discountPercentage?.toString() || '0') / 100 * invoiceSubtotal,
-            taxAmount: invoiceTax,
-            totalAmount: parseFloat(totalAmount.toString()),
-            paymentMethod: paymentMethod,
-            invoiceDate: new Date()
-          };
-          
-          const customerEmail = customerInfo.customerEmail;
-          if (customerEmail && customerEmail.includes('@')) {
-            await sendInvoiceEmail(customerEmail, invoiceNumber, invoiceData);
-          } else {
-          }
-          
-          // Store invoice in database
-          try {
-            await storage.createTaxInvoice({
-              orderId: order.id,
-              invoiceNumber: invoiceNumber,
-              customerName: customerInfo.customerName,
-              customerPhone: customerInfo.phoneNumber,
-              customerEmail: customerEmail,
-              items: invoiceData.items,
-              subtotal: invoiceData.subtotal,
-              discountAmount: invoiceData.discountAmount,
-              taxAmount: invoiceTax,
-              totalAmount: parseFloat(totalAmount.toString()),
-              paymentMethod: paymentMethod
-            });
-          } catch (storageError) {
-          }
-        } catch (invoiceError) {
-          // Don't fail order if invoice generation fails
-        }
-      } else {
-      }
-      
-      // Build response with deduction report included
-      const response = {
-        ...serializedOrder,
-        deductionReport: (deductionReport as any) ? {
-          success: (deductionReport as any).success,
-          costOfGoods: (deductionReport as any).costOfGoods,
-          grossProfit: (deductionReport as any).grossProfit,
-          deductionDetails: (deductionReport as any).deductionDetails,
-          shortages: (deductionReport as any).shortages,
-          warnings: (deductionReport as any).warnings,
-          errors: (deductionReport as any).errors,
-        } : null
-      };
-
-      res.status(201).json(response);
-    } catch (error) {
-      console.error("[ORDERS] Error creating order:", error);
-      res.status(500).json({ error: "Failed to create order", details: error instanceof Error ? error.message : String(error) });
-    }
-  }); };
 
   // Finalize (Pay) Open Table Order
   app.post("/api/orders/:id/finalize", requireAuth, async (req: AuthRequest, res) => {
@@ -7721,13 +9117,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get pending table orders (for cashier) - MOST SPECIFIC FIRST
-  app.get("/api/orders/table/pending", async (req, res) => {
+  app.get("/api/orders/table/pending", async (req: any, res) => {
     try {
-      const [orders, coffeeItems] = await Promise.all([
-        storage.getPendingTableOrders(),
-        getCachedCoffeeItems(),
-      ]);
-      const enrichedOrders = orders.map(order => enrichOrderWithItems(serializeDoc(order), coffeeItems));
+      const branchId = req.session?.employee?.branchId || req.query.branchId as string;
+      const orders = await storage.getPendingTableOrders(branchId);
+      const _tenantId = req.session?.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const coffeeItemMap = await getCachedCoffeeItemMap(_tenantId);
+
+      // Enrich orders with coffee item details
+      const enrichedOrders = orders.map(order => {
+        const serializedOrder = serializeDoc(order);
+        
+        let orderItems = serializedOrder.items;
+        if (typeof orderItems === 'string') {
+          try {
+            orderItems = JSON.parse(orderItems);
+          } catch (e) {
+            orderItems = [];
+          }
+        }
+        
+        if (!Array.isArray(orderItems)) {
+          orderItems = [];
+        }
+        
+        const items = orderItems.map((item: any) => {
+          const coffeeItem = coffeeItemMap.get(item.coffeeItemId);
+          return {
+            ...item,
+            coffeeItem: coffeeItem ? {
+              nameAr: coffeeItem.nameAr,
+              nameEn: coffeeItem.nameEn,
+              price: coffeeItem.price,
+              imageUrl: coffeeItem.imageUrl
+            } : null
+          };
+        });
+
+        return {
+          ...serializedOrder,
+          items
+        };
+      });
+
       res.json(enrichedOrders);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch pending table orders" });
@@ -7747,8 +9179,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ],
       }).sort({ createdAt: -1 }).limit(100).lean();
 
-      const coffeeItems = await getCachedCoffeeItems();
-      const enrichedOrders = allOrders.map(order => enrichOrderWithItems(serializeDoc(order), coffeeItems));
+      const coffeeItemMap = await getCachedCoffeeItemMap(tenantId);
+      const enrichedOrders = allOrders.map(order => {
+        const serialized = serializeDoc(order);
+        let items = serialized.items;
+        if (typeof items === 'string') { try { items = JSON.parse(items); } catch { items = []; } }
+        if (!Array.isArray(items)) items = [];
+        return {
+          ...serialized,
+          items: items.map((item: any) => {
+            const ci = coffeeItemMap.get(item.coffeeItemId);
+            return { ...item, coffeeItem: ci ? { nameAr: ci.nameAr, nameEn: ci.nameEn, price: ci.price, imageUrl: ci.imageUrl } : null };
+          })
+        };
+      });
       res.json(enrichedOrders);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch unassigned orders" });
@@ -7764,8 +9208,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Filter by branch for non-admin managers
       const orders = filterByBranch(allOrders, req.employee);
 
-      const coffeeItems = await getCachedCoffeeItems();
-      const enrichedOrders = orders.map(order => enrichOrderWithItems(serializeDoc(order), coffeeItems));
+      const tableOrderTenantId = req.employee?.tenantId || 'demo-tenant';
+      const coffeeItemMap = await getCachedCoffeeItemMap(tableOrderTenantId);
+
+      // Enrich orders with coffee item details
+      const enrichedOrders = orders.map(order => {
+        const serializedOrder = serializeDoc(order);
+        
+        let orderItems = serializedOrder.items;
+        if (typeof orderItems === 'string') {
+          try {
+            orderItems = JSON.parse(orderItems);
+          } catch (e) {
+            orderItems = [];
+          }
+        }
+        
+        if (!Array.isArray(orderItems)) {
+          orderItems = [];
+        }
+        
+        const items = orderItems.map((item: any) => {
+          const coffeeItem = coffeeItemMap.get(item.coffeeItemId);
+          return {
+            ...item,
+            coffeeItem: coffeeItem ? {
+              nameAr: coffeeItem.nameAr,
+              nameEn: coffeeItem.nameEn,
+              price: coffeeItem.price,
+              imageUrl: coffeeItem.imageUrl
+            } : null
+          };
+        });
+
+        return {
+          ...serializedOrder,
+          items
+        };
+      });
+
       res.json(enrichedOrders);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch table orders" });
@@ -7814,10 +9295,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Enrich items with coffee item details
-      const coffeeItems = await getCachedCoffeeItems();
+      // Enrich items with coffee item details (cached)
+      const invoiceTenantId = employee?.tenantId || 'demo-tenant';
+      const coffeeItemMap = await getCachedCoffeeItemMap(invoiceTenantId);
       const enrichedItems = Array.isArray(orderItems) ? orderItems.map((item: any) => {
-        const coffeeItem = coffeeItems.find(ci => ci.id === item.coffeeItemId);
+        const coffeeItem = coffeeItemMap.get(item.coffeeItemId);
         return {
           ...item,
           coffeeItem: coffeeItem ? {
@@ -7829,7 +9311,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Calculate totals - use stored values when available
       const totalAmount = parseFloat(serializedOrder.totalAmount || '0');
-      const taxRate = 0.15;
+      const taxRate = VAT_RATE;
       const subtotalBeforeTax = totalAmount / (1 + taxRate);
       const taxAmount = totalAmount - subtotalBeforeTax;
       
@@ -7850,7 +9332,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         discountAmount: discountAmount,
         taxAmount: taxAmount,
         totalAmount: totalAmount,
-        paymentMethod: serializedOrder.paymentMethod || 'cash',
+        paymentMethod: serializedOrder.paymentMethod || 'unknown',
         invoiceDate: orderDate
       };
 
@@ -7895,6 +9377,229 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "فشل في جلب معلومات الطلب" });
     }
   });
+
+  // ─── Refund / Return Orders ────────────────────────────────────────────────
+
+  // Search order for refund (by order number or phone)
+  app.get("/api/refunds/search-order", async (req: any, res) => {
+    try {
+      const { q } = req.query as { q?: string };
+      if (!q) return res.status(400).json({ error: "يرجى إدخال رقم الطلب أو رقم الجوال" });
+
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const { OrderModel } = await import('@shared/schema');
+
+      let order: any = null;
+      const isPhone = /^\d{7,12}$/.test(q.replace(/\D/g, ""));
+
+      if (isPhone) {
+        const phone = q.replace(/\D/g, "");
+        const normalizedPhone = phone.startsWith('0') ? phone.slice(1) : phone;
+        order = await OrderModel.findOne({
+          $or: [{ 'customerInfo.phone': phone }, { 'customerInfo.phone': normalizedPhone }, { customerPhone: phone }, { customerPhone: normalizedPhone }],
+        }).sort({ createdAt: -1 });
+      } else {
+        const num = q.replace(/^#/, "");
+        const numAsNumber = parseInt(num, 10);
+        order = await OrderModel.findOne({
+          $or: [
+            { orderNumber: num },
+            ...(isNaN(numAsNumber) ? [] : [{ orderNumber: numAsNumber }, { dailyNumber: numAsNumber }]),
+          ],
+        });
+      }
+
+      if (!order) return res.status(404).json({ error: "لم يتم العثور على الطلب" });
+
+      const serialized = serializeDoc(order);
+      if (typeof serialized.items === 'string') {
+        try { serialized.items = JSON.parse(serialized.items); } catch { serialized.items = []; }
+      }
+      res.json(serialized);
+    } catch (error) {
+      console.error('[Refund Search]', error);
+      res.status(500).json({ error: "فشل البحث عن الطلب" });
+    }
+  });
+
+  // List all refunds (manager/admin)
+  app.get("/api/refunds", requireAuth, async (req: any, res) => {
+    try {
+      const { RefundOrderModel } = await import('@shared/schema');
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const { period, branchId, page = '1', limit: limitStr = '50' } = req.query as Record<string, string>;
+
+      const query: any = { tenantId };
+      if (branchId) query.branchId = branchId;
+      if (period) {
+        const now = new Date();
+        let startDate = new Date();
+        if (period === 'today') { startDate.setHours(0,0,0,0); }
+        else if (period === 'week') { startDate.setDate(now.getDate() - 7); }
+        else if (period === 'month') { startDate.setMonth(now.getMonth() - 1); }
+        query.createdAt = { $gte: startDate };
+      }
+
+      const limitNum = Math.min(parseInt(limitStr, 10) || 50, 200);
+      const skip = (parseInt(page, 10) - 1) * limitNum;
+      const [refunds, total] = await Promise.all([
+        RefundOrderModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
+        RefundOrderModel.countDocuments(query),
+      ]);
+
+      const totalAmount = await RefundOrderModel.aggregate([
+        { $match: query },
+        { $group: { _id: null, total: { $sum: '$refundAmount' } } },
+      ]);
+
+      res.json({
+        refunds: refunds.map(r => serializeDoc(r)),
+        total,
+        totalAmount: totalAmount[0]?.total || 0,
+        page: parseInt(page, 10),
+        limit: limitNum,
+      });
+    } catch (error) {
+      console.error('[Refunds List]', error);
+      res.status(500).json({ error: "فشل جلب الاسترجاعات" });
+    }
+  });
+
+  // Create a new refund
+  app.post("/api/refunds", requireAuth, async (req: any, res) => {
+    try {
+      const { RefundOrderModel } = await import('@shared/schema');
+      const { nanoid } = await import('nanoid');
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+
+      const {
+        originalOrderId, originalOrderNumber, branchId, employeeId, employeeName,
+        items, refundAmount, paymentMethod, cashAmount, cardAmount,
+        reason, notes, status,
+      } = req.body;
+
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "يجب اختيار صنف واحد على الأقل" });
+      }
+      if (!reason || !reason.trim()) {
+        return res.status(400).json({ error: "سبب الاسترجاع مطلوب" });
+      }
+      if (!refundAmount || refundAmount <= 0) {
+        return res.status(400).json({ error: "مبلغ الاسترجاع يجب أن يكون أكبر من صفر" });
+      }
+      if (!['cash', 'card', 'split'].includes(paymentMethod)) {
+        return res.status(400).json({ error: "طريقة الدفع غير صحيحة" });
+      }
+
+      const refundDoc = new RefundOrderModel({
+        id: nanoid(),
+        tenantId,
+        originalOrderId: originalOrderId || undefined,
+        originalOrderNumber: originalOrderNumber || undefined,
+        branchId: branchId || undefined,
+        employeeId: employeeId || undefined,
+        employeeName: employeeName || undefined,
+        items: items.map((item: any) => ({
+          coffeeItemId: item.coffeeItemId || '',
+          nameAr: item.nameAr || 'صنف',
+          nameEn: item.nameEn,
+          quantity: Number(item.quantity) || 1,
+          unitPrice: Number(item.unitPrice) || 0,
+          subtotal: Number(item.subtotal) || 0,
+        })),
+        refundAmount: Number(refundAmount),
+        paymentMethod,
+        cashAmount: Number(cashAmount) || 0,
+        cardAmount: Number(cardAmount) || 0,
+        reason: reason.trim(),
+        notes: notes?.trim() || undefined,
+        status: status || 'completed',
+      });
+
+      await refundDoc.save();
+
+      // ── Update original order: mark as refunded ──────────────────────────────
+      if (originalOrderId) {
+        try {
+          const { OrderModel } = await import('@shared/schema');
+          const origOrder = await OrderModel.findOne({
+            $or: [{ id: originalOrderId }, { _id: originalOrderId.length === 24 ? originalOrderId : undefined }]
+          }).catch(() => null) || await OrderModel.findById(originalOrderId).catch(() => null);
+
+          if (origOrder) {
+            const prevRefunded = Number((origOrder as any).refundedAmount) || 0;
+            const newRefunded = prevRefunded + Number(refundAmount);
+            const orderTotal = Number((origOrder as any).totalAmount) || 0;
+            const isFullyRefunded = newRefunded >= orderTotal - 0.01;
+
+            const updateFields: any = {
+              refundedAmount: newRefunded,
+              refundedAt: new Date(),
+              isFullyRefunded,
+              updatedAt: new Date(),
+            };
+            if (isFullyRefunded) {
+              updateFields.status = 'refunded';
+              updateFields.paymentStatus = 'refunded';
+            }
+            await OrderModel.updateOne({ _id: (origOrder as any)._id }, { $set: updateFields });
+          }
+        } catch (err) {
+          console.error('[Refund] Failed to update original order:', err);
+        }
+      }
+
+      // ── Update active cashier shift totalRefunds ──────────────────────────────
+      if (employeeId) {
+        try {
+          const { CashierShiftModel } = await import('@shared/schema');
+          await CashierShiftModel.updateOne(
+            { employeeId, status: 'open' },
+            { $inc: { totalRefunds: Number(refundAmount) }, $set: { updatedAt: new Date() } }
+          );
+        } catch (err) {
+          console.error('[Refund] Failed to update shift totalRefunds:', err);
+        }
+      }
+
+      res.status(201).json(serializeDoc(refundDoc));
+    } catch (error) {
+      console.error('[Create Refund]', error);
+      res.status(500).json({ error: "فشل إنشاء الاسترجاع" });
+    }
+  });
+
+  // Get single refund
+  app.get("/api/refunds/:id", requireAuth, async (req: any, res) => {
+    try {
+      const { RefundOrderModel } = await import('@shared/schema');
+      const { id } = req.params;
+      const refund = await RefundOrderModel.findOne({ id });
+      if (!refund) return res.status(404).json({ error: "الاسترجاع غير موجود" });
+      res.json(serializeDoc(refund));
+    } catch (error) {
+      res.status(500).json({ error: "فشل جلب الاسترجاع" });
+    }
+  });
+
+  // Cancel a refund (admin only)
+  app.patch("/api/refunds/:id/cancel", requireAuth, async (req: any, res) => {
+    try {
+      const { RefundOrderModel } = await import('@shared/schema');
+      const { id } = req.params;
+      const refund = await RefundOrderModel.findOneAndUpdate(
+        { id },
+        { status: 'cancelled', updatedAt: new Date() },
+        { new: true }
+      );
+      if (!refund) return res.status(404).json({ error: "الاسترجاع غير موجود" });
+      res.json(serializeDoc(refund));
+    } catch (error) {
+      res.status(500).json({ error: "فشل إلغاء الاسترجاع" });
+    }
+  });
+
+  // ─── End Refund Routes ────────────────────────────────────────────────────
 
   // Public endpoint for Order Status Display - no authentication required
   app.get("/api/orders/active-display", async (req, res) => {
@@ -7950,8 +9655,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get orders for Kitchen Display System (KDS) - requires authentication
   app.get("/api/orders/kitchen", requireAuth, async (req: AuthRequest, res) => {
     try {
-      // Only allow cashiers, managers, admins, and owners to access KDS
-      const allowedRoles = ['cashier', 'manager', 'admin', 'owner'];
+      // Allow all operational staff to access KDS
+      const allowedRoles = ['cashier', 'barista', 'cook', 'waiter', 'supervisor', 'branch_manager', 'manager', 'admin', 'owner'];
       if (!req.employee?.role || !allowedRoles.includes(req.employee.role)) {
         return res.status(403).json({ error: "Access denied - insufficient permissions" });
       }
@@ -7959,164 +9664,198 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { OrderModel } = await import("@shared/schema");
       
       const query: any = {
-        status: { $in: ['pending', 'confirmed', 'payment_confirmed', 'in_progress', 'ready'] }
+        status: { $in: ['pending', 'confirmed', 'payment_confirmed', 'in_progress', 'ready', 'delivered', 'received', 'suspended'] }
       };
 
-      // Apply branch filtering for managers and other roles
+      // Apply branch filtering for all non-admin/owner roles
       if (req.employee.role !== 'admin' && req.employee.role !== 'owner') {
         if (req.employee.branchId) {
           query.branchId = req.employee.branchId;
-        } else if (req.employee.role === 'manager') {
-          // If manager has no branchId, they might not see anything
-          // We can try to find their branch if it's missing in session
+        } else {
+          // Employee has no branchId — find the first active branch for this tenant
+          // Use branch.id (custom UUID string) not branch._id (ObjectId) to match order.branchId
           const { BranchModel } = await import("@shared/schema");
-          const branch = await BranchModel.findOne({ tenantId: req.employee.tenantId });
+          const branch = await BranchModel.findOne({ tenantId: req.employee.tenantId, isActive: true });
           if (branch) {
-            query.branchId = (branch as any)._id?.toString() || (branch as any).id;
+            query.branchId = (branch as any).id; // Custom ID string, matches order.branchId
           }
+          // If no branch found, tenantId filter alone will scope results correctly
         }
       }
 
-      const [orders, coffeeItems] = await Promise.all([
-        OrderModel.find(query).sort({ createdAt: 1 }).lean(),
-        getCachedCoffeeItems(),
-      ]);
+      const kdsTenantId = req.employee?.tenantId || 'demo-tenant';
+      if (!query.tenantId) query.tenantId = kdsTenantId; // security: scope to tenant
+      const orders = await OrderModel.find(query).sort({ createdAt: 1 }); // Oldest first for FIFO processing
 
-      const enrichedOrders = orders.map(order => enrichOrderWithItems(serializeDoc(order), coffeeItems));
+      const kdsCoffeeMap = await getCachedCoffeeItemMap(kdsTenantId);
+
+      // Enrich orders with coffee item details
+      const enrichedOrders = orders.map(order => {
+        const serializedOrder = serializeDoc(order);
+        
+        // Parse items if they're stored as JSON string
+        let orderItems = serializedOrder.items;
+        if (typeof orderItems === 'string') {
+          try {
+            orderItems = JSON.parse(orderItems);
+          } catch (e) {
+            orderItems = [];
+          }
+        }
+        
+        // Ensure orderItems is an array
+        if (!Array.isArray(orderItems)) {
+          orderItems = [];
+        }
+        
+        const items = orderItems.map((item: any) => {
+          const coffeeItem = kdsCoffeeMap.get(item.coffeeItemId);
+          return {
+            ...item,
+            coffeeItem: coffeeItem ? {
+              nameAr: coffeeItem.nameAr,
+              nameEn: coffeeItem.nameEn,
+              price: coffeeItem.price,
+              imageUrl: coffeeItem.imageUrl,
+              category: coffeeItem.category
+            } : null
+          };
+        });
+
+        return {
+          ...serializedOrder,
+          items
+        };
+      });
+
       res.json(enrichedOrders);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch kitchen orders" });
     }
   });
 
-  // ── Sales Analytics Endpoint (fast aggregated, no enrichment) ─────────────────
-  // IMPORTANT: All date boundaries use Asia/Riyadh (UTC+3) to match the
-  // Accounting Dashboard. Without this, the admin dashboard and accounting
-  // would disagree on what "today" means (3-hour drift).
-  app.get("/api/orders/analytics", async (req: any, res) => {
+  // Get all orders (branch-filtered for non-admin/owner roles)
+  // GET /api/product-reservations/customer/:phone — fetch customer product reservations
+  app.get("/api/product-reservations/customer/:phone", async (req: any, res) => {
     try {
-      const { from, to, period } = req.query as { from?: string; to?: string; period?: string };
-      const tenantId = getTenantIdFromRequest(req as any) || 'demo-tenant';
       const { OrderModel } = await import("@shared/schema");
-
-      let fromDate: Date;
-      let toDate: Date;
-
-      if (period) {
-        // Saudi-aware preset periods (mirror /api/accounting/dashboard)
-        switch (period) {
-          case 'today': {
-            const b = getSaudiDayBounds();
-            fromDate = b.start; toDate = b.end;
-            break;
-          }
-          case 'yesterday': {
-            const b = getSaudiDayBounds(getSaudiDaysAgo(1));
-            fromDate = b.start; toDate = b.end;
-            break;
-          }
-          case 'week': {
-            fromDate = getSaudiDaysAgo(7);
-            toDate = getSaudiDayBounds().end;
-            break;
-          }
-          case 'month': {
-            fromDate = getSaudiMonthStart();
-            toDate = getSaudiDayBounds().end;
-            break;
-          }
-          case 'year': {
-            fromDate = getSaudiYearStart();
-            toDate = getSaudiDayBounds().end;
-            break;
-          }
-          default: {
-            fromDate = getSaudiDaysAgo(30);
-            toDate = getSaudiDayBounds().end;
-          }
-        }
-      } else if (from || to) {
-        // Backward compatible: caller passes ISO timestamps (UTC) directly
-        fromDate = from ? new Date(from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        toDate = to ? new Date(to) : new Date();
-      } else {
-        // Default: last 30 days in Saudi time
-        fromDate = getSaudiDaysAgo(30);
-        toDate = getSaudiDayBounds().end;
-      }
-
+      const { phone } = req.params;
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const cleanPhone = phone.replace(/\D/g, '');
       const orders = await OrderModel.find({
         tenantId,
-        createdAt: { $gte: fromDate, $lte: toDate },
-        status: { $nin: ['cancelled'] }
-      }).select('totalAmount items createdAt paymentMethod channel orderType').lean();
-
-      const totalRevenue = orders.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
-      const totalOrders = orders.length;
-
-      const productMap = new Map<string, { name: string; quantity: number; revenue: number }>();
-      orders.forEach((order: any) => {
-        (order.items || []).forEach((item: any) => {
-          const name = item.nameAr || item.name || 'غير معروف';
-          const qty = Number(item.quantity || 1);
-          const rev = Number(item.price || 0) * qty;
-          const key = String(item.coffeeItemId || name);
-          const curr = productMap.get(key) || { name, quantity: 0, revenue: 0 };
-          curr.quantity += qty;
-          curr.revenue += rev;
-          productMap.set(key, curr);
-        });
-      });
-
-      // Group revenue by day using SAUDI calendar date so labels align with
-      // what the cashier/manager actually consider "today" locally.
-      const dayMap = new Map<string, number>();
-      orders.forEach((order: any) => {
-        const day = getSaudiDateString(new Date(order.createdAt));
-        dayMap.set(day, (dayMap.get(day) || 0) + (order.totalAmount || 0));
-      });
-
-      const payMap = new Map<string, number>();
-      orders.forEach((order: any) => {
-        const m = order.paymentMethod || 'other';
-        payMap.set(m, (payMap.get(m) || 0) + (order.totalAmount || 0));
-      });
-
-      const channelMap = new Map<string, number>();
-      orders.forEach((order: any) => {
-        const ch = order.channel || 'other';
-        channelMap.set(ch, (channelMap.get(ch) || 0) + 1);
-      });
-
-      res.json({
-        totalRevenue,
-        totalOrders,
-        avgOrderValue: totalOrders > 0 ? totalRevenue / totalOrders : 0,
-        topProducts: Array.from(productMap.values()).sort((a, b) => b.quantity - a.quantity).slice(0, 12),
-        revenueByDay: Array.from(dayMap.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, revenue]) => ({ date, revenue })),
-        paymentBreakdown: Array.from(payMap.entries()).map(([method, revenue]) => ({ method, revenue })),
-        channelBreakdown: Array.from(channelMap.entries()).map(([channel, count]) => ({ channel, count })),
-      });
+        isProductReservation: true,
+        $or: [{ customerPhone: phone }, { customerPhone: cleanPhone }, { 'customerInfo.customerPhone': phone }, { 'customerInfo.customerPhone': cleanPhone }],
+      }).sort({ createdAt: -1 }).limit(50).lean();
+      return res.json(orders.map((o: any) => serializeDoc(o)));
     } catch (error) {
-      res.status(500).json({ error: 'Analytics failed' });
+      return res.status(500).json({ error: "Failed to fetch customer product reservations" });
     }
   });
 
-  // Get all orders (branch-filtered for non-admin/owner roles)
-  app.get("/api/orders", async (req: any, res) => {
+  // GET /api/product-reservations — fetch all product reservation orders
+  app.get("/api/product-reservations", async (req: any, res) => {
     try {
-      const { limit, offset } = req.query;
-      const limitNum = limit ? parseInt(limit as string) : undefined;
-      const offsetNum = offset ? parseInt(offset as string) : undefined;
+      const { OrderModel } = await import("@shared/schema");
+      const employee = req.session?.employee;
+      const tenantId = (employee as any)?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const query: any = { tenantId, isProductReservation: true };
+      if (employee?.branchId) query.branchId = employee.branchId;
+      const orders = await OrderModel.find(query).sort({ createdAt: -1 }).limit(200).lean();
+      const result = orders.map((o: any) => serializeDoc(o));
+      return res.json(result);
+    } catch (error) {
+      return res.status(500).json({ error: "Failed to fetch product reservations" });
+    }
+  });
 
-      const tenantId = getTenantIdFromRequest(req as any) || 'demo-tenant';
-      const allOrders = await storage.getOrders(limitNum || 200, offsetNum, tenantId);
+  // PATCH /api/product-reservations/:id/status — update reservation status
+  app.patch("/api/product-reservations/:id/status", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { OrderModel } = await import("@shared/schema");
+      const { id } = req.params;
+      const { productReservationStatus, productReservationNotes } = req.body;
+      const validStatuses = ['pending_payment', 'pending_confirmation', 'confirmed', 'rejected', 'cancelled', 'completed'];
+      if (!validStatuses.includes(productReservationStatus)) {
+        return res.status(400).json({ error: "Invalid reservation status" });
+      }
+      const update: any = { productReservationStatus, updatedAt: new Date() };
+      if (productReservationNotes !== undefined) update.productReservationNotes = productReservationNotes;
+      const updated = await OrderModel.findByIdAndUpdate(id, { $set: update }, { new: true }).lean();
+      if (!updated) return res.status(404).json({ error: "Reservation not found" });
+      return res.json(serializeDoc(updated));
+    } catch (error) {
+      return res.status(500).json({ error: "Failed to update reservation status" });
+    }
+  });
 
-      const employee = (req as any).session?.employee;
-      const orders = employee ? filterByBranch(allOrders, { ...employee, tenantId: employee.tenantId || 'default' }) : allOrders;
+  app.get("/api/orders", requireAuth, async (req: any, res) => {
+    try {
+      const { OrderModel } = await import("@shared/schema");
+      const { limit, offset, status, today, fromDate, period, branchId: qBranchId } = req.query;
 
-      const [coffeeItems] = await Promise.all([getCachedCoffeeItems()]);
-      const enrichedOrders = orders.map(order => enrichOrderWithItems(serializeDoc(order), coffeeItems));
+      const employee = req.session?.employee;
+      const tenantId = (employee as any)?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+
+      const limitNum = limit ? parseInt(limit as string) : 300;
+      const offsetNum = offset ? parseInt(offset as string) : 0;
+
+      const query: any = { tenantId };
+      // Branch filter: query param takes precedence; owner/admin see all branches unless filtered explicitly
+      const isOwnerOrAdmin = employee?.role === 'owner' || employee?.role === 'admin';
+      const resolvedBranch = (qBranchId && qBranchId !== 'all') ? (qBranchId as string) : (isOwnerOrAdmin ? null : (employee?.branchId || null));
+      if (resolvedBranch) query.branchId = resolvedBranch;
+
+      // Support status filter (comma-separated)
+      if (status && status !== 'all') {
+        const statuses = (status as string).split(',').map(s => s.trim()).filter(Boolean);
+        if (statuses.length === 1) query.status = statuses[0];
+        else if (statuses.length > 1) query.status = { $in: statuses };
+      }
+
+      // Support period filter (Saudi timezone)
+      if (today === 'true' || today === '1' || period === 'today') {
+        query.createdAt = { $gte: getSaudiStartOfDay(), $lte: getSaudiEndOfDay() };
+      } else if (period === 'week') {
+        query.createdAt = { $gte: new Date(getSaudiStartOfDay().getTime() - 6 * 24 * 60 * 60 * 1000) };
+      } else if (period === 'month') {
+        query.createdAt = { $gte: new Date(getSaudiStartOfDay().getTime() - 29 * 24 * 60 * 60 * 1000) };
+      } else if (period === 'year') {
+        query.createdAt = { $gte: new Date(getSaudiStartOfDay().getTime() - 364 * 24 * 60 * 60 * 1000) };
+      } else if (fromDate) {
+        query.createdAt = { $gte: new Date(fromDate as string) };
+      }
+
+      // Short-term cache key based on full query shape
+      const ordersCk = cacheKey('orders', tenantId, resolvedBranch || 'all', status as string || 'all',
+        today as string || '', period as string || '', fromDate as string || '',
+        String(limitNum), String(offsetNum));
+      const cachedOrders = cache.get<any[]>(ordersCk);
+      if (cachedOrders) return res.json(cachedOrders);
+
+      const rawOrders = await OrderModel.find(query)
+        .sort({ createdAt: -1 })
+        .skip(offsetNum)
+        .limit(limitNum)
+        .lean();
+
+      const ordersItemMap = await getCachedCoffeeItemMap(tenantId);
+
+      const enrichedOrders = rawOrders.map((order: any) => {
+        const s = serializeDoc(order);
+        let orderItems = s.items;
+        if (typeof orderItems === 'string') { try { orderItems = JSON.parse(orderItems); } catch { orderItems = []; } }
+        if (!Array.isArray(orderItems)) orderItems = [];
+        return {
+          ...s,
+          items: orderItems.map((item: any) => {
+            const ci = ordersItemMap.get(item.coffeeItemId);
+            return { ...item, coffeeItem: ci ? { nameAr: ci.nameAr, nameEn: ci.nameEn, price: ci.price, imageUrl: ci.imageUrl } : null };
+          })
+        };
+      });
+
+      cache.set(ordersCk, enrichedOrders, CACHE_TTL.ORDERS);
       return res.json(enrichedOrders);
     } catch (error) {
       return res.status(500).json({ error: "Failed to fetch orders" });
@@ -8221,9 +9960,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Failed to update order" });
       }
 
-      res.json(serializeDoc(updatedOrder));
+      const serializedCarPickup = serializeDoc(updatedOrder);
+      wsManager.broadcastOrderUpdate(serializedCarPickup);
+      res.json(serializedCarPickup);
     } catch (error) {
       res.status(500).json({ error: "Failed to update car pickup info" });
+    }
+  });
+
+  app.post("/api/orders/:id/customer-arrived", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const order = await storage.getOrder(id);
+      if (!order) return res.status(404).json({ error: "Order not found" });
+
+      const updatedOrder = await OrderModel.findOneAndUpdate(
+        { $or: [{ id: id }, { _id: id.length === 24 ? id : undefined }] },
+        { $set: { customerArrived: true, customerArrivedAt: new Date().toISOString() } },
+        { new: true }
+      );
+      if (!updatedOrder) return res.status(404).json({ error: "Failed to update" });
+
+      const serialized = serializeDoc(updatedOrder);
+      const branchId = (order as any).branchId || 'all';
+
+      wsManager.broadcastToBranch(branchId, {
+        type: 'push_alert',
+        title: '🚗 العميل وصل',
+        body: `طلب #${serialized.orderNumber} — العميل في الموقف وينتظر`,
+        url: '/employee/orders',
+        order: serialized
+      });
+      wsManager.broadcastOrderUpdate(serialized);
+
+      res.json(serialized);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update arrival status" });
     }
   });
 
@@ -8286,7 +10058,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { status, cancellationReason, estimatedPrepTimeInMinutes, paymentMethod: rawPaymentMethod } = req.body;
 
       // Valid statuses for order workflow
-      const validStatuses = ['pending', 'payment_confirmed', 'in_progress', 'ready', 'completed', 'cancelled'];
+      const validStatuses = ['pending', 'confirmed', 'payment_confirmed', 'in_progress', 'ready', 'delivered', 'received', 'completed', 'cancelled', 'suspended', 'refunded'];
       if (!validStatuses.includes(status)) {
         return res.status(400).json({ error: "Invalid status" });
       }
@@ -8364,7 +10136,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (status === 'ready') {
         wsManager.broadcastOrderReady(serializedOrder);
-      } else if (status === 'payment_confirmed' || status === 'confirmed') {
+      }
+      if (status === 'payment_confirmed' || status === 'confirmed' || status === 'in_progress') {
         wsManager.broadcastNewOrder(serializedOrder);
       }
 
@@ -8408,7 +10181,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   nameAr: item.coffeeItem?.nameAr || item.nameAr || 'منتج',
                   quantity: item.quantity || 1,
                   unitPrice: item.coffeeItem?.price || item.unitPrice || 0,
-                  taxRate: 0.15,
+                  taxRate: VAT_RATE,
                   discountAmount: item.discountAmount || 0
                 }));
 
@@ -8418,7 +10191,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   customerName: updatedOrder.customerInfo?.customerName || 'عميل نقدي',
                   customerPhone: updatedOrder.customerInfo?.customerPhone || '',
                   items: invoiceItems,
-                  paymentMethod: updatedOrder.paymentMethod || 'cash',
+                  paymentMethod: updatedOrder.paymentMethod || 'unknown',
                   branchId: updatedOrder.branchId,
                   createdBy: req.employee?.id,
                   invoiceType: 'simplified'
@@ -8440,39 +10213,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           }
 
-          // Push notification to customer
+          // Push notification to customer - rich with SVG image and actions
           try {
             const custInfo = typeof updatedOrder.customerInfo === 'string' ? JSON.parse(updatedOrder.customerInfo) : updatedOrder.customerInfo;
             const custId = updatedOrder.customerId || custInfo?.customerId;
             if (custId) {
-              const statusMessages: Record<string, string> = {
-                'payment_confirmed': `تم تأكيد طلبك رقم #${serializedOrder.orderNumber}`,
-                'in_progress': `جاري تحضير طلبك رقم #${serializedOrder.orderNumber}`,
-                'ready': `طلبك جاهز للاستلام! #${serializedOrder.orderNumber}`,
-                'completed': `تم إتمام طلبك رقم #${serializedOrder.orderNumber} بنجاح`,
-                'cancelled': `تم إلغاء طلبك رقم #${serializedOrder.orderNumber}`,
+              type StatusCfg = { title: string; body: string; stageIdx: number; actions: Array<{ action: string; title: string }> };
+              const statusConfig: Record<string, StatusCfg> = {
+                'payment_confirmed': {
+                  title: '✅ تم تأكيد طلبك',
+                  body: `طلب رقم #${serializedOrder.orderNumber} • قيد الانتظار`,
+                  stageIdx: 0,
+                  actions: [{ action: 'track', title: '👁 متابعة الطلب' }],
+                },
+                'in_progress': {
+                  title: '☕ جارِ التحضير',
+                  body: `طلبك #${serializedOrder.orderNumber} يُحضَّر الآن بعناية`,
+                  stageIdx: 1,
+                  actions: [{ action: 'track', title: '📍 تتبع الطلب' }],
+                },
+                'ready': {
+                  title: '🔔 طلبك جاهز!',
+                  body: `طلبك #${serializedOrder.orderNumber} في انتظارك • تفضل بالاستلام`,
+                  stageIdx: 2,
+                  actions: [
+                    { action: 'track', title: '📍 تتبع الطلب' },
+                    { action: 'directions', title: '🗺️ الاتجاهات' },
+                  ],
+                },
+                'completed': {
+                  title: '🎉 تم التسليم!',
+                  body: `طلبك #${serializedOrder.orderNumber} تم تسليمه • شكراً لك`,
+                  stageIdx: 3,
+                  actions: [
+                    { action: 'rate', title: '⭐ قيّم تجربتك' },
+                    { action: 'reorder', title: '🔄 إعادة الطلب' },
+                  ],
+                },
+                'cancelled': {
+                  title: '❌ تم الإلغاء',
+                  body: `تم إلغاء طلبك #${serializedOrder.orderNumber} • تواصل معنا للمساعدة`,
+                  stageIdx: -1,
+                  actions: [{ action: 'track', title: '📞 تواصل معنا' }],
+                },
               };
-              const pushBody = statusMessages[status];
-              if (pushBody) {
+
+              const cfg = statusConfig[status];
+              if (cfg) {
                 const orderItems = Array.isArray(serializedOrder.items) 
                   ? serializedOrder.items.map((item: any) => ({
                       name: item.nameAr || item.name || item.coffeeItem?.nameAr || 'منتج',
                       quantity: item.quantity || 1
                     }))
                   : [];
+                const orderNum = String(serializedOrder.orderNumber || serializedOrder.dailyNumber || '');
+                const orderType = serializedOrder.orderType || '';
+                const estimatedMins = serializedOrder.estimatedPrepTimeInMinutes;
+                const baseUrl = getAppBaseUrl();
+                const imageParams = new URLSearchParams({
+                  status,
+                  orderNumber: orderNum,
+                  type: orderType,
+                  ...(status === 'in_progress' && estimatedMins ? { t: String(estimatedMins) } : {}),
+                });
                 sendPushToCustomer(custId, {
-                  title: 'تحديث الطلب',
-                  body: pushBody,
+                  title: cfg.title,
+                  body: cfg.body,
                   url: '/my-orders',
-                  tag: `order-${serializedOrder.orderNumber}`,
+                  tag: `order-${orderNum}`,
                   type: 'order_status',
-                  orderNumber: serializedOrder.orderNumber || serializedOrder.dailyNumber,
+                  orderNumber: orderNum,
                   orderStatus: status,
                   totalAmount: serializedOrder.totalAmount,
                   itemCount: orderItems.length,
                   items: orderItems.slice(0, 5),
-                  orderType: serializedOrder.orderType,
-                  estimatedTime: status === 'in_progress' ? 5 : undefined,
+                  orderType,
+                  estimatedTime: status === 'in_progress' ? (estimatedMins || 5) : undefined,
+                  image: `${baseUrl}/api/notification-image?${imageParams.toString()}`,
+                  actions: cfg.actions,
+                  stageIndex: cfg.stageIdx,
+                  totalStages: 4,
                 }).catch(err => console.error('[PUSH] Customer notification error:', err));
               }
             }
@@ -8846,7 +10666,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           id: 'silver',
           nameAr: 'فضي',
           nameEn: 'Silver',
-          pointsRequired: 100,
+          pointsRequired: 500,
           benefits: ['خصم 15% على كل طلب', 'قهوة مجانية شهرياً', 'أولوية في الطلبات'],
           color: '#C0C0C0',
           icon: '🥈'
@@ -8855,7 +10675,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           id: 'gold',
           nameAr: 'ذهبي',
           nameEn: 'Gold',
-          pointsRequired: 500,
+          pointsRequired: 2000,
           benefits: ['خصم 20% على كل طلب', 'قهوتين مجانيتين شهرياً', 'دعوات خاصة للفعاليات'],
           color: '#FFD700',
           icon: '🥇'
@@ -8864,7 +10684,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           id: 'platinum',
           nameAr: 'بلاتيني',
           nameEn: 'Platinum',
-          pointsRequired: 1000,
+          pointsRequired: 5000,
           benefits: ['خصم 25% على كل طلب', 'قهوة يومية مجانية', 'خدمة VIP', 'بطاقة فيزيائية مطبوعة'],
           color: '#E5E4E2',
           icon: 'platinum'
@@ -8892,7 +10712,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Create card if doesn't exist
       if (!loyaltyCard) {
-        const cardNumber = `CLUNY-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+        const cardNumber = `BR-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
         const qrToken = `QR-${customerId || cleanPhone}-${Date.now()}`;
         
         loyaltyCard = await storage.createLoyaltyCard({
@@ -8917,6 +10737,255 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Apple Wallet PKPass generator for loyalty card ─────────────────────────
+  app.get("/api/wallet/apple-pass", requireCustomerAuth, async (req: CustomerAuthRequest, res) => {
+    try {
+      const fs   = await import('fs');
+      const path = await import('path');
+
+      // Decode base64 env var if needed
+      const decodePem = (raw: string): string => {
+        try {
+          const decoded = Buffer.from(raw, 'base64').toString('utf8');
+          if (decoded.includes('-----BEGIN')) return decoded;
+        } catch {}
+        return raw;
+      };
+
+      const walletDir = path.join(process.cwd(), "apple-wallet");
+      const readPemFile = (filename: string): string => {
+        try { return fs.readFileSync(path.join(walletDir, filename), "utf8"); } catch { return ""; }
+      };
+
+      const wwdrRaw    = process.env.APPLE_WWDR_PEM      || readPemFile("wwdr.pem");
+      const certRaw    = process.env.APPLE_SIGNER_CERT_PEM || readPemFile("signer_cert.pem");
+      const keyRaw     = process.env.APPLE_SIGNER_KEY_PEM  || readPemFile("signer_key.pem");
+      const passTypeId = process.env.APPLE_PASS_TYPE_ID  || "pass.cluny.cafe";
+      const teamId     = process.env.APPLE_TEAM_ID       || "V4K6RM59LS";
+      const keyPhrase  = process.env.APPLE_KEY_PASSPHRASE;
+
+      if (!wwdrRaw || !certRaw || !keyRaw || !passTypeId || !teamId) {
+        return res.status(503).json({
+          error: "Apple Wallet غير مهيأ",
+          message: "يجب إعداد شهادات Apple Developer أولاً في إعدادات المتغيرات البيئية",
+          setup: {
+            required: ["APPLE_WWDR_PEM", "APPLE_SIGNER_CERT_PEM", "APPLE_SIGNER_KEY_PEM", "APPLE_PASS_TYPE_ID", "APPLE_TEAM_ID"],
+            optional: ["APPLE_KEY_PASSPHRASE"],
+            docs: "https://developer.apple.com/documentation/walletpasses",
+          }
+        });
+      }
+
+      const customerPhone = req.customer?.phone;
+      if (!customerPhone) return res.status(401).json({ error: "يرجى تسجيل الدخول" });
+
+      // Try multiple phone formats to find the loyalty card
+      const rawDigits  = customerPhone.replace(/\D/g, '');
+      const phoneVariants = [
+        rawDigits.slice(-9),
+        rawDigits,
+        rawDigits.startsWith('966') ? rawDigits.slice(3) : '0' + rawDigits.slice(-9),
+        '0' + rawDigits.slice(-9),
+      ];
+
+      let loyaltyCard: any = null;
+      for (const ph of phoneVariants) {
+        loyaltyCard = await storage.getLoyaltyCardByPhone(ph);
+        if (loyaltyCard) break;
+      }
+      if (!loyaltyCard) return res.status(404).json({ error: "لم يتم العثور على بطاقة الولاء" });
+
+      // Get real loyalty settings from business config
+      const businessConfig   = await storage.getBusinessConfig((loyaltyCard as any)?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant').catch(() => null) as any;
+      const loyaltyConfig    = businessConfig?.loyaltyConfig || {};
+      const pointsValueInSar = loyaltyConfig.pointsValueInSar ?? 0.02;
+
+      const points       = Number(loyaltyCard.points) || 0;
+      const sarValue     = (points * pointsValueInSar).toFixed(2);
+      const tier         = loyaltyCard.tier || "bronze";
+      const tierLabels: Record<string, string> = {
+        bronze: "برونزي", silver: "فضي", gold: "ذهبي", platinum: "بلاتيني"
+      };
+      const customerName = req.customer?.name || loyaltyCard.customerName || "عميل";
+      const qrValue      = loyaltyCard.qrToken || loyaltyCard.cardNumber || rawDigits.slice(-9);
+
+      const cardNumber = loyaltyCard.cardNumber || rawDigits.slice(-9);
+
+      // Tier display names + QIROX green accent shades per tier
+      const tierLabelsAr: Record<string, string> = {
+        bronze: "برونزي 🥉", silver: "فضي 🥈", gold: "ذهبي 🥇", platinum: "بلاتيني 💎"
+      };
+      const tierLabelsEn: Record<string, string> = {
+        bronze: "Bronze", silver: "Silver", gold: "Gold", platinum: "Platinum"
+      };
+
+      const passJson = {
+        formatVersion: 1,
+        passTypeIdentifier: passTypeId,
+        serialNumber: `BR-${rawDigits.slice(-9)}-${Date.now().toString(36).toUpperCase()}`,
+        teamIdentifier: teamId,
+        organizationName: "CLUNY CAFE",
+        description: `بطاقة ولاء CLUNY`,
+        logoText: "",
+        backgroundColor: "rgb(13, 13, 13)",
+        foregroundColor: "rgb(245, 245, 245)",
+        labelColor: "rgb(45, 155, 110)",
+        storeCard: {
+          headerFields: [
+            {
+              key: "tier",
+              label: "المستوى",
+              value: tierLabelsAr[tier] || "برونزي",
+              textAlignment: "PKTextAlignmentRight"
+            }
+          ],
+          primaryFields: [
+            {
+              key: "points",
+              label: "نقاط الولاء",
+              value: points.toLocaleString(),
+              changeMessage: "رصيدك تحدّث إلى %@ نقطة"
+            }
+          ],
+          secondaryFields: [
+            {
+              key: "sar",
+              label: "القيمة",
+              value: `${sarValue} ر.س`
+            },
+            {
+              key: "name",
+              label: "العميل",
+              value: customerName
+            }
+          ],
+          backFields: [
+            {
+              key: "how_to_use",
+              label: "كيف تستخدم نقاطك؟",
+              value: "أعرض رمز QR للكاشير، أو أخبره باسمك أو رقم جوالك.\nالحد الأدنى للاسترداد: 100 نقطة."
+            },
+            {
+              key: "how_to_earn",
+              label: "كيف تكسب نقاطاً؟",
+              value: "تحصل على نقاط مع كل طلب تلقائياً.\nكلما زاد طلبك، زادت نقاطك وارتقيت في المستويات."
+            },
+            {
+              key: "balance_info",
+              label: "رصيدك الحالي",
+              value: `${points.toLocaleString()} نقطة  ≈  ${sarValue} ر.س`
+            },
+            {
+              key: "contact",
+              label: "تواصل معنا",
+              value: "qirox.cafe\n@qiroxcafe"
+            }
+          ]
+        },
+        barcodes: [
+          {
+            message: qrValue,
+            format: "PKBarcodeFormatQR",
+            messageEncoding: "iso-8859-1",
+            altText: cardNumber
+          }
+        ],
+        barcode: {
+          message: qrValue,
+          format: "PKBarcodeFormatQR",
+          messageEncoding: "iso-8859-1",
+          altText: cardNumber
+        }
+      };
+
+      // Build pass images using sharp for proper QIROX branding
+      const os   = await import('os');
+      const sharpLib = await import('sharp');
+      const sharp = (sharpLib as any).default || sharpLib;
+
+      const logoSourcePath = path.join(process.cwd(), "attached_assets/qirox-logo-customer.png");
+      const logoExists = fs.existsSync(logoSourcePath);
+
+      const makeIconPng = async (size: number): Promise<Buffer> => {
+        const pad = Math.round(size * 0.16);
+        const inner = size - pad * 2;
+        if (logoExists) {
+          const logo = await sharp(logoSourcePath)
+            .resize(inner, inner, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+            .toBuffer();
+          return await sharp({ create: { width: size, height: size, channels: 4, background: { r: 13, g: 13, b: 13, alpha: 255 } } })
+            .composite([{ input: logo, gravity: "center" }])
+            .png()
+            .toBuffer();
+        }
+        // Fallback: solid green square
+        return await sharp({ create: { width: size, height: size, channels: 3, background: { r: 45, g: 155, b: 110 } } })
+          .png().toBuffer();
+      };
+
+      const makeLogoPng = async (w: number, h: number): Promise<Buffer> => {
+        const logoH = Math.round(h * 0.7);
+        const logoW = logoH;
+        if (logoExists) {
+          const logo = await sharp(logoSourcePath)
+            .resize(logoW, logoH, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+            .toBuffer();
+          return await sharp({ create: { width: w, height: h, channels: 4, background: { r: 13, g: 13, b: 13, alpha: 255 } } })
+            .composite([{ input: logo, left: Math.round((w - logoW) / 2), top: Math.round((h - logoH) / 2) }])
+            .png()
+            .toBuffer();
+        }
+        return await sharp({ create: { width: w, height: h, channels: 3, background: { r: 13, g: 13, b: 13 } } })
+          .png().toBuffer();
+      };
+
+      const passDir = path.join(os.tmpdir(), `qirox-${Date.now()}.pass`);
+      fs.mkdirSync(passDir, { recursive: true });
+
+      try {
+        fs.writeFileSync(path.join(passDir, 'pass.json'), JSON.stringify(passJson));
+
+        // Generate proper icon PNGs from QIROX logo
+        fs.writeFileSync(path.join(passDir, 'icon.png'),    await makeIconPng(29));
+        fs.writeFileSync(path.join(passDir, 'icon@2x.png'), await makeIconPng(58));
+        fs.writeFileSync(path.join(passDir, 'icon@3x.png'), await makeIconPng(87));
+        fs.writeFileSync(path.join(passDir, 'logo.png'),    await makeLogoPng(160, 50));
+        fs.writeFileSync(path.join(passDir, 'logo@2x.png'), await makeLogoPng(320, 100));
+        fs.writeFileSync(path.join(passDir, 'logo@3x.png'), await makeLogoPng(480, 150));
+
+        const { PKPass } = await import("passkit-generator");
+
+        const pass = await PKPass.from({
+          model: passDir,
+          certificates: {
+            wwdr:                decodePem(wwdrRaw),
+            signerCert:          decodePem(certRaw),
+            signerKey:           decodePem(keyRaw),
+            signerKeyPassphrase: keyPhrase,
+          },
+        });
+
+        const passBuffer = await pass.getAsBuffer();
+        const safeName   = customerName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '').slice(0, 20) || "loyalty";
+
+        res.set({
+          "Content-Type":        "application/vnd.apple.pkpass",
+          "Content-Disposition": `inline; filename="qirox-loyalty-${safeName}.pkpass"`,
+          "Cache-Control":       "no-store",
+          "Content-Length":      String(passBuffer.length),
+        });
+        res.send(passBuffer);
+      } finally {
+        // Always clean up temp directory
+        try { fs.rmSync(passDir, { recursive: true, force: true }); } catch {}
+      }
+
+    } catch (err: any) {
+      console.error("[APPLE WALLET]", err.message);
+      res.status(500).json({ error: "فشل في إنشاء بطاقة Apple Wallet", detail: err.message });
+    }
+  });
+
   // Customer loyalty transactions endpoint
   app.get("/api/customer/loyalty-transactions", requireCustomerAuth, async (req: CustomerAuthRequest, res) => {
     try {
@@ -8936,24 +11005,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const transactions = await storage.getLoyaltyTransactions(loyaltyCard.id);
       
       // Transform transactions for frontend
-      const formattedTransactions = transactions.map((tx: any) => {
-        const rawType = tx.type || '';
-        let mappedType: string;
-        if (['earn', 'stamps_earned', 'points_earned', 'transfer_in'].includes(rawType)) {
-          mappedType = rawType === 'transfer_in' ? 'transfer_in' : 'earn';
-        } else if (rawType === 'transfer_out') {
-          mappedType = 'transfer_out';
-        } else {
-          mappedType = 'redeem';
-        }
-        return {
-          id: tx.id || tx._id,
-          type: mappedType,
-          points: tx.pointsChange || 0,
-          descriptionAr: tx.description,
-          createdAt: tx.createdAt,
-        };
-      });
+      const formattedTransactions = transactions.map((tx: any) => ({
+        id: tx.id || tx._id,
+        type: tx.type === 'stamps_earned' || tx.type === 'points_earned' ? 'earn' : 'redeem',
+        points: tx.pointsChange || 0,
+        descriptionAr: tx.description,
+        createdAt: tx.createdAt
+      }));
 
       res.json(formattedTransactions);
     } catch (error) {
@@ -9002,7 +11060,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!recipientCard && recipientCustomer) {
         const recipientCustomerId = (recipientCustomer as any)._id?.toString() || (recipientCustomer as any).id;
-        const cardNumber = `CLUNY-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+        const cardNumber = `BR-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
         const qrToken = `QR-${recipientCustomerId}-${Date.now()}`;
         
         recipientCard = await storage.createLoyaltyCard({
@@ -9230,37 +11288,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Public: Look up loyalty card by phone (for POS balance display)
-  app.get("/api/loyalty/lookup/phone/:phone", async (req, res) => {
+  // Employee: Redeem a free drink using points (pointsForFreeDrink threshold)
+  app.post("/api/loyalty/employee/redeem-drink-with-points", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const raw = req.params.phone;
-      const cleanPhone = raw.replace(/\D/g, '').slice(-9);
+      const { phone } = req.body;
+      if (!phone) return res.status(400).json({ error: "رقم الهاتف مطلوب" });
+
+      const cleanPhone = phone.replace(/\D/g, '').slice(-9);
       const card = await storage.getLoyaltyCardByPhone(cleanPhone);
-      if (!card) return res.status(404).json({ error: "بطاقة غير موجودة" });
-      res.json({ points: (card as any).points || 0, cardId: (card as any)._id?.toString() });
+      if (!card) return res.status(404).json({ error: "بطاقة الولاء غير موجودة" });
+
+      const tenantId = (card as any).tenantId || 'demo-tenant';
+      const { BusinessConfigModel: BizCfg } = await import("@shared/schema");
+      const bizCfg = await BizCfg.findOne({ tenantId }).lean() as any;
+      const pointsPerSar = Number(bizCfg?.loyaltyConfig?.pointsPerSar) || 20;
+      const cfgFallback = Number(bizCfg?.loyaltyConfig?.pointsForFreeDrink) || 500;
+      const requiredPoints = await calcFreeDrinkThreshold(tenantId, pointsPerSar, cfgFallback);
+
+      const currentPoints = Number(card.points) || 0;
+      if (currentPoints < requiredPoints) {
+        return res.status(400).json({
+          error: "رصيد النقاط غير كافٍ للحصول على مشروب مجاني",
+          currentPoints,
+          requiredPoints,
+        });
+      }
+
+      const cardId = (card as any)._id?.toString() || (card as any).id;
+      const newPoints = currentPoints - requiredPoints;
+
+      let tier = (card as any).tier || 'bronze';
+      if (newPoints >= 5000) tier = 'platinum';
+      else if (newPoints >= 2000) tier = 'gold';
+      else if (newPoints >= 500) tier = 'silver';
+      else tier = 'bronze';
+
+      await storage.updateLoyaltyCard(cardId, { points: newPoints, tier });
+      await storage.createLoyaltyTransaction({
+        cardId,
+        type: 'redeem',
+        pointsChange: -requiredPoints,
+        discountAmount: 0,
+        orderAmount: 0,
+        description: `استرداد مشروب مجاني مقابل ${requiredPoints} نقطة`,
+        employeeId: req.employee?.id,
+      } as any);
+
+      const updatedCard = await storage.getLoyaltyCardByPhone(cleanPhone);
+      res.json({ success: true, card: updatedCard, pointsUsed: requiredPoints });
     } catch (error) {
-      res.status(500).json({ error: "فشل" });
+      console.error("[LOYALTY REDEEM DRINK WITH POINTS]", error);
+      res.status(500).json({ error: "فشل في استرداد المشروب بالنقاط" });
     }
   });
 
-  // Employee: Redeem points for discount (general)
+  // Employee: Redeem points for discount
   app.post("/api/loyalty/employee/redeem-points", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { phone, points } = req.body;
       if (!phone) return res.status(400).json({ error: "رقم الهاتف مطلوب" });
       const pts = Number(points);
       if (!pts || pts <= 0) return res.status(400).json({ error: "عدد النقاط غير صالح" });
-      if (pts < 100) return res.status(400).json({ error: "الحد الأدنى للاستخدام 100 نقطة" });
 
       const cleanPhone = phone.replace(/\D/g, '').slice(-9);
       const card = await storage.getLoyaltyCardByPhone(cleanPhone);
       if (!card) return res.status(404).json({ error: "بطاقة الولاء غير موجودة" });
 
       if ((card.points || 0) < pts) return res.status(400).json({ error: "رصيد النقاط غير كافٍ" });
-      if ((card.points || 0) < 100) return res.status(400).json({ error: "يحتاج العميل 100 نقطة على الأقل للصرف" });
 
-      // 50 points = 1 SAR (0.02 SAR per point)
-      const sarValue = pts * 0.02;
+      const config = await storage.getBusinessConfig((card as any)?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant');
+      const pointsValueInSar = (config as any)?.loyaltyConfig?.pointsValueInSar ?? 0.05;
+      const sarValue = pts * pointsValueInSar;
 
       const cardId = (card as any)._id?.toString() || (card as any).id;
       await storage.updateLoyaltyCard(cardId, { points: (card.points || 0) - pts });
@@ -9270,7 +11368,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         pointsChange: -pts,
         discountAmount: sarValue,
         orderAmount: 0,
-        description: `استرداد ${pts} نقطة = ${sarValue.toFixed(2)} ريال خصم بطاقة كلوني`,
+        description: `استرداد ${pts} نقطة = ${sarValue.toFixed(2)} ريال خصم`,
         employeeId: req.employee?.id,
       });
 
@@ -9279,55 +11377,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("[LOYALTY REDEEM POINTS]", error);
       res.status(500).json({ error: "فشل في استرداد النقاط" });
-    }
-  });
-
-  // Employee: Apply loyalty points as payment discount on POS order
-  // 50 points = 1 SAR. Minimum 100 points to redeem. No points earned on this order.
-  app.post("/api/loyalty/employee/apply-points-to-order", requireAuth, async (req: AuthRequest, res) => {
-    try {
-      const { phone, pointsToUse, orderTotal } = req.body;
-      if (!phone) return res.status(400).json({ error: "رقم الهاتف مطلوب" });
-
-      const cleanPhone = phone.replace(/\D/g, '').slice(-9);
-      const card = await storage.getLoyaltyCardByPhone(cleanPhone);
-      if (!card) return res.status(404).json({ error: "بطاقة الولاء غير موجودة" });
-
-      const currentPoints = Number(card.points) || 0;
-      if (currentPoints < 100) {
-        return res.status(400).json({ error: "يحتاج العميل 100 نقطة على الأقل للصرف", currentPoints });
-      }
-
-      // Calculate max discount: all points up to order total
-      const maxPointsValue = currentPoints * 0.02; // 50 pts = 1 SAR
-      const orderAmt = Number(orderTotal) || 0;
-      const ptsToUse = pointsToUse ? Math.min(Number(pointsToUse), currentPoints) : currentPoints;
-      const discountSar = Math.min(ptsToUse * 0.02, orderAmt);
-      const actualPtsUsed = Math.ceil(discountSar / 0.02); // points actually deducted
-
-      const cardId = (card as any)._id?.toString() || (card as any).id;
-      await storage.updateLoyaltyCard(cardId, { points: currentPoints - actualPtsUsed, discountCount: (card.discountCount || 0) + 1 });
-      await storage.createLoyaltyTransaction({
-        cardId,
-        type: 'redeem',
-        pointsChange: -actualPtsUsed,
-        discountAmount: discountSar,
-        orderAmount: orderAmt,
-        description: `خصم بطاقة كلوني: ${actualPtsUsed} نقطة = ${discountSar.toFixed(2)} ريال`,
-        employeeId: req.employee?.id,
-      });
-
-      const updatedCard = await storage.getLoyaltyCardByPhone(cleanPhone);
-      res.json({
-        success: true,
-        card: updatedCard,
-        discountSar: Number(discountSar.toFixed(2)),
-        pointsUsed: actualPtsUsed,
-        remainingPoints: currentPoints - actualPtsUsed,
-      });
-    } catch (error) {
-      console.error("[LOYALTY APPLY POINTS]", error);
-      res.status(500).json({ error: "فشل في تطبيق خصم النقاط" });
     }
   });
 
@@ -9409,7 +11458,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update ingredient availability (DEPRECATED: use PUT /api/inventory/raw-items/:id with isActive field)
-  app.patch("/api/ingredients/:id/availability", async (req, res) => {
+  app.patch("/api/ingredients/:id/availability", requireAuth, async (req: AuthRequest, res) => {
     try {
       console.warn("⚠️ DEPRECATED: PATCH /api/ingredients/:id/availability is deprecated. Use PUT /api/inventory/raw-items/:id with isActive field instead.");
       const { id } = req.params;
@@ -9470,7 +11519,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Add ingredient to coffee item
-  app.post("/api/coffee-items/:id/ingredients", async (req, res) => {
+  app.post("/api/coffee-items/:id/ingredients", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
       const { ingredientId, quantity, unit } = req.body;
@@ -9482,7 +11531,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Remove ingredient from coffee item
-  app.delete("/api/coffee-items/:id/ingredients/:ingredientId", async (req, res) => {
+  app.delete("/api/coffee-items/:id/ingredients/:ingredientId", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { id, ingredientId } = req.params;
       await storage.removeCoffeeItemIngredient(id, ingredientId);
@@ -9511,73 +11560,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userRole = (req as any).employee?.role;
       const userBranchId = (req as any).employee?.branchId;
 
+      const ck = cacheKey('branches', tenantId, userRole, userBranchId);
+      const cached = cache.get<any[]>(ck);
+      if (cached) return res.json(cached);
+
       let query: any = {};
-      
-      // For admin/owner, show all; for managers, show only their branch
       if (userRole === "manager" && userBranchId) {
         query = { $or: [{ id: userBranchId }, { _id: userBranchId }] };
       } else {
-        // Show all branches (admin can see all)
         query = { isActive: { $in: [1, true] } };
       }
 
       const branches = await BranchModel.find(query).lean();
-      
       const serialized = branches.map((b: any) => ({
         ...b,
         id: b.id || b._id?.toString(),
         _id: b._id?.toString()
       }));
-      
+      cache.set(ck, serialized, CACHE_TTL.BRANCHES);
       res.json(serialized);
     } catch (error) {
       console.error("Error fetching branches:", error);
       res.status(500).json({ error: "Failed to fetch branches" });
-    }
-  });
-
-  // PUBLIC: Branch locations for client-side geofencing
-  app.get("/api/geofence/branches", async (_req, res) => {
-    try {
-      const { BranchModel } = await import("@shared/schema");
-      const branches = await BranchModel.find({
-        isActive: { $in: [true, 1, "1", "true"] },
-        "location.lat": { $exists: true, $ne: null },
-        "location.lng": { $exists: true, $ne: null }
-      }).lean() as any[];
-      res.json(branches
-        .filter((b: any) => b.location?.lat && b.location?.lng)
-        .map((b: any) => ({
-          id: b.id || b._id?.toString(),
-          nameAr: b.nameAr,
-          nameEn: b.nameEn,
-          lat: b.location.lat,
-          lng: b.location.lng,
-          radius: b.geofenceRadius || 100
-        }))
-      );
-    } catch (e) {
-      res.status(500).json({ error: "Failed to fetch geofence branches" });
-    }
-  });
-
-  // Send proximity push notification to a customer who is nearby a branch
-  app.post("/api/geofence/notify", async (req: any, res) => {
-    try {
-      const { customerId, branchId, branchName } = req.body;
-      if (!customerId) return res.status(400).json({ error: "customerId required" });
-
-      const { sendPushToCustomer } = await import("./push-service");
-      await sendPushToCustomer(customerId, {
-        title: "☕ لا تفوتك قهوتنا!",
-        body: `أنت قريب من ${branchName || "كلوني كافيه"} — اطلب الآن وخذها معك!`,
-        url: "/",
-        type: "geofence",
-        tag: `geofence-${branchId || "branch"}-${new Date().toDateString()}`
-      });
-      res.json({ ok: true });
-    } catch (e: any) {
-      res.status(500).json({ error: e?.message });
     }
   });
 
@@ -9604,6 +11608,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(branches);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch branches" });
+    }
+  });
+
+  // ─── Public branches endpoint (customer-facing) ────────────────────────────
+  app.get("/api/public/branches", async (req, res) => {
+    try {
+      const { BranchModel } = await import("@shared/schema");
+      const tenantId = (req as any).employee?.tenantId || 'demo-tenant';
+      const branches = await BranchModel.find({
+        isActive: { $in: [1, true] },
+        isOnline: { $ne: false },
+      }).lean();
+      const result = branches.map((b: any) => ({
+        id: b.id || b._id?.toString(),
+        nameAr: b.nameAr,
+        nameEn: b.nameEn,
+        address: b.address,
+        phone: b.phone,
+        location: b.location,
+        workingHours: b.workingHours,
+        allowOnlineOrders: b.allowOnlineOrders,
+        allowCarOrders: b.allowCarOrders,
+        allowTableOrders: b.allowTableOrders,
+        isOnline: b.isOnline !== false,
+      }));
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Branch stats (orders today, revenue today, employees) ─────────────────
+  app.get("/api/branches/stats", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { BranchModel, OrderModel, EmployeeModel } = await import("@shared/schema");
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+
+      const dayStart = getSaudiStartOfDay();
+      const dayEnd = getSaudiEndOfDay();
+
+      const branches = await BranchModel.find({ tenantId, isActive: { $in: [1, true] } }).lean();
+
+      const statsArr = await Promise.all(branches.map(async (b: any) => {
+        const branchId = b.id || b._id?.toString();
+
+        const [todayOrders, allOrders, employees] = await Promise.all([
+          OrderModel.find({
+            tenantId,
+            branchId,
+            status: { $nin: ['cancelled'] },
+            createdAt: { $gte: dayStart, $lte: dayEnd },
+          }).lean(),
+          OrderModel.find({
+            tenantId,
+            branchId,
+            status: { $nin: ['cancelled'] },
+          }).lean(),
+          EmployeeModel.countDocuments({ tenantId, branchId, isActive: true }),
+        ]);
+
+        const todayRevenue = todayOrders.reduce((s: number, o: any) => s + (Number(o.totalAmount) || 0), 0);
+        const totalRevenue = allOrders.reduce((s: number, o: any) => s + (Number(o.totalAmount) || 0), 0);
+
+        return {
+          branchId,
+          todayOrders: todayOrders.length,
+          todayRevenue: Math.round(todayRevenue * 100) / 100,
+          totalOrders: allOrders.length,
+          totalRevenue: Math.round(totalRevenue * 100) / 100,
+          activeEmployees: employees,
+          isOnline: b.isOnline !== false,
+        };
+      }));
+
+      res.json(statsArr);
+    } catch (err: any) {
+      console.error("branches/stats error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ─── Toggle branch online/offline ─────────────────────────────────────────
+  app.patch("/api/branches/:id/toggle-online", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+    try {
+      const { BranchModel } = await import("@shared/schema");
+      const { id } = req.params;
+      const branch = await BranchModel.findOne({ $or: [{ id }, { _id: id }] });
+      if (!branch) return res.status(404).json({ error: "الفرع غير موجود" });
+
+      branch.isOnline = !branch.isOnline;
+      await branch.save();
+
+      // Bust cache
+      cache.invalidateKey(cacheKey('branches', branch.tenantId, 'owner', ''));
+      cache.invalidateKey(cacheKey('branches', branch.tenantId, 'admin', ''));
+      cache.invalidateKey(cacheKey('branches', branch.tenantId, undefined, undefined));
+
+      res.json({
+        success: true,
+        isOnline: branch.isOnline,
+        message: branch.isOnline ? `الفرع "${branch.nameAr}" الآن متاح أونلاين` : `الفرع "${branch.nameAr}" أصبح غير متاح أونلاين`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -9663,6 +11771,107 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       res.status(500).json({ error: "فشل التحقق من الموقع", withinRange: false });
+    }
+  });
+
+  // ─── Proximity Notification ──────────────────────────────────────────────
+  // In-memory cooldown: prevents duplicate push per customer/device within 1 hour
+  const proximityRecentlyNotified = new Map<string, number>();
+  const PROXIMITY_COOLDOWN_MS = 60 * 60 * 1000;
+
+  app.post("/api/customer/proximity-notify", async (req, res) => {
+    try {
+      const { lat, lng, customerId, subscriptionEndpoint } = req.body;
+      if (typeof lat !== "number" || typeof lng !== "number") {
+        return res.status(400).json({ error: "Location required" });
+      }
+
+      // Rate-limit key: prefer customerId, fall back to endpoint
+      const rateLimitKey = customerId || subscriptionEndpoint || "anon";
+      const lastSent = proximityRecentlyNotified.get(rateLimitKey) || 0;
+      if (Date.now() - lastSent < PROXIMITY_COOLDOWN_MS) {
+        return res.json({ triggered: false, reason: "cooldown" });
+      }
+
+      // Haversine distance (meters)
+      const haversineM = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+        const R = 6371e3;
+        const φ1 = (lat1 * Math.PI) / 180;
+        const φ2 = (lat2 * Math.PI) / 180;
+        const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+        const Δλ = ((lng2 - lng1) * Math.PI) / 180;
+        const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      };
+
+      // Load all branches
+      const { BranchModel } = await import("@shared/schema");
+      const branches = await BranchModel.find({}).lean();
+
+      const RADIUS_M = 100;
+      let nearestBranch: any = null;
+      let nearestDist = Infinity;
+
+      for (const branch of branches) {
+        if (!branch.location?.lat || !branch.location?.lng) continue;
+        const dist = haversineM(lat, lng, branch.location.lat, branch.location.lng);
+        if (dist <= RADIUS_M && dist < nearestDist) {
+          nearestDist = dist;
+          nearestBranch = branch;
+        }
+      }
+
+      if (!nearestBranch) {
+        return res.json({ triggered: false, reason: "no_nearby_branch" });
+      }
+
+      const branchName: string =
+        (nearestBranch as any).nameAr || (nearestBranch as any).name || "فرعنا";
+      const distRounded = Math.round(nearestDist);
+
+      const pushPayload = {
+        title: "☕ لا تفوتك قهوتنا!",
+        body: `أنت على بُعد ${distRounded} متر من ${branchName} — تعال واستمتع بأفضل القهوة 🌹`,
+        url: "/menu",
+        tag: `proximity-${String((nearestBranch as any)._id || "br")}`,
+        type: "promo" as const,
+        image: "/icons/icon-192x192.png",
+      };
+
+      const { PushSubscriptionModel, sendPushBySubscriptions } = await import("./push-service");
+
+      let subs: any[] = [];
+
+      // 1) Try by customer ID
+      if (customerId) {
+        subs = await PushSubscriptionModel.find({ userId: customerId, userType: "customer" });
+      }
+
+      // 2) Try by subscription endpoint as fallback
+      if (subs.length === 0 && subscriptionEndpoint) {
+        const sub = await PushSubscriptionModel.findOne({ endpoint: subscriptionEndpoint });
+        if (sub) subs = [sub];
+      }
+
+      let notificationSent = false;
+      if (subs.length > 0) {
+        await sendPushBySubscriptions(subs, pushPayload);
+        notificationSent = true;
+        proximityRecentlyNotified.set(rateLimitKey, Date.now());
+        console.log(`[PROXIMITY] ✅ Sent to ${subs.length} subscription(s) — ${branchName} ~${distRounded}m`);
+      } else {
+        console.log(`[PROXIMITY] No push subscriptions found for key=${rateLimitKey}`);
+      }
+
+      return res.json({
+        triggered: true,
+        branchName,
+        distance: distRounded,
+        notificationSent,
+      });
+    } catch (err) {
+      console.error("[PROXIMITY] Error:", err);
+      return res.status(500).json({ error: "Internal error" });
     }
   });
 
@@ -9837,7 +12046,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/categories", async (req, res) => {
+  app.post("/api/categories", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { insertCategorySchema } = await import("@shared/schema");
       const validatedData = insertCategorySchema.parse(req.body);
@@ -9851,7 +12060,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/categories/:id", async (req, res) => {
+  app.put("/api/categories/:id", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
       const category = await storage.updateCategory(id, req.body);
@@ -9864,7 +12073,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/categories/:id", async (req, res) => {
+  app.delete("/api/categories/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
       const deleted = await storage.deleteCategory(id);
@@ -9900,12 +12109,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // TEMPORARY: Reset manager password
-  app.post("/api/reset-manager", async (req, res) => {
+  app.post("/api/reset-manager", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
+      const { newPassword } = req.body;
+      if (!newPassword || newPassword.length < 6) {
+        return res.status(400).json({ error: "كلمة المرور يجب أن تكون 6 أحرف على الأقل" });
+      }
       const manager = await storage.getEmployeeByUsername("manager");
       if (manager && manager._id) {
-        const hashedPassword = await bcrypt.hash("2030", 10);
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
         await storage.updateEmployee(manager._id.toString(), { password: hashedPassword });
+        logFromRequest(req, { action: 'employee.password_reset', entityType: 'employee', entityLabel: 'manager' });
         res.json({ message: "Manager password reset successfully" });
       } else {
         res.status(404).json({ error: "Manager not found" });
@@ -9970,8 +12184,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // TABLE MANAGEMENT ROUTES - إدارة الطاولات
 
-  // Cleanup: Clear all old table reservations (temporary endpoint)
-  app.post("/api/tables/cleanup-reservations", async (req, res) => {
+  // Cleanup: Clear all old table reservations
+  app.post("/api/tables/cleanup-reservations", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
       const tables = await storage.getTables(undefined, tenantId);
@@ -10949,7 +13163,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Assign order to cashier (or accept pending order)
-  app.patch("/api/orders/:id/assign-cashier", async (req, res) => {
+  app.patch("/api/orders/:id/assign-cashier", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { cashierId } = req.body;
       const { OrderModel } = await import("@shared/schema");
@@ -11018,68 +13232,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       await order.save();
 
-      // Award loyalty points when table order is completed/delivered/payment_confirmed
-      if ((tableStatus === 'delivered' || tableStatus === 'payment_confirmed') && !(order as any).pointsAwarded) {
-        setImmediate(async () => {
-          try {
-            const orderUsedPoints = !!(order as any).pointsUsed || Number((order as any).pointsRedeemed) > 0;
-            let orderItemsList: any[] = [];
-            try {
-              orderItemsList = Array.isArray(order.items) ? order.items : JSON.parse((order.items as any) || '[]');
-            } catch (_) {}
-
-            const pointsToAward = orderUsedPoints ? 0 : orderItemsList.reduce((acc: number, item: any) => {
-              const price = Number(item.price || item.unitPrice || item.coffeeItem?.price || 0);
-              if (price <= 1) return acc;
-              return acc + ((Number(item.quantity) || 1) * 10);
-            }, 0);
-
-            if (pointsToAward <= 0) return;
-
-            let loyaltyCard: any = null;
-            if (order.customerId) {
-              loyaltyCard = await mongoose.model('LoyaltyCard').findOne({ customerId: order.customerId });
-            }
-            if (!loyaltyCard) {
-              const rawPhone = (order as any).customerPhone ||
-                (typeof order.customerInfo === 'string' ? JSON.parse(order.customerInfo) : order.customerInfo)?.customerPhone || '';
-              if (rawPhone) {
-                const clean = rawPhone.replace(/\D/g, '').replace(/^966/, '0').replace(/^9665/, '05');
-                loyaltyCard = await mongoose.model('LoyaltyCard').findOne({
-                  phoneNumber: { $in: [clean, rawPhone, `+966${clean.slice(1)}`, `966${clean.slice(1)}`] }
-                });
-              }
-            }
-
-            if (!loyaltyCard) return;
-
-            const currentPoints = Number(loyaltyCard.points) || 0;
-            const currentPending = Number(loyaltyCard.pendingPoints) || 0;
-
-            await mongoose.model('LoyaltyCard').findByIdAndUpdate(loyaltyCard._id, {
-              points: currentPoints + pointsToAward,
-              pendingPoints: Math.max(0, currentPending - pointsToAward),
-              lastUsedAt: new Date(),
-            });
-
-            await storage.createLoyaltyTransaction({
-              cardId: loyaltyCard._id.toString(),
-              type: 'earn',
-              pointsChange: pointsToAward,
-              discountAmount: 0,
-              orderAmount: Number(order.totalAmount) || 0,
-              orderId: (order as any).id || order._id?.toString(),
-              description: `نقاط مكسبة: ${pointsToAward} نقطة من الطلب #${order.orderNumber}`,
-            });
-
-            await OrderModel.findOneAndUpdate({ id: req.params.id }, { pointsAwarded: true });
-            console.log(`[LOYALTY] ✅ Awarded ${pointsToAward} pts (table order) #${order.orderNumber}`);
-          } catch (err) {
-            console.error('[LOYALTY] Failed to award points on table order completion:', err);
-          }
-        });
-      }
-
       // Serialize the response properly
       const serializedOrder = serializeDoc(order);
       res.json(serializedOrder);
@@ -11089,11 +13241,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get orders assigned to specific cashier
-  app.get("/api/cashier/:cashierId/orders", async (req, res) => {
+  app.get("/api/cashier/:cashierId/orders", async (req: any, res) => {
     try {
       const { OrderModel } = await import("@shared/schema");
       const { status } = req.query;
-      const coffeeItems = await getCachedCoffeeItems();
+      const cashierTenantId = req.session?.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const cashierCoffeeMap = await getCachedCoffeeItemMap(cashierTenantId);
       
       const query: any = {
         assignedCashierId: req.params.cashierId,
@@ -11124,7 +13277,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         
         const items = orderItems.map((item: any) => {
-          const coffeeItem = coffeeItems.find(ci => ci.id === item.coffeeItemId);
+          const coffeeItem = cashierCoffeeMap.get(item.coffeeItemId);
           return {
             ...item,
             coffeeItem: coffeeItem ? {
@@ -11175,6 +13328,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updates: any = { paymentStatus };
       if (paymentDetails) updates.paymentDetails = paymentDetails;
 
+      // If marking as paid, also move pending orders to payment_confirmed so kitchen sees them
+      const existingOrder = await OrderModel.findOne({ id }) || await OrderModel.findById(id);
+      if (paymentStatus === 'paid' && existingOrder?.status === 'pending') {
+        updates.status = 'payment_confirmed';
+      }
+
       let updatedOrder = await OrderModel.findOneAndUpdate(
         { id },
         { $set: updates },
@@ -11205,9 +13364,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const branchQuery: any = {};
       if ((req as any).employee?.branchId) branchQuery.branchId = (req as any).employee.branchId;
       
-      // Update all non-cancelled orders to completed
+      // Update all active (non-completed, non-cancelled) orders to completed
       const result = await OrderModel.updateMany(
-        { tenantId, ...branchQuery, status: { $ne: 'cancelled' } },
+        { tenantId, ...branchQuery, status: { $nin: ['completed', 'cancelled'] } },
         {
           $set: {
             status: 'completed',
@@ -11244,7 +13403,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/admin/cashiers", async (req, res) => {
+  app.delete("/api/admin/cashiers", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
       const employees = await storage.getEmployees();
       const cashiers = employees.filter((e: any) => e.role === 'cashier');
@@ -11314,7 +13473,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No image file uploaded" });
       }
 
-      const { ObjectStorageService } = await import("./replit_integrations/object_storage");
+      const { ObjectStorageService } = await import("./qirox_studio_integrations/object_storage");
       const storageService = new ObjectStorageService();
 
       try {
@@ -11326,7 +13485,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const uploadResponse = await fetch(uploadURL, {
           method: 'PUT',
-          body: fileBuffer,
+          body: fileBuffer as unknown as BodyInit,
           headers: {
             'Content-Type': req.file.mimetype || 'image/png',
           },
@@ -11385,7 +13544,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No image file uploaded" });
       }
 
-      const { ObjectStorageService } = await import("./replit_integrations/object_storage");
+      const { ObjectStorageService } = await import("./qirox_studio_integrations/object_storage");
       const storageService = new ObjectStorageService();
 
       try {
@@ -11397,7 +13556,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const uploadResponse = await fetch(uploadURL, {
           method: 'PUT',
-          body: fileBuffer,
+          body: fileBuffer as unknown as BodyInit,
           headers: {
             'Content-Type': req.file.mimetype || 'image/png',
           },
@@ -11585,6 +13744,273 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============== ATTENDANCE KIOSK ROUTES ==============
+
+  // GET /api/attendance/kiosk-stats — today stats (no strict auth, for kiosk display)
+  app.get("/api/attendance/kiosk-stats", async (req: any, res) => {
+    try {
+      const { AttendanceModel, EmployeeModel } = await import("@shared/schema");
+      const tenantId = req.session?.employee?.tenantId || req.headers['x-tenant-id'] || 'demo-tenant';
+      const today = new Date(); today.setHours(0,0,0,0);
+      const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const [records, totalActive] = await Promise.all([
+        AttendanceModel.find({ tenantId: { $in: [tenantId, null, undefined] }, shiftDate: { $gte: today, $lt: tomorrow } }).lean(),
+        EmployeeModel.countDocuments({ isActive: 1 }),
+      ]);
+
+      const present = records.filter((r: any) => ['checked_in', 'checked_out'].includes(r.status)).length;
+      const late = records.filter((r: any) => r.isLate === 1).length;
+      const absent = Math.max(0, totalActive - present);
+
+      res.json({ present, late, absent, total: totalActive, checkedOut: records.filter((r: any) => r.status === 'checked_out').length });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // GET /api/attendance/recent-checkins — last 10 check-ins for kiosk display
+  app.get("/api/attendance/recent-checkins", async (req: any, res) => {
+    try {
+      const { AttendanceModel, EmployeeModel } = await import("@shared/schema");
+      const today = new Date(); today.setHours(0,0,0,0);
+      const records = await AttendanceModel.find({ shiftDate: { $gte: today } }).sort({ checkInTime: -1 }).limit(10).lean();
+      const empIds = [...new Set(records.map((r: any) => r.employeeId))];
+      const emps = await EmployeeModel.find({ id: { $in: empIds } }).select('id fullName role jobTitle imageUrl').lean();
+      const empMap = Object.fromEntries(emps.map((e: any) => [e.id, e]));
+      const result = records.map((r: any) => ({
+        employeeId: r.employeeId,
+        fullName: (empMap[r.employeeId] as any)?.fullName || 'موظف',
+        jobTitle: (empMap[r.employeeId] as any)?.jobTitle || '',
+        imageUrl: (empMap[r.employeeId] as any)?.imageUrl || null,
+        checkInTime: r.checkInTime,
+        isLate: r.isLate, lateMinutes: r.lateMinutes,
+        checkInMethod: r.checkInMethod || 'manual',
+        status: r.status,
+      }));
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // GET /api/attendance/face-employees — employees with face descriptors (for kiosk matching)
+  app.get("/api/attendance/face-employees", async (req: any, res) => {
+    try {
+      const { EmployeeModel } = await import("@shared/schema");
+      const emps = await EmployeeModel.find({ isActive: 1, faceDescriptors: { $exists: true, $not: { $size: 0 } } })
+        .select('id fullName role jobTitle branchId faceDescriptors imageUrl shiftStartTime shiftEndTime').lean();
+      res.json(emps.map((e: any) => ({
+        employeeId: e.id,
+        fullName: e.fullName,
+        role: e.role,
+        jobTitle: e.jobTitle,
+        branchId: e.branchId,
+        imageUrl: e.imageUrl,
+        shiftStartTime: e.shiftStartTime,
+        shiftEndTime: e.shiftEndTime,
+        descriptors: e.faceDescriptors || [],
+      })));
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // POST /api/attendance/face-checkin — check in via face recognition result
+  app.post("/api/attendance/face-checkin", async (req: any, res) => {
+    try {
+      const { AttendanceModel, EmployeeModel, BranchModel } = await import("@shared/schema");
+      const { employeeId, photoUrl, location, deviceFingerprint, confidence } = req.body;
+      if (!employeeId) return res.status(400).json({ error: "معرّف الموظف مطلوب" });
+
+      const employee = await EmployeeModel.findOne({ id: employeeId }).lean() as any;
+      if (!employee) return res.status(404).json({ error: "الموظف غير موجود" });
+
+      const today = new Date(); today.setHours(0,0,0,0);
+      const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+
+      // Check already checked in today
+      const existing = await AttendanceModel.findOne({ employeeId, shiftDate: { $gte: today, $lt: tomorrow } }).lean();
+      if (existing && (existing as any).status === 'checked_in') {
+        return res.status(400).json({ error: "تم تسجيل الحضور مسبقاً اليوم", existing });
+      }
+
+      const now = new Date();
+      const shiftStart = employee.shiftStartTime || '09:00';
+      const [sh, sm] = shiftStart.split(':').map(Number);
+      const shiftStartDate = new Date(now); shiftStartDate.setHours(sh, sm, 0, 0);
+      const diffMinutes = Math.floor((now.getTime() - shiftStartDate.getTime()) / 60000);
+      const isLate = diffMinutes > 5 ? 1 : 0;
+      const lateMinutes = isLate ? diffMinutes : 0;
+      const earlyMinutes = diffMinutes < -1 ? Math.abs(diffMinutes) : 0;
+
+      const safeLocation = location || { lat: 0, lng: 0 };
+      const record = await AttendanceModel.create({
+        employeeId, branchId: employee.branchId || '',
+        checkInTime: now, checkInPhoto: photoUrl || '',
+        checkInLocation: safeLocation,
+        status: isLate ? 'late' : 'checked_in',
+        shiftDate: today,
+        isLate, lateMinutes,
+        checkInMethod: 'face',
+        deviceFingerprint: deviceFingerprint || '',
+        isAtBranch: 1,
+        tenantId: employee.tenantId || 'demo-tenant',
+      });
+
+      res.status(201).json({
+        success: true, record,
+        employee: { fullName: employee.fullName, jobTitle: employee.jobTitle, role: employee.role, imageUrl: employee.imageUrl },
+        isLate, lateMinutes, earlyMinutes, shiftStart,
+        checkInTime: now.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+        confidence: confidence || 0,
+      });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // GET /api/attendance/employee-qr/me — current employee's own QR
+  app.get("/api/attendance/employee-qr/me", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeModel } = await import("@shared/schema");
+      const employee = req.employee;
+      if (!employee?.id) return res.status(401).json({ error: "غير مصرح" });
+
+      const emp = await EmployeeModel.findOne({ id: employee.id }).lean() as any;
+      if (!emp) return res.status(404).json({ error: "الموظف غير موجود" });
+
+      const crypto = await import("crypto");
+      let secret = emp.kioskQrSecret;
+      if (!secret) {
+        secret = crypto.randomBytes(32).toString('hex');
+        await EmployeeModel.updateOne({ id: emp.id }, { kioskQrSecret: secret });
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      const window = Math.floor(now / 30);
+      const payload = `${emp.id}:${window}`;
+      const token = crypto.createHmac('sha256', secret).update(payload).digest('hex').slice(0, 16);
+      const expires = (window + 1) * 30;
+
+      res.json({
+        employeeId: emp.id,
+        token,
+        payload: JSON.stringify({ employeeId: emp.id, token, window, expires }),
+        expiresAt: new Date(expires * 1000).toISOString(),
+        expiresIn: expires - now,
+      });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // GET /api/attendance/employee-qr/:employeeId — generate expiring QR token
+  app.get("/api/attendance/employee-qr/:employeeId", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeModel } = await import("@shared/schema");
+      const employee = req.employee;
+      if (employee?.id !== req.params.employeeId && !['manager','admin','owner','branch_manager','supervisor'].includes(employee?.role || '')) {
+        return res.status(403).json({ error: "غير مصرح" });
+      }
+      const emp = await EmployeeModel.findOne({ id: req.params.employeeId }).lean() as any;
+      if (!emp) return res.status(404).json({ error: "الموظف غير موجود" });
+
+      const crypto = await import("crypto");
+      const secret = emp.kioskQrSecret || (() => {
+        const s = crypto.randomBytes(32).toString('hex');
+        EmployeeModel.updateOne({ id: emp.id }, { kioskQrSecret: s }).catch(() => {});
+        return s;
+      })();
+
+      const now = Math.floor(Date.now() / 1000);
+      const window = Math.floor(now / 30); // 30-second window
+      const payload = `${emp.id}:${window}`;
+      const token = crypto.createHmac('sha256', secret).update(payload).digest('hex').slice(0, 16);
+      const expires = (window + 1) * 30;
+
+      res.json({
+        employeeId: emp.id,
+        token,
+        payload: JSON.stringify({ employeeId: emp.id, token, window, expires }),
+        expiresAt: new Date(expires * 1000).toISOString(),
+        expiresIn: expires - now,
+      });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // POST /api/attendance/qr-checkin — verify QR token and check in
+  app.post("/api/attendance/qr-checkin", async (req: any, res) => {
+    try {
+      const { AttendanceModel, EmployeeModel } = await import("@shared/schema");
+      const { payload } = req.body;
+      let parsed: any;
+      try { parsed = JSON.parse(payload); } catch { return res.status(400).json({ error: "QR غير صالح" }); }
+      const { employeeId, token, window: qrWindow } = parsed;
+
+      const emp = await EmployeeModel.findOne({ id: employeeId }).lean() as any;
+      if (!emp) return res.status(404).json({ error: "الموظف غير موجود" });
+
+      const crypto = await import("crypto");
+      const secret = emp.kioskQrSecret;
+      if (!secret) return res.status(400).json({ error: "هذا الموظف لم يُفعّل QR الكيوسك بعد" });
+
+      const now = Math.floor(Date.now() / 1000);
+      const currentWindow = Math.floor(now / 30);
+      if (Math.abs(currentWindow - qrWindow) > 1) return res.status(400).json({ error: "انتهت صلاحية QR — اطلب QR جديداً" });
+
+      const expected = crypto.createHmac('sha256', secret).update(`${employeeId}:${qrWindow}`).digest('hex').slice(0, 16);
+      if (expected !== token) return res.status(400).json({ error: "QR غير صالح أو مزور" });
+
+      const today = new Date(); today.setHours(0,0,0,0);
+      const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+      const existing = await AttendanceModel.findOne({ employeeId, shiftDate: { $gte: today, $lt: tomorrow } }).lean();
+      if (existing && (existing as any).status === 'checked_in') {
+        return res.status(400).json({ error: "تم تسجيل الحضور مسبقاً اليوم", existing });
+      }
+
+      const shiftStart = emp.shiftStartTime || '09:00';
+      const [sh, sm] = shiftStart.split(':').map(Number);
+      const shiftStartDate = new Date(); shiftStartDate.setHours(sh, sm, 0, 0);
+      const diff = Math.floor((Date.now() - shiftStartDate.getTime()) / 60000);
+      const isLate = diff > 5 ? 1 : 0;
+
+      const record = await AttendanceModel.create({
+        employeeId, branchId: emp.branchId || '',
+        checkInTime: new Date(), checkInPhoto: emp.imageUrl || '',
+        checkInLocation: { lat: 0, lng: 0 },
+        status: isLate ? 'late' : 'checked_in',
+        shiftDate: today, isLate, lateMinutes: isLate ? diff : 0,
+        checkInMethod: 'qr',
+        tenantId: emp.tenantId || 'demo-tenant',
+      });
+
+      res.status(201).json({
+        success: true, record,
+        employee: { fullName: emp.fullName, jobTitle: emp.jobTitle, role: emp.role, imageUrl: emp.imageUrl },
+        isLate, lateMinutes: isLate ? diff : 0, shiftStart,
+        checkInTime: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+      });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // POST /api/employees/:id/enroll-face — save face descriptors
+  app.post("/api/employees/:id/enroll-face", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeModel } = await import("@shared/schema");
+      const { descriptors, photoUrls } = req.body;
+      if (!descriptors || !Array.isArray(descriptors) || descriptors.length === 0) {
+        return res.status(400).json({ error: "بيانات البصمة مطلوبة (descriptors[])" });
+      }
+      const emp = await EmployeeModel.findOneAndUpdate(
+        { id: req.params.id },
+        { faceDescriptors: descriptors, facePhotos: photoUrls || [], faceEnrolledAt: new Date() },
+        { new: true }
+      ).select('id fullName faceEnrolledAt').lean();
+      if (!emp) return res.status(404).json({ error: "الموظف غير موجود" });
+      res.json({ success: true, employee: emp, descriptorsCount: descriptors.length });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // DELETE /api/employees/:id/face — remove face descriptors
+  app.delete("/api/employees/:id/face", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeModel } = await import("@shared/schema");
+      await EmployeeModel.updateOne({ id: req.params.id }, { $unset: { faceDescriptors: 1, facePhotos: 1, faceEnrolledAt: 1 } });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
   // ============== ATTENDANCE ROUTES ==============
 
   // Check-in employee
@@ -11602,8 +14028,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "الموقع مطلوب للتحضير" });
       }
 
+      // Photo is mandatory for check-in
       if (!photoUrl) {
-        return res.status(400).json({ error: "صورة التحضير مطلوبة" });
+        return res.status(400).json({ error: "صورة الحضور إلزامية — يجب التقاط صورة قبل التسجيل" });
       }
 
       // Get employee details
@@ -11616,67 +14043,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Get branch location
-      const branch = await BranchModel.findOne({ 
+      const branch = employee.branchId ? await BranchModel.findOne({ 
         $or: [{ id: employee.branchId }, { _id: employee.branchId }]
-      });
+      }) : null;
       
-      if (!branch || !branch.location) {
-        return res.status(400).json({ error: "لا يوجد موقع للفرع" });
-      }
-
-      const branchLat = branch.location.lat;
-      const branchLng = branch.location.lng;
-      let isWithinBoundary = false;
+      let isWithinBoundary = true; // Default: allow if no branch/location configured
       let distance = 0;
 
-      // Check if branch has polygon boundary (more accurate)
-      if (branch.geofenceBoundary && Array.isArray(branch.geofenceBoundary) && branch.geofenceBoundary.length >= 3) {
-        // Use point-in-polygon check with turf.js
-        const turf = await import('@turf/turf');
-        const employeePoint = turf.point([location.lng, location.lat]);
-        const polygonCoords = branch.geofenceBoundary.map((p: any) => [p.lng, p.lat]);
-        // Close the polygon
-        polygonCoords.push(polygonCoords[0]);
-        const branchPolygon = turf.polygon([polygonCoords]);
-        isWithinBoundary = turf.booleanPointInPolygon(employeePoint, branchPolygon);
-        
-        // Calculate distance for logging purposes
-        distance = calculateDistance(location.lat, location.lng, branchLat, branchLng);
-        
-        if (!isWithinBoundary) {
-          const mapsUrl = `https://www.google.com/maps/dir/${location.lat},${location.lng}/${branchLat},${branchLng}`;
-          return res.status(400).json({ 
-            error: `أنت خارج حدود الفرع المحددة. يرجى التوجه للفرع للتحضير.`,
-            distance: Math.round(distance),
-            userLocation: { lat: location.lat, lng: location.lng },
-            branchLocation: { lat: branchLat, lng: branchLng },
-            mapsUrl: mapsUrl,
-            showMap: true,
-            boundaryType: 'polygon'
-          });
-        }
-      } else {
-        // Fallback to radius-based check
-        const maxDistance = branch.geofenceRadius || 500;
-        distance = calculateDistance(location.lat, location.lng, branchLat, branchLng);
-        isWithinBoundary = distance <= maxDistance;
+      // Only enforce geolocation if branch has location configured
+      if (branch && branch.location && branch.location.lat && branch.location.lng) {
+        const branchLat = branch.location.lat;
+        const branchLng = branch.location.lng;
+        isWithinBoundary = false;
 
-        if (!isWithinBoundary) {
-          const mapsUrl = `https://www.google.com/maps/dir/${location.lat},${location.lng}/${branchLat},${branchLng}`;
-          return res.status(400).json({ 
-            error: `أنت بعيد جداً عن الفرع (${Math.round(distance)} متر). يرجى التوجه للفرع للتحضير.`,
-            distance: Math.round(distance),
-            userLocation: { lat: location.lat, lng: location.lng },
-            branchLocation: { lat: branchLat, lng: branchLng },
-            mapsUrl: mapsUrl,
-            showMap: true,
-            boundaryType: 'radius'
-          });
+        // Check if branch has polygon boundary (more accurate)
+        if (branch.geofenceBoundary && Array.isArray(branch.geofenceBoundary) && branch.geofenceBoundary.length >= 3) {
+          const turf = await import('@turf/turf');
+          const employeePoint = turf.point([location.lng, location.lat]);
+          const polygonCoords = branch.geofenceBoundary.map((p: any) => [p.lng, p.lat]);
+          polygonCoords.push(polygonCoords[0]);
+          const branchPolygon = turf.polygon([polygonCoords]);
+          isWithinBoundary = turf.booleanPointInPolygon(employeePoint, branchPolygon);
+          distance = calculateDistance(location.lat, location.lng, branchLat, branchLng);
+
+          if (!isWithinBoundary) {
+            const mapsUrl = `https://www.google.com/maps/dir/${location.lat},${location.lng}/${branchLat},${branchLng}`;
+            return res.status(400).json({ 
+              error: `أنت خارج حدود الفرع المحددة. يرجى التوجه للفرع للتحضير.`,
+              distance: Math.round(distance),
+              userLocation: { lat: location.lat, lng: location.lng },
+              branchLocation: { lat: branchLat, lng: branchLng },
+              mapsUrl,
+              showMap: true,
+              boundaryType: 'polygon'
+            });
+          }
+        } else {
+          // Fallback to radius-based check
+          const maxDistance = branch.geofenceRadius || 500;
+          distance = calculateDistance(location.lat, location.lng, branchLat, branchLng);
+          isWithinBoundary = distance <= maxDistance;
+
+          if (!isWithinBoundary) {
+            const mapsUrl = `https://www.google.com/maps/dir/${location.lat},${location.lng}/${branchLat},${branchLng}`;
+            return res.status(400).json({ 
+              error: `أنت بعيد جداً عن الفرع (${Math.round(distance)} متر). يرجى التوجه للفرع للتحضير.`,
+              distance: Math.round(distance),
+              userLocation: { lat: location.lat, lng: location.lng },
+              branchLocation: { lat: branchLat, lng: branchLng },
+              mapsUrl,
+              showMap: true,
+              boundaryType: 'radius'
+            });
+          }
         }
       }
+      // If branch has no location configured → skip geolocation check, allow check-in
 
-      // Check if already checked in today (Saudi timezone)
-      const { start: today, end: tomorrow } = getSaudiDayBounds();
+      // Check if already checked in today
+      const today = getSaudiStartOfDay();
+      const tomorrow = getSaudiEndOfDay();
 
       const existingAttendance = await AttendanceModel.findOne({
         employeeId: employeeId,
@@ -11688,11 +14114,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "تم التحضير مسبقاً اليوم" });
       }
 
-      // Check if late (assuming 8 AM start time, can be customized per employee)
       const now = new Date();
-      const shiftStartHour = employee.shiftTime ? parseInt(employee.shiftTime.split('-')[0]) : 8;
-      // today is Saudi midnight in UTC; add shift hour to get correct Saudi shift time in UTC
-      const shiftStart = new Date(today.getTime() + shiftStartHour * 60 * 60 * 1000);
+      let shiftStartHour = 8;
+      let shiftStartMinute = 0;
+      if ((employee as any).shiftStartTime) {
+        const parts = (employee as any).shiftStartTime.split(':');
+        shiftStartHour = parseInt(parts[0]) || 8;
+        shiftStartMinute = parseInt(parts[1]) || 0;
+      } else if (employee.shiftTime) {
+        shiftStartHour = parseInt(employee.shiftTime.split('-')[0]) || 8;
+      }
+      const shiftStart = new Date(today.getTime() + shiftStartHour * 60 * 60 * 1000 + shiftStartMinute * 60 * 1000);
       
       const isLate = now > shiftStart;
       const lateMinutes = isLate ? Math.floor((now.getTime() - shiftStart.getTime()) / 60000) : 0;
@@ -11701,13 +14133,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const isAtBranch = isWithinBoundary ? 1 : 0;
       const attendance = new AttendanceModel({
         employeeId: employeeId,
-        branchId: employee.branchId,
+        branchId: employee.branchId || '',
         checkInTime: now,
         checkInLocation: {
           lat: location.lat,
           lng: location.lng
         },
-        checkInPhoto: photoUrl,
+        checkInPhoto: photoUrl || '',
         status: 'checked_in',
         shiftDate: today,
         isLate: isLate ? 1 : 0,
@@ -11717,6 +14149,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       await attendance.save();
+      cache.invalidate('attendance:monthly:');
 
       res.json({
         success: true,
@@ -11745,8 +14178,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "الموقع مطلوب للانصراف" });
       }
 
+      // Photo is mandatory for check-out
       if (!photoUrl) {
-        return res.status(400).json({ error: "صورة الانصراف مطلوبة" });
+        return res.status(400).json({ error: "صورة الانصراف إلزامية — يجب التقاط صورة قبل تسجيل الانصراف" });
       }
 
       // Get employee details
@@ -11759,35 +14193,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Get branch location
-      const branch = await BranchModel.findOne({ 
+      const branch = employee.branchId ? await BranchModel.findOne({ 
         $or: [{ id: employee.branchId }, { _id: employee.branchId }]
-      });
-      
-      if (!branch || !branch.location) {
-        return res.status(400).json({ error: "لا يوجد موقع للفرع" });
+      }) : null;
+
+      let distance = 0;
+      let checkOutIsAtBranch = 1; // Default: mark as at-branch if no location configured
+
+      // Only enforce geolocation if branch has location configured
+      if (branch && branch.location && branch.location.lat && branch.location.lng) {
+        const branchLat = branch.location.lat;
+        const branchLng = branch.location.lng;
+        distance = calculateDistance(location.lat, location.lng, branchLat, branchLng);
+        checkOutIsAtBranch = distance <= 500 ? 1 : 0;
+
+        if (distance > 500) {
+          const mapsUrl = `https://www.google.com/maps/dir/${location.lat},${location.lng}/${branchLat},${branchLng}`;
+          return res.status(400).json({ 
+            error: `أنت بعيد جداً عن الفرع (${Math.round(distance)} متر). يرجى التوجه للفرع للانصراف.`,
+            distance: Math.round(distance),
+            userLocation: { lat: location.lat, lng: location.lng },
+            branchLocation: { lat: branchLat, lng: branchLng },
+            mapsUrl,
+            showMap: true
+          });
+        }
       }
+      // If branch has no location configured → skip geolocation check, allow check-out
 
-      // Check if employee is within 500 meters of the branch
-      const branchLat = branch.location.lat;
-      const branchLng = branch.location.lng;
-      const distance = calculateDistance(location.lat, location.lng, branchLat, branchLng);
-
-      if (distance > 500) {
-        // Create Google Maps link showing user location and branch location
-        const mapsUrl = `https://www.google.com/maps/dir/${location.lat},${location.lng}/${branchLat},${branchLng}`;
-        
-        return res.status(400).json({ 
-          error: `أنت بعيد جداً عن الفرع (${Math.round(distance)} متر). يرجى التوجه للفرع للانصراف.`,
-          distance: Math.round(distance),
-          userLocation: { lat: location.lat, lng: location.lng },
-          branchLocation: { lat: branchLat, lng: branchLng },
-          mapsUrl: mapsUrl,
-          showMap: true
-        });
-      }
-
-      // Find today's check-in (Saudi timezone)
-      const { start: today, end: tomorrow } = getSaudiDayBounds();
+      // Find today's check-in
+      const today = getSaudiStartOfDay();
+      const tomorrow = getSaudiEndOfDay();
 
       const attendance = await AttendanceModel.findOne({
         employeeId: employeeId,
@@ -11800,7 +14236,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Update attendance with check-out and location verification
-      const checkOutIsAtBranch = distance <= 500 ? 1 : 0;
       attendance.checkOutTime = new Date();
       attendance.checkOutLocation = {
         lat: location.lat,
@@ -11813,6 +14248,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       attendance.updatedAt = new Date();
 
       await attendance.save();
+      cache.invalidate('attendance:monthly:');
 
       res.json({
         success: true,
@@ -11821,6 +14257,141 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       res.status(500).json({ error: "فشل الانصراف" });
+    }
+  });
+
+  // ─── Live Location Tracking ───────────────────────────────────────────────
+
+  // POST /api/attendance/location-update — employee sends periodic location
+  app.post("/api/attendance/location-update", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { LocationTrackModel, AttendanceModel, BranchModel } = await import("@shared/schema");
+      const employee = req.employee!;
+      const { lat, lng, accuracy, attendanceId } = req.body;
+
+      if (!lat || !lng || !attendanceId) {
+        return res.status(400).json({ error: "بيانات الموقع ناقصة" });
+      }
+
+      // Verify this attendance belongs to this employee and is still checked in
+      const attendance = await AttendanceModel.findOne({
+        _id: attendanceId,
+        employeeId: String(employee.id),
+        status: 'checked_in',
+      });
+      if (!attendance) {
+        return res.status(404).json({ error: "لا يوجد حضور نشط" });
+      }
+
+      // Check if inside branch
+      let isInsideBranch = true;
+      let distanceFromBranch = 0;
+
+      const branch = await BranchModel.findById(attendance.branchId);
+      if (branch && branch.location?.lat && branch.location?.lng) {
+        const R = 6371000;
+        const dLat = (lat - branch.location.lat) * Math.PI / 180;
+        const dLng = (lng - branch.location.lng) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) ** 2 +
+          Math.cos(branch.location.lat * Math.PI / 180) *
+          Math.cos(lat * Math.PI / 180) *
+          Math.sin(dLng / 2) ** 2;
+        distanceFromBranch = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+        const radius = (branch.location as any).radius || 200;
+        isInsideBranch = distanceFromBranch <= radius;
+      }
+
+      // Save track point
+      const track = new LocationTrackModel({
+        attendanceId: String(attendance._id),
+        employeeId: String(employee.id),
+        branchId: attendance.branchId,
+        lat,
+        lng,
+        accuracy,
+        isInsideBranch,
+        distanceFromBranch,
+        timestamp: new Date(),
+      });
+      await track.save();
+
+      // Broadcast via WebSocket to managers
+      const { wsManager } = await import("./websocket");
+      wsManager.broadcastEmployeeLocation({
+        employeeId: String(employee.id),
+        attendanceId: String(attendance._id),
+        branchId: attendance.branchId,
+        location: { lat, lng },
+        isInsideBranch,
+        distanceFromBranch,
+        employeeName: employee.fullName,
+        employeePhoto: (employee as any).imageUrl,
+      });
+
+      res.json({ success: true, isInsideBranch, distanceFromBranch });
+    } catch (error) {
+      console.error("[Location Track] Error:", error);
+      res.status(500).json({ error: "فشل حفظ الموقع" });
+    }
+  });
+
+  // GET /api/attendance/location-history/:attendanceId — get movement trail
+  app.get("/api/attendance/location-history/:attendanceId", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { LocationTrackModel } = await import("@shared/schema");
+      const { attendanceId } = req.params;
+
+      const tracks = await LocationTrackModel.find({ attendanceId })
+        .sort({ timestamp: 1 })
+        .lean();
+
+      res.json(tracks);
+    } catch (error) {
+      res.status(500).json({ error: "فشل جلب تاريخ التتبع" });
+    }
+  });
+
+  // GET /api/attendance/live-employees — managers see all active employees with last known location
+  app.get("/api/attendance/live-employees", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { LocationTrackModel, AttendanceModel, EmployeeModel, BranchModel } = await import("@shared/schema");
+      const employee = req.employee!;
+
+      const query: any = { status: 'checked_in' };
+      if (employee.role === 'manager' && employee.branchId) {
+        query.branchId = employee.branchId;
+      }
+
+      const activeAttendances = await AttendanceModel.find(query).lean();
+      const result = [];
+
+      for (const att of activeAttendances) {
+        const emp = await EmployeeModel.findById(att.employeeId).lean();
+        if (!emp) continue;
+
+        const lastTrack = await LocationTrackModel.findOne({ attendanceId: String(att._id) })
+          .sort({ timestamp: -1 })
+          .lean();
+
+        result.push({
+          attendanceId: String(att._id),
+          employeeId: String(emp._id),
+          employeeName: emp.fullName,
+          employeePhoto: emp.imageUrl,
+          jobTitle: emp.jobTitle,
+          branchId: att.branchId,
+          checkInTime: att.checkInTime,
+          checkInLocation: att.checkInLocation,
+          lastLocation: lastTrack ? { lat: lastTrack.lat, lng: lastTrack.lng } : att.checkInLocation,
+          isInsideBranch: lastTrack ? lastTrack.isInsideBranch : true,
+          distanceFromBranch: lastTrack ? lastTrack.distanceFromBranch : 0,
+          lastSeen: lastTrack ? lastTrack.timestamp : att.checkInTime,
+        });
+      }
+
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: "فشل جلب الموظفين النشطين" });
     }
   });
 
@@ -11847,10 +14418,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         query.branchId = branchId;
       }
 
-      // Filter by date (treat date string as Saudi calendar date)
+      // Filter by date
       if (date) {
-        const { start: targetDate, end: nextDay } = getSaudiDayBounds(date as string);
-        query.shiftDate = { $gte: targetDate, $lt: nextDay };
+        const targetDate = new Date(date as string);
+        const saudiDayStart = getSaudiStartOfDay(targetDate);
+        const saudiDayEnd = getSaudiEndOfDay(targetDate);
+        query.shiftDate = { $gte: saudiDayStart, $lt: saudiDayEnd };
       }
 
       // Filter by employee
@@ -11892,7 +14465,96 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/attendance/daily-summary", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { AttendanceModel, EmployeeModel } = await import("@shared/schema");
+      const { date } = req.query;
+      const targetDate = date ? new Date(date as string) : new Date();
+      const dayStart = getSaudiStartOfDay(targetDate);
+      const dayEnd = getSaudiEndOfDay(targetDate);
+
+      const branchQuery: any = {};
+      if (req.employee?.role !== 'admin' && req.employee?.role !== 'owner' && req.employee?.branchId) {
+        branchQuery.branchId = req.employee.branchId;
+      }
+
+      const allEmployees = await EmployeeModel.find({ ...branchQuery, isActive: { $ne: false } }).lean();
+      const todayAttendance = await AttendanceModel.find({ shiftDate: { $gte: dayStart, $lt: dayEnd }, ...branchQuery }).lean();
+
+      const attendanceMap = new Map();
+      todayAttendance.forEach((a: any) => attendanceMap.set(a.employeeId, serializeDoc(a)));
+
+      const dayIndex = targetDate.getDay();
+      const dayNameEn = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][dayIndex];
+      const dayNameAr = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'][dayIndex];
+
+      const summary = {
+        present: [] as any[],
+        late: [] as any[],
+        absent: [] as any[],
+        onLeave: [] as any[],
+        checkedOut: [] as any[],
+      };
+
+      for (const emp of allEmployees) {
+        const empId = (emp as any).id || (emp as any)._id?.toString();
+        const att = attendanceMap.get(empId);
+        const empInfo = { id: empId, fullName: (emp as any).fullName, role: (emp as any).role, jobTitle: (emp as any).jobTitle, shiftTime: (emp as any).shiftTime };
+
+        const workDays = (emp as any).workDays || [];
+        const isScheduledToday = workDays.length === 0 || workDays.some((d: string) => {
+          const dl = d.toLowerCase();
+          return dl === dayNameEn || d === dayNameAr;
+        });
+
+        if (!isScheduledToday) continue;
+
+        if (att) {
+          if (att.status === 'checked_out') {
+            summary.checkedOut.push({ ...empInfo, attendance: att });
+          } else if (att.isLate) {
+            summary.late.push({ ...empInfo, attendance: att, lateMinutes: att.lateMinutes });
+          } else {
+            summary.present.push({ ...empInfo, attendance: att });
+          }
+        } else {
+          summary.absent.push(empInfo);
+        }
+      }
+
+      res.json({
+        date: targetDate.toISOString().split('T')[0],
+        totalEmployees: allEmployees.length,
+        presentCount: summary.present.length,
+        lateCount: summary.late.length,
+        absentCount: summary.absent.length,
+        checkedOutCount: summary.checkedOut.length,
+        ...summary
+      });
+    } catch (error) {
+      console.error("Error getting daily attendance summary:", error);
+      res.status(500).json({ error: "فشل في جلب ملخص الحضور" });
+    }
+  });
+
   // Get my attendance status (for employee)
+  app.get("/api/attendance/today", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { AttendanceModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const dayStart = getSaudiStartOfDay();
+      const dayEnd = getSaudiEndOfDay();
+      const query: any = { tenantId, shiftDate: { $gte: dayStart, $lt: dayEnd } };
+      if (req.employee?.role !== 'admin' && req.employee?.role !== 'owner' && req.employee?.branchId) {
+        query.branchId = req.employee.branchId;
+      }
+      const records = await AttendanceModel.find(query).sort({ checkInTime: -1 }).limit(100).lean();
+      res.json(records);
+    } catch (err) {
+      res.json([]);
+    }
+  });
+
   app.get("/api/attendance/my-status", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { AttendanceModel } = await import("@shared/schema");
@@ -11902,7 +14564,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: "غير مصرح" });
       }
 
-      const { start: today, end: tomorrow } = getSaudiDayBounds();
+      const today = getSaudiStartOfDay();
+      const tomorrow = getSaudiEndOfDay();
 
       const todayAttendance = await AttendanceModel.findOne({
         employeeId: employeeId,
@@ -11921,6 +14584,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const usedLeaves = approvedLeaves.reduce((sum, leave) => sum + (leave.numberOfDays || 0), 0);
       const leaveBalance = Math.max(0, annualLeaves - usedLeaves);
 
+      // Fetch employee shift times for display
+      const { EmployeeModel } = await import("@shared/schema");
+      const empDoc = await EmployeeModel.findOne({ $or: [{ id: employeeId }, { _id: employeeId }] }).lean() as any;
+      const shiftStartTime = empDoc?.shiftStartTime || (empDoc?.shiftTime ? empDoc.shiftTime.split('-')[0] + ':00' : '08:00');
+      const shiftEndTime   = empDoc?.shiftEndTime   || (empDoc?.shiftTime ? empDoc.shiftTime.split('-')[1] + ':00' : '17:00');
+
       res.json({
         hasCheckedIn: !!todayAttendance,
         hasCheckedOut: todayAttendance?.status === 'checked_out',
@@ -11928,10 +14597,304 @@ export async function registerRoutes(app: Express): Promise<Server> {
         todayCheckIn: todayAttendance?.checkInTime || null,
         todayCheckOut: todayAttendance?.checkOutTime || null,
         leaveBalance: leaveBalance,
-        totalLeaves: annualLeaves
+        totalLeaves: annualLeaves,
+        shiftStartTime,
+        shiftEndTime,
       });
     } catch (error) {
       res.status(500).json({ error: "فشل جلب حالة الحضور" });
+    }
+  });
+
+  // Comprehensive monthly attendance report
+  app.get("/api/attendance/monthly-report", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { AttendanceModel, EmployeeModel } = await import("@shared/schema");
+      const { year, month, employeeId, branchId } = req.query;
+
+      const y = parseInt(year as string) || new Date().getFullYear();
+      const m = parseInt(month as string) || (new Date().getMonth() + 1);
+
+      // Resolve effective branch scope before building cache key to prevent cross-branch leakage
+      const effectiveBranchId = (req.employee?.role === 'manager' && req.employee?.branchId)
+        ? req.employee.branchId
+        : (branchId as string || undefined);
+
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const ck = cacheKey('attendance:monthly', tenantId, y, m, employeeId as string || 'all', effectiveBranchId || 'all');
+      const cached = cache.get<any>(ck);
+      if (cached) return res.json(cached);
+
+      // Saudi timezone offset: +3 hours
+      // Build both boundaries from explicit timezone strings to avoid UTC month-rollover bug
+      const monthStart = new Date(`${y}-${String(m).padStart(2,'0')}-01T00:00:00+03:00`);
+      const nextMonthNum = m === 12 ? 1 : m + 1;
+      const nextYearNum  = m === 12 ? y + 1 : y;
+      const monthEnd = new Date(`${nextYearNum}-${String(nextMonthNum).padStart(2,'0')}-01T00:00:00+03:00`);
+
+      const query: any = { shiftDate: { $gte: monthStart, $lt: monthEnd } };
+
+      if (req.employee?.role === 'manager' && req.employee?.branchId) {
+        query.branchId = req.employee.branchId;
+      } else if (branchId) {
+        query.branchId = branchId;
+      }
+      if (employeeId) query.employeeId = employeeId;
+
+      const allAttendance = await AttendanceModel.find(query).lean();
+
+      // Group by employeeId
+      const byEmployee: Record<string, any[]> = {};
+      allAttendance.forEach((a: any) => {
+        const id = a.employeeId;
+        if (!byEmployee[id]) byEmployee[id] = [];
+        byEmployee[id].push(a);
+      });
+
+      // Get employees in scope
+      const empQuery: any = {};
+      if (req.employee?.role === 'manager' && req.employee?.branchId) {
+        empQuery.branchId = req.employee.branchId;
+      } else if (branchId) {
+        empQuery.branchId = branchId;
+      }
+      if (employeeId) {
+        empQuery.$or = [{ id: employeeId }, { _id: employeeId }];
+      }
+      const employees = await EmployeeModel.find({ ...empQuery, isActive: { $ne: false } }).lean();
+
+      // Count work days in month (Sun-Thu by default)
+      const daysInMonth = new Date(y, m, 0).getDate();
+      let workDaysInMonth = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dow = new Date(y, m - 1, d).getDay();
+        if (dow !== 5 && dow !== 6) workDaysInMonth++; // Skip Fri/Sat
+      }
+
+      // Orders for employee sales
+      const { OrderModel } = await import("@shared/schema");
+      const allOrders = await OrderModel.find({
+        createdAt: { $gte: monthStart, $lt: monthEnd },
+        status: { $in: ['completed', 'delivered'] },
+        ...(req.employee?.role === 'manager' && req.employee?.branchId ? { branchId: req.employee.branchId } : {}),
+      }).lean();
+
+      const salesByEmployee: Record<string, { count: number; total: number }> = {};
+      allOrders.forEach((o: any) => {
+        const empId = o.employeeId || o.servedBy || o.cashierId;
+        if (empId) {
+          if (!salesByEmployee[empId]) salesByEmployee[empId] = { count: 0, total: 0 };
+          salesByEmployee[empId].count++;
+          salesByEmployee[empId].total += parseFloat(o.total || o.totalAmount || '0');
+        }
+      });
+
+      const report = employees.map((emp: any) => {
+        const empId = emp.id || emp._id?.toString();
+        const records = byEmployee[empId] || [];
+        const presentDays = records.length;
+        const absentDays = Math.max(0, workDaysInMonth - presentDays);
+        const lateDays = records.filter((r: any) => r.isLate).length;
+        const totalLateMinutes = records.reduce((s: number, r: any) => s + (r.lateMinutes || 0), 0);
+        const totalWorkMinutes = records.reduce((s: number, r: any) => {
+          if (r.checkInTime && r.checkOutTime) {
+            return s + Math.floor((new Date(r.checkOutTime).getTime() - new Date(r.checkInTime).getTime()) / 60000);
+          }
+          return s;
+        }, 0);
+        const sales = salesByEmployee[empId] || { count: 0, total: 0 };
+        return {
+          employee: {
+            id: empId,
+            fullName: emp.fullName,
+            role: emp.role,
+            jobTitle: emp.jobTitle,
+            shiftTime: emp.shiftTime,
+            imageUrl: emp.imageUrl,
+          },
+          presentDays,
+          absentDays,
+          lateDays,
+          totalLateMinutes,
+          totalWorkHours: Math.floor(totalWorkMinutes / 60),
+          attendanceRate: workDaysInMonth > 0 ? Math.round((presentDays / workDaysInMonth) * 100) : 0,
+          salesCount: sales.count,
+          salesTotal: parseFloat(sales.total.toFixed(2)),
+          records: records.map(serializeDoc),
+        };
+      });
+
+      // Sort by attendance rate desc for "best employee"
+      report.sort((a, b) => b.attendanceRate - a.attendanceRate || b.salesTotal - a.salesTotal);
+
+      const result = {
+        year: y,
+        month: m,
+        workDaysInMonth,
+        totalEmployees: employees.length,
+        report,
+        bestEmployee: report[0] || null,
+      };
+      cache.set(ck, result, CACHE_TTL.REPORTS_ATTENDANCE);
+      res.json(result);
+    } catch (error) {
+      console.error("[ATTENDANCE REPORT]", error);
+      res.status(500).json({ error: "فشل في إنشاء التقرير الشهري" });
+    }
+  });
+
+  // Reset only operational data (orders, accounting) - keep products, employees, images
+  app.delete("/api/admin/reset-orders-only", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const { OrderModel, CartItemModel } = await import("@shared/schema");
+      const DailyAccounting = mongoose.models['DailyAccounting'];
+
+      const results = await Promise.all([
+        OrderModel.deleteMany({ tenantId }),
+        CartItemModel.deleteMany({ tenantId }),
+        DailyAccounting ? DailyAccounting.deleteMany({ tenantId }) : Promise.resolve({ deletedCount: 0 }),
+      ]);
+
+      res.json({
+        success: true,
+        message: "تم تصفير الطلبات والمحاسبة بنجاح. المنتجات والموظفون والصور محفوظة.",
+        deleted: {
+          orders: results[0].deletedCount,
+          cartItems: results[1].deletedCount,
+          accountingRecords: (results[2] as any).deletedCount || 0,
+        }
+      });
+    } catch (error) {
+      console.error("[RESET ORDERS]", error);
+      res.status(500).json({ error: "فشل تصفير الطلبات" });
+    }
+  });
+
+  // ============== BRANCH TABLE MIGRATION ==============
+  app.post("/api/admin/migrate-tables-to-branch", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const { branchNameAr, branchId: targetBranchId } = req.body;
+
+      // Find branch by name or id
+      let branch: any = null;
+      if (targetBranchId) {
+        branch = await BranchModel.findOne({ tenantId, id: targetBranchId });
+      }
+      if (!branch && branchNameAr) {
+        branch = await BranchModel.findOne({ tenantId, nameAr: { $regex: branchNameAr, $options: 'i' } });
+      }
+      if (!branch) {
+        branch = await BranchModel.findOne({ tenantId }).sort({ createdAt: 1 });
+      }
+      if (!branch) {
+        return res.status(400).json({ error: "لا يوجد فرع في النظام" });
+      }
+
+      // Update ALL tables to this branch
+      const tableResult = await TableModel.updateMany(
+        { tenantId },
+        { $set: { branchId: branch.id } }
+      );
+
+      // Update all employees without branchId to this branch too
+      const empResult = await EmployeeModel.updateMany(
+        { tenantId, $or: [{ branchId: { $exists: false } }, { branchId: null }, { branchId: '' }] },
+        { $set: { branchId: branch.id } }
+      );
+
+      res.json({
+        success: true,
+        message: `تم ربط ${tableResult.modifiedCount} طاولة و${empResult.modifiedCount} موظف بفرع "${branch.nameAr}"`,
+        branchId: branch.id,
+        branchName: branch.nameAr,
+        tablesUpdated: tableResult.modifiedCount,
+        employeesUpdated: empResult.modifiedCount,
+      });
+    } catch (error) {
+      console.error("[MIGRATE TABLES TO BRANCH]", error);
+      res.status(500).json({ error: "فشل ترحيل الطاولات" });
+    }
+  });
+
+  // ============== MIGRATE "main" BRANCH DATA TO TARGET BRANCH ==============
+  app.post("/api/admin/migrate-main-branch", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const { targetBranchId } = req.body; // e.g. the ID of "المروج" branch
+
+      if (!targetBranchId) return res.status(400).json({ error: "targetBranchId مطلوب" });
+
+      const { OrderModel, BranchModel, CashierShiftModel } = await import("@shared/schema");
+
+      // Verify target branch exists
+      const targetBranch = await BranchModel.findOne({ id: targetBranchId, tenantId });
+      if (!targetBranch) return res.status(404).json({ error: "الفرع المستهدف غير موجود" });
+
+      // Update all orders with branchId = 'main' or null → targetBranchId
+      const ordersResult = await OrderModel.updateMany(
+        { tenantId, $or: [{ branchId: 'main' }, { branchId: null }, { branchId: { $exists: false } }] },
+        { $set: { branchId: targetBranchId } }
+      );
+
+      // Update cashier shifts
+      const shiftsResult = await CashierShiftModel.updateMany(
+        { $or: [{ branchId: 'main' }, { branchId: null }] },
+        { $set: { branchId: targetBranchId, branchName: targetBranch.nameAr || '' } }
+      );
+
+      // Update employee records with branchId = 'main'
+      const { EmployeeModel } = await import("@shared/schema");
+      const employeesResult = await EmployeeModel.updateMany(
+        { tenantId, branchId: 'main' },
+        { $set: { branchId: targetBranchId } }
+      );
+
+      // Delete the "main" branch itself (by id='main' or nameAr contains main)
+      const deletedBranch = await BranchModel.findOneAndDelete({
+        tenantId,
+        $or: [{ id: 'main' }, { nameEn: { $regex: /^main$/i } }, { nameAr: { $regex: /main/i } }]
+      });
+
+      res.json({
+        success: true,
+        message: `تم ترحيل البيانات بنجاح إلى فرع "${targetBranch.nameAr}"`,
+        ordersUpdated: ordersResult.modifiedCount,
+        shiftsUpdated: shiftsResult.modifiedCount,
+        employeesUpdated: employeesResult.modifiedCount,
+        branchDeleted: !!deletedBranch,
+      });
+    } catch (err: any) {
+      console.error("migrate-main-branch error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ============== BRANCH EMPLOYEE MIGRATION ==============
+  app.post("/api/admin/migrate-branch-employees", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      // Find main/first branch for this tenant
+      const firstBranch = await BranchModel.findOne({ tenantId }).sort({ createdAt: 1 });
+      if (!firstBranch) {
+        return res.status(400).json({ error: "لا يوجد فرع في النظام" });
+      }
+      // Update all employees without a branchId
+      const result = await EmployeeModel.updateMany(
+        { tenantId, $or: [{ branchId: { $exists: false } }, { branchId: null }, { branchId: '' }] },
+        { $set: { branchId: firstBranch.id } }
+      );
+      res.json({
+        success: true,
+        message: `تم ربط ${result.modifiedCount} موظف بالفرع الرئيسي: ${firstBranch.nameAr}`,
+        branchId: firstBranch.id,
+        branchName: firstBranch.nameAr,
+        modifiedCount: result.modifiedCount,
+      });
+    } catch (error) {
+      console.error("[MIGRATE BRANCH EMPLOYEES]", error);
+      res.status(500).json({ error: "فشل ترحيل الموظفين" });
     }
   });
 
@@ -11997,17 +14960,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get all pending leave requests (manager/admin only)
+  app.get("/api/leave-requests/pending", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { LeaveRequestModel } = await import("@shared/schema-leave");
+      const role = req.employee?.role;
+
+      if (role !== 'manager' && role !== 'branch_manager' && role !== 'admin' && role !== 'owner') {
+        return res.status(403).json({ error: "صلاحيات غير كافية" });
+      }
+
+      const requests = await LeaveRequestModel.find({ status: 'pending' }).sort({ createdAt: -1 });
+
+      res.json(requests.map(serializeDoc));
+    } catch (error) {
+      res.status(500).json({ error: "فشل جلب طلبات الاجازة المعلقة" });
+    }
+  });
+
   // Approve a leave request (manager/admin only)
   app.patch("/api/leave-requests/:id/approve", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { LeaveRequestModel } = await import("@shared/schema-leave");
 
-      if (req.employee?.role !== 'manager' && req.employee?.role !== 'admin' && req.employee?.role !== 'owner') {
+      if (req.employee?.role !== 'manager' && req.employee?.role !== 'branch_manager' && req.employee?.role !== 'admin' && req.employee?.role !== 'owner') {
         return res.status(403).json({ error: "صلاحيات غير كافية" });
       }
 
-      const request = await LeaveRequestModel.findByIdAndUpdate(
-        req.params.id,
+      let request = await LeaveRequestModel.findOneAndUpdate(
+        { id: req.params.id },
         {
           status: 'approved',
           approvedBy: req.employee.id,
@@ -12015,6 +14996,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
         { new: true }
       );
+      if (!request && req.params.id.match(/^[a-f\d]{24}$/i)) {
+        request = await LeaveRequestModel.findByIdAndUpdate(
+          req.params.id,
+          { status: 'approved', approvedBy: req.employee.id, approvalDate: new Date() },
+          { new: true }
+        );
+      }
 
       if (!request) {
         return res.status(404).json({ error: "الطلب غير موجود" });
@@ -12031,14 +15019,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { LeaveRequestModel } = await import("@shared/schema-leave");
 
-      if (req.employee?.role !== 'manager' && req.employee?.role !== 'admin' && req.employee?.role !== 'owner') {
+      if (req.employee?.role !== 'manager' && req.employee?.role !== 'branch_manager' && req.employee?.role !== 'admin' && req.employee?.role !== 'owner') {
         return res.status(403).json({ error: "صلاحيات غير كافية" });
       }
 
       const { rejectionReason } = req.body;
 
-      const request = await LeaveRequestModel.findByIdAndUpdate(
-        req.params.id,
+      let request = await LeaveRequestModel.findOneAndUpdate(
+        { id: req.params.id },
         {
           status: 'rejected',
           approvedBy: req.employee.id,
@@ -12047,6 +15035,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
         { new: true }
       );
+      if (!request && req.params.id.match(/^[a-f\d]{24}$/i)) {
+        request = await LeaveRequestModel.findByIdAndUpdate(
+          req.params.id,
+          { status: 'rejected', approvedBy: req.employee.id, approvalDate: new Date(), rejectionReason },
+          { new: true }
+        );
+      }
 
       if (!request) {
         return res.status(404).json({ error: "الطلب غير موجود" });
@@ -12089,13 +15084,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         AttendanceModel, IngredientModel, CategoryModel, DeliveryZoneModel
       } = await import("@shared/schema");
 
+      // Optional query params: date=YYYY-MM-DD (Saudi local date), dayStartHour=0..23
+      const dayStartHour = parseInt(String(req.query.dayStartHour ?? '0'), 10) || 0;
+      const dateParam = req.query.date ? String(req.query.date) : '';
+      const targetDate = dateParam ? new Date(dateParam + 'T00:00:00Z') : new Date();
+      const { start: dayStart, end: dayEnd } = getBusinessDayBoundaries(targetDate, dayStartHour);
+
+      // Optional branchId filter for per-branch stats
+      const branchIdFilter = req.query.branchId ? String(req.query.branchId) : '';
+
+      const baseOrderMatch: any = { status: { $ne: 'cancelled' } };
+      const dayOrderMatch: any = { createdAt: { $gte: dayStart, $lte: dayEnd }, status: { $ne: 'cancelled' } };
+      if (branchIdFilter) {
+        baseOrderMatch.branchId = branchIdFilter;
+        dayOrderMatch.branchId = branchIdFilter;
+      }
+
       const [
         ordersCount, customersCount, employeesCount, coffeeItemsCount,
         branchesCount, discountCodesCount, loyaltyCardsCount, tablesCount,
         attendanceCount, ingredientsCount, categoriesCount, deliveryZonesCount,
-        todayOrders, totalRevenue
+        dayOrders, dayRevenueAgg, totalRevenue, branchBreakdown
       ] = await Promise.all([
-        OrderModel.countDocuments(),
+        OrderModel.countDocuments(branchIdFilter ? { branchId: branchIdFilter } : {}),
         CustomerModel.countDocuments(),
         EmployeeModel.countDocuments(),
         CoffeeItemModel.countDocuments(),
@@ -12107,15 +15118,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         IngredientModel.countDocuments(),
         CategoryModel.countDocuments(),
         DeliveryZoneModel.countDocuments(),
-        OrderModel.countDocuments({
-          createdAt: { $gte: getSaudiToday() },
-          status: { $ne: 'cancelled' }
-        }),
+        OrderModel.countDocuments(dayOrderMatch),
+        OrderModel.aggregate([
+          { $match: dayOrderMatch },
+          { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+        ]),
+        OrderModel.aggregate([
+          { $match: baseOrderMatch },
+          { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+        ]),
+        // Per-branch revenue breakdown (always global for the overview)
         OrderModel.aggregate([
           { $match: { status: { $ne: 'cancelled' } } },
-          { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+          { $group: { _id: '$branchId', totalRevenue: { $sum: '$totalAmount' }, totalOrders: { $sum: 1 } } },
+          { $sort: { totalRevenue: -1 } }
         ])
       ]);
+
+      // Enrich branch breakdown with branch names
+      const allBranches = await BranchModel.find({}).lean() as any[];
+      const branchMap: Record<string, string> = {};
+      for (const b of allBranches) { branchMap[b.id || b._id?.toString()] = b.nameAr || b.nameEn || b.id; }
+
+      // Also compute day revenue per branch
+      const dayBranchBreakdown = await OrderModel.aggregate([
+        { $match: { createdAt: { $gte: dayStart, $lte: dayEnd }, status: { $ne: 'cancelled' } } },
+        { $group: { _id: '$branchId', dayRevenue: { $sum: '$totalAmount' }, dayOrders: { $sum: 1 } } }
+      ]);
+      const dayBranchMap: Record<string, { dayRevenue: number; dayOrders: number }> = {};
+      for (const d of dayBranchBreakdown) { if (d._id) dayBranchMap[d._id] = { dayRevenue: d.dayRevenue, dayOrders: d.dayOrders }; }
+
+      const branchStats = branchBreakdown.map((b: any) => ({
+        branchId: b._id || 'main',
+        branchName: branchMap[b._id] || b._id || 'الفرع الرئيسي',
+        totalRevenue: Math.round((b.totalRevenue || 0) * 100) / 100,
+        totalOrders: b.totalOrders || 0,
+        dayRevenue: Math.round(((dayBranchMap[b._id]?.dayRevenue) || 0) * 100) / 100,
+        dayOrders: dayBranchMap[b._id]?.dayOrders || 0,
+      }));
 
       res.json({
         collections: {
@@ -12133,11 +15173,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           deliveryZones: { count: deliveryZonesCount, nameAr: 'مناطق التوصيل' }
         },
         summary: {
-          todayOrders,
-          totalRevenue: totalRevenue[0]?.total || 0
+          todayOrders: dayOrders,
+          dayOrders,
+          dayRevenue: dayRevenueAgg[0]?.total || 0,
+          totalRevenue: totalRevenue[0]?.total || 0,
+          dayStart: dayStart.toISOString(),
+          dayEnd: dayEnd.toISOString(),
+          dayStartHour,
+          branchStats,
+          filteredBranchId: branchIdFilter || null,
         }
       });
     } catch (error) {
+      console.error("[GET /api/owner/database-stats] Error:", error);
       res.status(500).json({ error: "فشل جلب إحصائيات قاعدة البيانات" });
     }
   });
@@ -12286,11 +15334,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Reset all data (owner only)
-  app.post("/api/owner/reset-database", requireAuth, async (req: AuthRequest, res) => {
+  app.post("/api/owner/reset-database", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
-      if (req.employee?.role !== 'owner') {
-        return res.status(403).json({ error: "فقط المالك يمكنه إعادة تعيين قاعدة البيانات" });
-      }
 
       const { confirmPhrase } = req.body;
       
@@ -12432,8 +15477,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (category && typeof category === 'string') {
         items = items.filter(item => item.category === category);
       }
+
+      // Enrich each item with total currentStock summed from all branch stocks
+      const { BranchStockModel } = await import("@shared/schema");
+      const allBranchStocks = await BranchStockModel.find({}).lean();
+      const enriched = items.map(item => {
+        const totalStock = allBranchStocks
+          .filter((s: any) => s.rawItemId === item.id)
+          .reduce((sum: number, s: any) => sum + (s.currentQuantity || 0), 0);
+        return { ...item, currentStock: totalStock };
+      });
       
-      res.json(items);
+      res.json(enriched);
     } catch (error) {
       res.status(500).json({ error: "فشل في جلب المواد الخام" });
     }
@@ -12606,7 +15661,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Delete recipe item
   app.delete("/api/recipes/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
-      const result = await RecipeItemModel.findByIdAndDelete(req.params.id);
+      let result = await RecipeItemModel.findOneAndDelete({ id: req.params.id });
+      if (!result && req.params.id.match(/^[a-f\d]{24}$/i)) {
+        result = await RecipeItemModel.findByIdAndDelete(req.params.id);
+      }
       if (!result) {
         return res.status(404).json({ error: "الوصفة غير موجودة" });
       }
@@ -12780,7 +15838,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "البيانات المطلوبة غير مكتملة" });
       }
       
-      const rawItem = await RawItemModel.findById(rawItemId);
+      let rawItem = await RawItemModel.findById(rawItemId).catch(() => null);
+      if (!rawItem) {
+        rawItem = await RawItemModel.findOne({ id: rawItemId });
+      }
+      if (!rawItem) {
+        rawItem = await RawItemModel.findOne({ _id: rawItemId }).catch(() => null);
+      }
       if (!rawItem) {
         return res.status(404).json({ error: "المادة غير موجودة" });
       }
@@ -12922,7 +15986,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (adjustedQuantity > 0) {
         try {
           const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
-          const rawItem = await RawItemModel.findById(rawItemId);
+          let rawItem = await RawItemModel.findById(rawItemId).catch(() => null);
+          if (!rawItem) rawItem = await RawItemModel.findOne({ id: rawItemId });
           const unitCostValue = (rawItem as any)?.unitCost || (rawItem as any)?.lastCost || 0;
           const totalCost = unitCostValue * Math.abs(adjustedQuantity);
 
@@ -12971,7 +16036,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Auto-generate low stock alert
       try {
         const currentQty = (stock as any).currentQuantity || 0;
-        const rawItemDoc = await RawItemModel.findById(rawItemId);
+        const rawItemDoc = await RawItemModel.findOne({ id: rawItemId }) || await RawItemModel.findById(rawItemId).catch(() => null);
         const minLevel = (rawItemDoc as any)?.minStockLevel || 0;
         if (minLevel > 0 && currentQty <= minLevel) {
           const { StockAlertModel } = await import("@shared/schema");
@@ -13142,7 +16207,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error?.name === 'ZodError') {
         return res.status(400).json({ error: "بيانات غير صالحة", details: error.errors });
       }
-      res.status(500).json({ error: "فشل في إنشاء التحويل" });
+      console.error("[transfers POST]", error?.message || error);
+      res.status(500).json({ error: "فشل في إنشاء التحويل", detail: error?.message });
     }
   });
 
@@ -13164,13 +16230,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/inventory/transfers/:id/complete", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
-      const transfer = await storage.completeStockTransfer(
-        req.params.id,
-        req.employee?.id || 'system'
-      );
-      if (!transfer) {
-        return res.status(404).json({ error: "التحويل غير موجود أو لم تتم الموافقة عليه" });
-      }
+      const transfer = await storage.completeStockTransfer(req.params.id, req.employee?.id || 'system');
+      if (!transfer) return res.status(404).json({ error: "التحويل غير موجود أو لم تتم الموافقة عليه" });
+
+      // Auto accounting journal: DR Inventory dest branch / CR Inventory src branch
+      try {
+        const tenantId = (transfer as any).tenantId || 'demo-tenant';
+        const { JournalEntryModel } = await import("@shared/schema");
+        const exists = await JournalEntryModel.findOne({ tenantId, referenceType: 'stock_transfer', referenceId: (transfer as any).id });
+        if (!exists) {
+          const transferValue = ((transfer as any).items || []).reduce((s: number, it: any) => s + (it.quantity || 0) * (it.unitCost || 0), 0);
+          if (transferValue > 0) {
+            const srcInventory = await AccountModel.findOne({ tenantId, accountNumber: "1130" });
+            if (srcInventory) {
+              await ErpAccountingService.createJournalEntry({
+                tenantId, entryDate: new Date(),
+                description: `تحويل مخزون - ${(transfer as any).fromBranchName} ← ${(transfer as any).toBranchName}`,
+                lines: [
+                  { accountId: srcInventory.id, accountNumber: "1130", accountName: "مخزون (وجهة)", debit: transferValue, credit: 0, description: `استلام مخزون - ${(transfer as any).toBranchName}`, branchId: (transfer as any).toBranchId },
+                  { accountId: srcInventory.id, accountNumber: "1130", accountName: "مخزون (مصدر)", debit: 0, credit: transferValue, description: `إرسال مخزون - ${(transfer as any).fromBranchName}`, branchId: (transfer as any).fromBranchId },
+                ],
+                referenceType: 'stock_transfer', referenceId: (transfer as any).id,
+                createdBy: req.employee?.id || 'system', autoPost: true,
+              });
+            }
+          }
+        }
+      } catch (accErr) { console.error('[ACCOUNTING] Transfer journal failed:', accErr); }
+
       res.json(transfer);
     } catch (error) {
       res.status(500).json({ error: "فشل في إتمام التحويل" });
@@ -13267,10 +16354,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/inventory/purchases", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { insertPurchaseInvoiceSchema } = await import("@shared/schema");
-      const validatedData = insertPurchaseInvoiceSchema.parse({
-        ...req.body,
-        createdBy: req.employee?.id || 'system'
-      });
+      const body = { ...req.body, createdBy: req.employee?.id || 'system' };
+      if (!body.dueDate) delete body.dueDate;
+      if (!body.invoiceDate) delete body.invoiceDate;
+      const validatedData = insertPurchaseInvoiceSchema.parse(body);
       
       const invoice = await storage.createPurchaseInvoice(validatedData);
       res.status(201).json(invoice);
@@ -13501,10 +16588,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/inventory/alerts", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { branchId, resolved } = req.query;
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const ck = cacheKey('inventory:alerts', tenantId, branchId as string || 'all', resolved as string || 'all');
+      const cached = cache.get<any[]>(ck);
+      if (cached) return res.json(cached);
+
       const alerts = await storage.getStockAlerts(
         branchId as string | undefined,
         resolved === 'true' ? true : resolved === 'false' ? false : undefined
       );
+      cache.set(ck, alerts, CACHE_TTL.INVENTORY);
       res.json(alerts);
     } catch (error) {
       res.status(500).json({ error: "فشل في جلب التنبيهات" });
@@ -13518,6 +16611,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "التنبيه غير موجود" });
       }
       wsManager.broadcastAlertResolved(alert.id, (alert as any).branchId);
+      cache.invalidate('inventory:alerts:');
       res.json(alert);
     } catch (error) {
       res.status(500).json({ error: "فشل في حل التنبيه" });
@@ -13530,6 +16624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!alert) {
         return res.status(404).json({ error: "التنبيه غير موجود" });
       }
+      cache.invalidate('inventory:alerts:');
       res.json(alert);
     } catch (error) {
       res.status(500).json({ error: "فشل في تحديث التنبيه" });
@@ -13583,11 +16678,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Inventory Dashboard Summary
+  // Inventory Dashboard Summary (COGS aggregate — cached)
   app.get("/api/inventory/dashboard", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { branchId } = req.query;
-      
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const ck = cacheKey('inventory:dashboard', tenantId, branchId as string || 'all');
+      const cached = cache.get<any>(ck);
+      if (cached) return res.json(cached);
+
       const [rawItems, suppliers, lowStock, alerts, transfers, purchases] = await Promise.all([
         storage.getRawItems(),
         storage.getSuppliers(),
@@ -13601,7 +16700,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const pendingPurchases = purchases.filter(p => p.status === 'pending' || p.status === 'approved');
       const unpaidPurchases = purchases.filter(p => p.paymentStatus === 'unpaid' || p.paymentStatus === 'partial');
       
-      res.json({
+      const result = {
         summary: {
           totalRawItems: rawItems.length,
           totalSuppliers: suppliers.length,
@@ -13615,7 +16714,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         recentAlerts: alerts.slice(0, 5),
         pendingTransfers: pendingTransfers.slice(0, 5),
         pendingPurchases: pendingPurchases.slice(0, 5),
-      });
+      };
+      cache.set(ck, result, CACHE_TTL.COGS);
+      res.json(result);
     } catch (error) {
       res.status(500).json({ error: "فشل في جلب ملخص المخزون" });
     }
@@ -13640,6 +16741,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching ZATCA settings:", error);
       res.status(500).json({ error: "Failed to fetch ZATCA settings" });
+    }
+  });
+
+  // Save ZATCA settings (vatNumber, crNumber, etc.)
+  app.patch("/api/zatca/settings", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const { vatNumber, crNumber, tradeNameAr, tradeNameEn, address, city, postalCode, buildingNumber } = req.body;
+      const updateFields: any = {};
+      if (vatNumber !== undefined) updateFields.vatNumber = vatNumber;
+      if (crNumber !== undefined) updateFields.crNumber = crNumber;
+      if (tradeNameAr !== undefined) updateFields.tradeNameAr = tradeNameAr;
+      if (tradeNameEn !== undefined) updateFields.tradeNameEn = tradeNameEn;
+      if (address !== undefined) updateFields.address = address;
+      if (city !== undefined) updateFields.city = city;
+      if (postalCode !== undefined) updateFields.postalCode = postalCode;
+      if (buildingNumber !== undefined) updateFields.buildingNumber = buildingNumber;
+      await BusinessConfigModel.findOneAndUpdate(
+        { tenantId },
+        { $set: updateFields },
+        { upsert: true }
+      );
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error saving ZATCA settings:", error);
+      res.status(500).json({ error: "فشل في حفظ الإعدادات" });
+    }
+  });
+
+  // Manager point adjustment for loyalty cards
+  app.patch("/api/loyalty/cards/:cardId/adjust", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { cardId } = req.params;
+      const { adjustment, reason } = req.body;
+      if (typeof adjustment !== 'number') return res.status(400).json({ error: "يجب تحديد قيمة التعديل" });
+      const card = await storage.getLoyaltyCard(cardId);
+      if (!card) return res.status(404).json({ error: "البطاقة غير موجودة" });
+      const newPoints = Math.max(0, (card.points || 0) + adjustment);
+      const updated = await storage.updateLoyaltyCard(cardId, { points: newPoints });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "فشل في تعديل النقاط" });
+    }
+  });
+
+  // Create loyalty card from manager panel
+  app.post("/api/loyalty/manager/create-card", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { customerName, phoneNumber } = req.body;
+      if (!phoneNumber) return res.status(400).json({ error: "رقم الهاتف مطلوب" });
+      const cleanPhone = phoneNumber.replace(/\D/g, '').slice(-9);
+      if (cleanPhone.length < 9) return res.status(400).json({ error: "رقم الهاتف يجب أن يكون 9 أرقام" });
+      const existing = await storage.getLoyaltyCardByPhone(cleanPhone);
+      if (existing) return res.status(409).json({ error: "يوجد بطاقة بهذا الرقم مسبقاً" });
+      const card = await storage.createLoyaltyCard({
+        phoneNumber: cleanPhone,
+        customerName: customerName || "عميل",
+        points: 0,
+        stamps: 0,
+        tier: 'bronze',
+        isActive: true,
+      } as any);
+      res.json(card);
+    } catch (error) {
+      res.status(500).json({ error: "فشل في إنشاء البطاقة" });
     }
   });
 
@@ -13811,6 +16977,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       await expense.save();
+      cache.invalidate('accounting:');
       res.json(serializeDoc(expense));
     } catch (error) {
       res.status(500).json({ error: "فشل في إنشاء المصروف" });
@@ -13821,17 +16988,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/accounting/expenses", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { ExpenseModel } = await import('@shared/schema');
-      const { branchId, startDate, endDate, category, status, page = '1', limit = '20' } = req.query;
-      
+      const { branchId, startDate, endDate, category, status, period, page = '1', limit = '50' } = req.query;
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+
       const query: any = {};
       const isAdmin = req.employee?.role === 'admin' || req.employee?.role === 'owner';
       const finalBranchId = (branchId as string) || (isAdmin ? undefined : req.employee?.branchId);
+
+      // Build cache key using the resolved scope, not raw query params, to prevent cross-branch leakage
+      const ck = cacheKey('accounting:expenses', tenantId,
+        finalBranchId || 'all', period as string || '',
+        startDate as string || '', endDate as string || '',
+        category as string || '', status as string || '',
+        page as string, limit as string);
+      const cached = cache.get<any>(ck);
+      if (cached) return res.json(cached);
       
       if (finalBranchId) {
         query.branchId = finalBranchId;
       }
       
-      if (startDate || endDate) {
+      // Support period filter (today/week/month/year)
+      if (period && !startDate && !endDate) {
+        const now = new Date();
+        let start: Date;
+        switch (period as string) {
+          case 'today':
+            start = getSaudiStartOfDay();
+            break;
+          case 'week':
+            start = new Date(getSaudiStartOfDay().getTime() - 6 * 24 * 60 * 60 * 1000);
+            break;
+          case 'month':
+            start = new Date(getSaudiStartOfDay().getTime() - 29 * 24 * 60 * 60 * 1000);
+            break;
+          case 'year':
+            start = new Date(getSaudiStartOfDay().getTime() - 364 * 24 * 60 * 60 * 1000);
+            break;
+          default:
+            start = getSaudiStartOfDay();
+        }
+        query.date = { $gte: start, $lte: now };
+      } else if (startDate || endDate) {
         query.date = {};
         if (startDate) query.date.$gte = new Date(startDate as string);
         if (endDate) query.date.$lte = new Date(endDate as string);
@@ -13849,12 +17047,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ExpenseModel.countDocuments(query),
       ]);
       
-      res.json({
+      const result = {
         expenses: expenses.map(serializeDoc),
         total,
         page: parseInt(page as string),
         pages: Math.ceil(total / parseInt(limit as string)),
-      });
+      };
+      cache.set(ck, result, CACHE_TTL.ACCOUNTING);
+      res.json(result);
     } catch (error) {
       res.status(500).json({ error: "فشل في جلب المصروفات" });
     }
@@ -13880,6 +17080,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "المصروف غير موجود" });
       }
       
+      cache.invalidate('accounting:');
       res.json(serializeDoc(expense));
     } catch (error) {
       res.status(500).json({ error: "فشل في اعتماد المصروف" });
@@ -13909,6 +17110,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       await revenue.save();
+      cache.invalidate('accounting:');
       res.json(serializeDoc(revenue));
     } catch (error) {
       res.status(500).json({ error: "فشل في تسجيل الإيراد" });
@@ -13919,17 +17121,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/accounting/revenue", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { RevenueModel } = await import('@shared/schema');
-      const { branchId, startDate, endDate, category, page = '1', limit = '20' } = req.query;
-      
+      const { branchId, startDate, endDate, category, period, page = '1', limit = '50' } = req.query;
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+
       const query: any = {};
       const isAdmin = req.employee?.role === 'admin' || req.employee?.role === 'owner';
       const finalBranchId = (branchId as string) || (isAdmin ? undefined : req.employee?.branchId);
+
+      // Build cache key using the resolved scope, not raw query params, to prevent cross-branch leakage
+      const ck = cacheKey('accounting:revenue', tenantId,
+        finalBranchId || 'all', period as string || '',
+        startDate as string || '', endDate as string || '',
+        category as string || '',
+        page as string, limit as string);
+      const cached = cache.get<any>(ck);
+      if (cached) return res.json(cached);
       
       if (finalBranchId) {
         query.branchId = finalBranchId;
       }
       
-      if (startDate || endDate) {
+      // Support period filter (today/week/month/year) — Saudi Arabia timezone (UTC+3)
+      if (period && !startDate && !endDate) {
+        const now = new Date();
+        let start: Date;
+        switch (period as string) {
+          case 'today':
+            start = getSaudiStartOfDay();
+            break;
+          case 'week':
+            start = new Date(getSaudiStartOfDay().getTime() - 6 * 24 * 60 * 60 * 1000);
+            break;
+          case 'month':
+            start = new Date(getSaudiStartOfDay().getTime() - 29 * 24 * 60 * 60 * 1000);
+            break;
+          case 'year':
+            start = new Date(getSaudiStartOfDay().getTime() - 364 * 24 * 60 * 60 * 1000);
+            break;
+          default:
+            start = getSaudiStartOfDay();
+        }
+        query.date = { $gte: start, $lte: now };
+      } else if (startDate || endDate) {
         query.date = {};
         if (startDate) query.date.$gte = new Date(startDate as string);
         if (endDate) query.date.$lte = new Date(endDate as string);
@@ -13946,12 +17179,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         RevenueModel.countDocuments(query),
       ]);
       
-      res.json({
+      const result = {
         revenues: revenues.map(serializeDoc),
         total,
         page: parseInt(page as string),
         pages: Math.ceil(total / parseInt(limit as string)),
-      });
+      };
+      cache.set(ck, result, CACHE_TTL.ACCOUNTING);
+      res.json(result);
     } catch (error) {
       res.status(500).json({ error: "فشل في جلب الإيرادات" });
     }
@@ -13963,10 +17198,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { branchId, date } = req.query;
       const { DailySummaryModel, OrderModel, RevenueModel, ExpenseModel } = await import('@shared/schema');
       
-      // Use Saudi timezone for daily boundary (date string treated as Saudi calendar date)
-      const { start: targetDate, end: nextDate } = getSaudiDayBounds(
-        date ? (date as string) : undefined
-      );
+      const targetDate = date ? new Date(date as string) : new Date();
+      targetDate.setHours(0, 0, 0, 0);
+      const nextDate = new Date(targetDate);
+      nextDate.setDate(nextDate.getDate() + 1);
       
       const finalBranchId = branchId as string || req.employee?.branchId;
       
@@ -13982,7 +17217,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Calculate summary from orders
         const orderQuery: any = {
           createdAt: { $gte: targetDate, $lt: nextDate },
-          status: { $ne: 'cancelled' },
+          status: { $nin: ['cancelled'] },
         };
         if (finalBranchId) orderQuery.branchId = finalBranchId;
         
@@ -13995,9 +17230,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (finalBranchId) expenseQuery.branchId = finalBranchId;
         
         const expenses = await ExpenseModel.find(expenseQuery);
-        
-        const totalRevenue = orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
-        const totalVat = totalRevenue * 0.15 / 1.15;
+
+        // Subtract refunds for the same day
+        const { RefundOrderModel: DailyRefundModel } = await import('@shared/schema');
+        const tenantIdForSummary = getTenantIdFromRequest(req) || 'demo-tenant';
+        const dayRefundQuery: any = { tenantId: tenantIdForSummary, createdAt: { $gte: targetDate, $lt: nextDate }, status: 'completed' };
+        if (finalBranchId) dayRefundQuery.branchId = finalBranchId;
+        const dayRefunds = await DailyRefundModel.find(dayRefundQuery);
+        const totalDayRefunds = dayRefunds.reduce((s, r) => s + ((r as any).refundAmount || 0), 0);
+
+        const grossRevenue = orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+        const totalRevenue = Math.max(0, grossRevenue - totalDayRefunds);
+        const totalVat = totalRevenue * VAT_RATE / (1 + VAT_RATE);
         const cashRevenue = orders.filter(o => o.paymentMethod === 'cash').reduce((sum, o) => sum + (o.totalAmount || 0), 0);
         const cardRevenue = orders.filter(o => ['pos', 'stc', 'alinma', 'ur', 'barq', 'rajhi'].includes(o.paymentMethod)).reduce((sum, o) => sum + (o.totalAmount || 0), 0);
         const otherRevenue = totalRevenue - cashRevenue - cardRevenue;
@@ -14009,14 +17253,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return sum + (subtotal - (o.totalAmount / 1.15));
         }, 0);
         
-        const cancelledQuery: any = {
-          createdAt: { $gte: targetDate, $lt: nextDate },
+        const cancelledOrders = await OrderModel.countDocuments({
+          ...orderQuery,
           status: 'cancelled',
-        };
-        if (finalBranchId) cancelledQuery.branchId = finalBranchId;
-        const cancelledOrderDocs = await OrderModel.find(cancelledQuery);
-        const cancelledOrdersCount = cancelledOrderDocs.length;
-        const cancelledAmount = cancelledOrderDocs.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+        });
         
         summary = {
           branchId: finalBranchId || null,
@@ -14035,8 +17275,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           netProfit: Math.round((totalRevenue - totalVat - totalCogs - totalExpenses) * 100) / 100,
           profitMargin: totalRevenue > 0 ? Math.round(((totalRevenue - totalVat - totalCogs - totalExpenses) / totalRevenue * 100) * 100) / 100 : 0,
           totalDiscounts: Math.round(Math.abs(totalDiscounts) * 100) / 100,
-          cancelledOrders: cancelledOrdersCount,
-          cancelledAmount: Math.round(cancelledAmount * 100) / 100,
+          cancelledOrders,
+          cancelledAmount: 0,
         };
       }
       
@@ -14061,20 +17301,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let endDate = new Date();
       
       switch (period) {
-        case 'today': {
-          const { start: saudiStart, end: saudiEnd } = getSaudiDayBounds();
-          startDate = saudiStart;
-          endDate = saudiEnd;
+        case 'today':
+          startDate = getSaudiStartOfDay();
+          endDate = getSaudiEndOfDay();
           break;
-        }
         case 'week':
-          startDate = getSaudiDaysAgo(7);
+          startDate = new Date(getSaudiStartOfDay().getTime() - 6 * 24 * 60 * 60 * 1000);
           break;
         case 'month':
-          startDate = getSaudiMonthStart();
+          startDate = getSaudiStartOfDay();
+          startDate.setDate(startDate.getDate() - startDate.getDate() + 1);
           break;
         case 'year':
-          startDate = getSaudiYearStart();
+          startDate = new Date(getSaudiStartOfDay());
+          startDate.setMonth(0, 1);
           break;
       }
       
@@ -14096,7 +17336,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (finalBranchId) invoiceQuery.branchId = finalBranchId;
       
       // Build queries for trend data (last 30 days for daily, last 12 weeks for weekly, last 12 months for monthly)
-      const thirtyDaysAgo = getSaudiDaysAgo(30);
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      thirtyDaysAgo.setHours(0, 0, 0, 0);
       
       const allOrdersQuery: any = {
         createdAt: { $gte: thirtyDaysAgo },
@@ -14110,19 +17352,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
       if (finalBranchId) allExpensesQuery.branchId = finalBranchId;
       
-      const [orders, expenses, invoices, allOrders, allExpenses] = await Promise.all([
+      const { RefundOrderModel } = await import('@shared/schema');
+      const refundQuery: any = {
+        tenantId: getTenantIdFromRequest(req) || 'demo-tenant',
+        createdAt: { $gte: startDate, $lte: endDate },
+        status: 'completed',
+      };
+      if (finalBranchId) refundQuery.branchId = finalBranchId;
+
+      const [orders, expenses, invoices, allOrders, allExpenses, refunds] = await Promise.all([
         OrderModel.find(orderQuery),
         ExpenseModel.find(expenseQuery),
         TaxInvoiceModel.find(invoiceQuery),
         OrderModel.find(allOrdersQuery),
         ExpenseModel.find(allExpensesQuery),
+        RefundOrderModel.find(refundQuery),
       ]);
       
       const totalRevenue = orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+      const totalRefunds = refunds.reduce((sum, r) => sum + ((r as any).refundAmount || 0), 0);
+      const netRevenue = Math.max(0, totalRevenue - totalRefunds);
       const totalVat = invoices.reduce((sum, i) => sum + (i.taxAmount || 0), 0);
       const totalExpenses = expenses.reduce((sum, e) => sum + e.totalAmount, 0);
       const totalCogs = orders.reduce((sum, o) => sum + (o.costOfGoods || 0), 0);
-      const grossProfit = totalRevenue - totalVat - totalCogs;
+      const grossProfit = netRevenue - totalVat - totalCogs;
       const netProfit = grossProfit - totalExpenses;
       
       // Group by category
@@ -14223,22 +17476,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const topSellingItems = Object.entries(itemSales)
         .filter(([id]) => id && id !== 'unknown')
-        .map(([id, data]) => ({ id, ...data }))
-        .sort((a, b) => b.revenue - a.revenue)
-        .slice(0, 10);
+        .map(([id, data]) => ({
+          id,
+          nameAr: data.name,
+          name: data.name,
+          totalQuantity: data.quantity,
+          quantity: data.quantity,
+          totalRevenue: data.revenue,
+          revenue: data.revenue,
+        }))
+        .sort((a, b) => b.totalRevenue - a.totalRevenue);
       
       res.json({
         period,
         summary: {
           totalRevenue: Math.round(totalRevenue * 100) / 100,
+          totalRefunds: Math.round(totalRefunds * 100) / 100,
+          netRevenue: Math.round(netRevenue * 100) / 100,
           totalVatCollected: Math.round(totalVat * 100) / 100,
           totalExpenses: Math.round(totalExpenses * 100) / 100,
           totalCogs: Math.round(totalCogs * 100) / 100,
           grossProfit: Math.round(grossProfit * 100) / 100,
           netProfit: Math.round(netProfit * 100) / 100,
-          profitMargin: totalRevenue > 0 ? Math.round((netProfit / totalRevenue * 100) * 100) / 100 : 0,
+          profitMargin: netRevenue > 0 ? Math.round((netProfit / netRevenue * 100) * 100) / 100 : 0,
           orderCount: orders.length,
           invoiceCount: invoices.length,
+          refundCount: refunds.length,
         },
         expensesByCategory,
         revenueByPayment,
@@ -14443,34 +17706,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all product addons
   app.get("/api/product-addons", async (req, res) => {
     try {
+      const tenantId = getTenantIdFromRequest(req) || "demo-tenant";
+      const ck = cacheKey('product-addons', tenantId);
+      const cached = cache.get<any[]>(ck);
+      if (cached) return res.json(cached);
+
       const { ProductAddonModel } = await import("@shared/schema");
       const addons = await ProductAddonModel.find({ isAvailable: 1 }).sort({ orderIndex: 1, category: 1, nameAr: 1 });
-      res.json(addons.map(a => ({ ...a.toObject(), id: a.id })));
+      const result = addons.map(a => ({ ...a.toObject(), id: a.id }));
+      cache.set(ck, result, CACHE_TTL.ADDONS);
+      res.json(result);
     } catch (error) {
       res.status(500).json({ error: "فشل في جلب الإضافات" });
-    }
-  });
-
-  // Get ALL product addons for admin management (includes unavailable)
-  app.get("/api/product-addons-all", requireAuth, requireManager, async (req: AuthRequest, res) => {
-    try {
-      const { ProductAddonModel } = await import("@shared/schema");
-      const addons = await ProductAddonModel.find({}).sort({ orderIndex: 1, category: 1, nameAr: 1 });
-      res.json(addons.map(a => ({ ...a.toObject(), id: a.id })));
-    } catch (error) {
-      res.status(500).json({ error: "فشل في جلب الإضافات" });
-    }
-  });
-
-  // Get all coffeeItemIds that have at least one addon linked (used by POS to open customization dialog)
-  app.get("/api/coffee-items-with-addons", async (req, res) => {
-    try {
-      const { CoffeeItemAddonModel } = await import("@shared/schema");
-      const links = await CoffeeItemAddonModel.find({}, { coffeeItemId: 1, _id: 0 }).lean();
-      const ids = [...new Set(links.map((l: any) => l.coffeeItemId))];
-      res.json(ids);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch items with addons" });
     }
   });
 
@@ -14487,7 +17734,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return addon ? {
           ...addon.toObject(),
           id: addon.id,
-          addonId: addon.id,
+          addonId: link.addonId,
           isDefault: link.isDefault,
           defaultValue: link.defaultValue,
           minQuantity: link.minQuantity,
@@ -14509,7 +17756,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const addon = new ProductAddonModel(validatedData);
       await addon.save();
-      
+      cache.invalidate('product-addons:');
       res.status(201).json({ ...addon.toObject(), id: addon.id });
     } catch (error: any) {
       if (error?.name === 'ZodError') {
@@ -14535,7 +17782,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!addon) {
         return res.status(404).json({ error: "الإضافة غير موجودة" });
       }
-      
+      cache.invalidate('product-addons:');
       res.json({ ...addon.toObject(), id: addon.id });
     } catch (error: any) {
       res.status(500).json({ error: "فشل في تحديث الإضافة" });
@@ -14549,7 +17796,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       await ProductAddonModel.deleteOne({ id: req.params.id });
       await CoffeeItemAddonModel.deleteMany({ addonId: req.params.id });
-      
+      cache.invalidate('product-addons:');
       res.json({ success: true, message: "تم حذف الإضافة بنجاح" });
     } catch (error) {
       res.status(500).json({ error: "فشل في حذف الإضافة" });
@@ -14654,18 +17901,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/promo-offers/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { PromoOfferModel } = await import("@shared/schema");
-      
-      const offer = await PromoOfferModel.findOneAndUpdate(
-        { id: req.params.id },
-        { $set: { ...req.body, updatedAt: new Date() } },
-        { new: true }
-      );
-      
+      const pid = req.params.id;
+      const update = { $set: { ...req.body, updatedAt: new Date() } };
+      const opts = { new: true };
+
+      let offer = await PromoOfferModel.findOneAndUpdate({ id: pid }, update, opts);
+      if (!offer && pid.match(/^[0-9a-fA-F]{24}$/)) {
+        offer = await PromoOfferModel.findByIdAndUpdate(pid, update, opts);
+      }
+
       if (!offer) {
         return res.status(404).json({ error: "العرض غير موجود" });
       }
-      
-      res.json({ ...offer.toObject(), id: offer.id });
+
+      res.json({ ...offer.toObject(), id: offer.get('id') || offer.id });
     } catch (error: any) {
       res.status(500).json({ error: "فشل في تحديث العرض" });
     }
@@ -14675,10 +17924,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/promo-offers/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { PromoOfferModel } = await import("@shared/schema");
-      await PromoOfferModel.deleteOne({ id: req.params.id });
+      const pid = req.params.id;
+      let result = await PromoOfferModel.deleteOne({ id: pid });
+      if (result.deletedCount === 0 && pid.match(/^[0-9a-fA-F]{24}$/)) {
+        result = await PromoOfferModel.deleteOne({ _id: pid });
+      }
       res.json({ success: true, message: "تم حذف العرض بنجاح" });
     } catch (error) {
       res.status(500).json({ error: "فشل في حذف العرض" });
+    }
+  });
+
+  // ===== Menu Images ZIP Export =====
+  app.get("/api/menu/export-images-zip", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { CoffeeItemModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || "demo-tenant";
+      const categoriesParam = req.query.categories as string;
+      const selectedCategories = categoriesParam ? categoriesParam.split(",").filter(Boolean) : null;
+
+      const query: any = { tenantId };
+      if (selectedCategories && selectedCategories.length > 0) {
+        query.category = { $in: selectedCategories };
+      }
+      const items = await CoffeeItemModel.find(query).lean();
+
+      // Collect image URLs (imageUrls array + imageUrl fallback)
+      const imageEntries: Array<{ name: string; url: string }> = [];
+      for (const item of items) {
+        const urls: string[] = [];
+        if ((item as any).imageUrls?.length) urls.push(...(item as any).imageUrls);
+        else if ((item as any).imageUrl) urls.push((item as any).imageUrl);
+        urls.forEach((url, idx) => {
+          const safeName = ((item as any).nameAr || (item as any).id || "item").replace(/[^\u0621-\u064A\w.-]/g, "_");
+          const cat = (item as any).category || "uncategorized";
+          const suffix = urls.length > 1 ? `_${idx + 1}` : "";
+          const ext = url.split(".").pop()?.split("?")[0]?.toLowerCase() || "jpg";
+          imageEntries.push({ name: `${cat}/${safeName}${suffix}.${ext}`, url });
+        });
+      }
+
+      if (imageEntries.length === 0) {
+        return res.status(404).json({ error: "لا توجد صور للتصدير في الأقسام المحددة" });
+      }
+
+      // Build ZIP using Node built-ins (no archiver dependency needed)
+      const nodeFetch = (await import("node-fetch" as any)).default as any;
+      const AdmZip = (await import("adm-zip")).default;
+      const zip = new AdmZip();
+
+      const results = await Promise.allSettled(
+        imageEntries.map(async ({ name, url }) => {
+          try {
+            const fullUrl = url.startsWith("http") ? url : `http://localhost:${process.env.PORT || 5000}${url.startsWith("/") ? "" : "/"}${url}`;
+            const r = await nodeFetch(fullUrl, { timeout: 10000 } as any);
+            if (!r.ok) return null;
+            const buf = Buffer.from(await r.arrayBuffer());
+            zip.addFile(name, buf);
+          } catch { return null; }
+        })
+      );
+      const added = results.filter(r => r.status === "fulfilled").length;
+      if (added === 0) return res.status(500).json({ error: "فشل تحميل الصور. تأكد أن الصور مرفوعة على الخادم." });
+
+      const zipBuffer = zip.toBuffer();
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="menu-images-${Date.now()}.zip"`);
+      res.setHeader("Content-Length", zipBuffer.length);
+      res.send(zipBuffer);
+    } catch (err: any) {
+      console.error("[export-images-zip]", err.message);
+      res.status(500).json({ error: "فشل تصدير الصور", details: err.message });
     }
   });
 
@@ -14689,8 +18005,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { MenuCategoryModel } = await import("@shared/schema");
       const tenantId = getTenantIdFromRequest(req) || "demo-tenant";
-      const branchId = req.query.branchId as string;
-      
+      const branchId = (req.query.branchId as string) || 'all';
+      const ck = cacheKey('menu-cats', tenantId, branchId);
+      const cached = cache.get<any[]>(ck);
+      if (cached) return res.json(cached);
+
       const query: any = { 
         isActive: 1,
         tenantId 
@@ -14704,8 +18023,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ];
       }
       
-      const categories = await MenuCategoryModel.find(query).sort({ orderIndex: 1, createdAt: 1 });
-      res.json(categories.map(c => ({ ...c.toObject(), id: c.id })));
+      const categories = await MenuCategoryModel.find(query).sort({ orderIndex: 1, createdAt: 1 }).lean();
+      const result = categories.map((c: any) => ({ ...c, id: c.id || c._id?.toString() }));
+      cache.set(ck, result, CACHE_TTL.CATEGORIES);
+      res.json(result);
     } catch (error) {
       res.status(500).json({ error: "فشل في جلب الأقسام" });
     }
@@ -14751,7 +18072,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const category = new MenuCategoryModel(categoryData);
       await category.save();
-      
+      cache.invalidate('menu-cats:' + tenantId);
       res.status(201).json({ ...category.toObject(), id: category.id });
     } catch (error: any) {
       if (error.name === 'ZodError') {
@@ -14789,7 +18110,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!category) {
         return res.status(404).json({ error: "القسم غير موجود" });
       }
-      
+      cache.invalidate('menu-cats:' + tenantId);
       res.json({ ...category.toObject(), id: category.id });
     } catch (error: any) {
       if (error.name === 'ZodError') {
@@ -14799,28 +18120,130 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Delete menu category (soft delete)
-  app.delete("/api/menu-categories/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+  // Bulk reorder menu categories
+  app.post("/api/menu-categories/reorder", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { MenuCategoryModel } = await import("@shared/schema");
       const tenantId = getTenantIdFromRequest(req) || "demo-tenant";
+      const { orders } = req.body as { orders: Array<{ id: string; orderIndex: number }> };
+      if (!Array.isArray(orders)) return res.status(400).json({ error: "orders must be an array" });
+      await Promise.all(
+        orders.map(({ id, orderIndex }) =>
+          MenuCategoryModel.updateOne({ id, tenantId }, { $set: { orderIndex, updatedAt: new Date() } })
+        )
+      );
+      cache.invalidate('menu-cats:' + tenantId);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "فشل في إعادة ترتيب الأقسام" });
+    }
+  });
+
+  // Delete menu category with smart product reassignment
+  app.delete("/api/menu-categories/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { MenuCategoryModel, CoffeeItemModel } = await import("@shared/schema");
+      const tenantId = getTenantIdFromRequest(req) || "demo-tenant";
       
-      // Check if it's a system category
+      // Find the category to delete
       const category = await MenuCategoryModel.findOne({ id: req.params.id, tenantId });
       if (!category) {
         return res.status(404).json({ error: "القسم غير موجود" });
       }
-      if (category.isSystem) {
-        return res.status(400).json({ error: "لا يمكن حذف قسم أساسي" });
+      
+      // Find all active categories except the one being deleted (same department preferred)
+      const remainingCategories = await MenuCategoryModel.find({
+        tenantId,
+        isActive: 1,
+        id: { $ne: req.params.id },
+      }).lean();
+      
+      // Find all items that belong to this category
+      const orphanedItems = await (CoffeeItemModel as any).find({
+        tenantId,
+        category: req.params.id,
+      }).lean();
+      
+      let reassignedCount = 0;
+      
+      if (orphanedItems.length > 0 && remainingCategories.length > 0) {
+        // Smart keyword-based reassignment
+        const deletedName = (category.nameAr || "").toLowerCase();
+        
+        // Keyword groups for smart matching
+        const keywordGroups: Record<string, string[]> = {
+          coffee:    ["قهوة", "كوفي", "اسبريسو", "cappuccino", "latte", "coffee", "espresso", "قهوه"],
+          tea:       ["شاي", "tea", "تي", "أعشاب", "herbs"],
+          cold:      ["بارد", "مثلج", "عصير", "ice", "cold", "فريش", "fresh", "مشروب"],
+          hot:       ["ساخن", "hot", "دافئ", "warm"],
+          food:      ["أكل", "طعام", "وجبة", "food", "meal", "ساندوتش", "sandwich", "سلطة", "salad"],
+          dessert:   ["حلوى", "كيك", "cake", "dessert", "حلو", "sweet", "بسكويت"],
+          bakery:    ["مخبوزات", "خبز", "bread", "bakery", "معجنات", "croissant"],
+          seasonal:  ["موسمي", "seasonal", "خاص", "special", "محدود", "limited"],
+        };
+        
+        const getKeywordGroup = (name: string): string | null => {
+          const lower = name.toLowerCase();
+          for (const [group, keywords] of Object.entries(keywordGroups)) {
+            if (keywords.some(kw => lower.includes(kw))) return group;
+          }
+          return null;
+        };
+        
+        const deletedGroup = getKeywordGroup(deletedName);
+        
+        for (const item of orphanedItems) {
+          let bestCategory: any = null;
+          
+          // 1. Try same department + keyword similarity
+          const sameDeptCats = remainingCategories.filter(c => c.department === category.department);
+          const pool = sameDeptCats.length > 0 ? sameDeptCats : remainingCategories;
+          
+          const itemGroup = getKeywordGroup((item as any).nameAr || "");
+          
+          // Priority 1: matching keyword group
+          if (deletedGroup || itemGroup) {
+            const targetGroup = itemGroup || deletedGroup;
+            bestCategory = pool.find(c => getKeywordGroup(c.nameAr || "") === targetGroup);
+          }
+          
+          // Priority 2: first same-department category
+          if (!bestCategory) {
+            bestCategory = pool[0];
+          }
+          
+          // Priority 3: any remaining category
+          if (!bestCategory) {
+            bestCategory = remainingCategories[0];
+          }
+          
+          if (bestCategory) {
+            await (CoffeeItemModel as any).updateOne(
+              { _id: (item as any)._id },
+              { $set: { category: bestCategory.id, updatedAt: new Date() } }
+            );
+            reassignedCount++;
+          }
+        }
       }
       
-      // Soft delete by setting isActive to 0
+      // Soft delete the category
       await MenuCategoryModel.findOneAndUpdate(
         { id: req.params.id, tenantId },
         { $set: { isActive: 0, updatedAt: new Date() } }
       );
-      res.json({ success: true, message: "تم حذف القسم بنجاح" });
+      
+      // Clear cache
+      cache.invalidate('menu-cats:' + tenantId);
+      cache.invalidate('coffee-items:' + tenantId);
+      
+      res.json({
+        success: true,
+        message: `تم حذف القسم بنجاح${reassignedCount > 0 ? ` وتم نقل ${reassignedCount} منتج إلى أقسام مناسبة تلقائياً` : ""}`,
+        reassignedCount,
+      });
     } catch (error) {
+      console.error("Error deleting category:", error);
       res.status(500).json({ error: "فشل في حذف القسم" });
     }
   });
@@ -15005,12 +18428,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!userId || !title || !body) return res.status(400).json({ error: "بيانات ناقصة" });
 
       const { fireNotify } = await import("./notification-engine");
-      await fireNotify(userId, title, body, {
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+
+      let resolvedId = userId;
+
+      // If userType is customer and userId looks like a phone number, look up customer
+      if (userType === 'customer' && /^\+?[\d\s\-()]{7,15}$/.test(userId)) {
+        try {
+          const cleanPhone = userId.replace(/\D/g, '').replace(/^966/, '0').replace(/^9665/, '05');
+          const customer = await storage.getCustomerByPhone(cleanPhone);
+          if (customer) {
+            resolvedId = (customer as any)._id?.toString() || (customer as any).id || userId;
+          }
+        } catch {}
+      }
+
+      await fireNotify(resolvedId, title, body, {
         type: type || "info",
         link: link || "/",
         userType: userType || "customer",
+        tenantId,
         icon: "🔔",
       });
+
+      // Also send push directly to all subscriptions matching this userId (covers both id and phone)
+      if (userType === 'customer' && resolvedId !== userId) {
+        const { sendPushToCustomer } = await import("./push-service");
+        sendPushToCustomer(userId, {
+          title, body, url: link || '/', tag: `admin-notif-${Date.now()}`, type: 'general',
+        }).catch(() => {});
+      }
 
       res.json({ success: true });
     } catch (error) {
@@ -15019,7 +18466,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Marketing Email Route for Staff
-  app.post("/api/admin/broadcast-email", requireAuth, async (req: AuthRequest, res) => {
+  app.post("/api/admin/broadcast-email", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
     try {
       const { subject, message, customerEmails } = req.body;
       
@@ -15088,7 +18535,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const customerId = (req as any).user?.id;
 
       // Get customer info
-      const customer = await CustomerModel.findById(customerId);
+      const customer = await CustomerModel.findOne({ id: customerId });
       if (!customer || !customer.email) {
         return res.status(400).json({ error: "بريد العميل غير متوفر" });
       }
@@ -15114,7 +18561,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/send-referral-email", requireAuth, async (req, res) => {
     try {
       const customerId = (req as any).user?.id;
-      const customer = await CustomerModel.findById(customerId);
+      const customer = await CustomerModel.findOne({ id: customerId });
 
       if (!customer || !customer.email) {
         return res.status(400).json({ error: "بريد العميل غير متوفر" });
@@ -15143,7 +18590,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { pointsEarned } = req.body;
       const customerId = (req as any).user?.id;
 
-      const customer = await CustomerModel.findById(customerId);
+      const customer = await CustomerModel.findOne({ id: customerId });
       if (!customer || !customer.email) {
         return res.status(400).json({ error: "بريد العميل غير متوفر" });
       }
@@ -15170,7 +18617,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { customerId, promotionTitle, promotionDescription, discountCode } =
         req.body;
 
-      const customer = await CustomerModel.findById(customerId);
+      const customer = await CustomerModel.findOne({ id: customerId });
       if (!customer || !customer.email) {
         return res.status(400).json({ error: "بريد العميل غير متوفر" });
       }
@@ -15414,6 +18861,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get low stock items (daily summary)
+  app.get("/api/inventory/low-stock", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const branchId = (req as AuthRequest).employee?.branchId || (req.query.branchId as string) || 'default';
+      const items = await InventoryEngine.getLowStockItems(branchId);
+      res.json(Array.isArray(items) ? items : (items as any)?.items || []);
+    } catch (error) {
+      res.json([]);
+    }
+  });
+
   app.get("/api/inventory/low-stock/:branchId", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { branchId } = req.params;
@@ -15843,9 +19300,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/erp/vendors", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const tenantId = getTenantIdFromRequest(req) || req.body.tenantId || "demo-tenant";
+      let code = req.body.code;
+      if (!code) {
+        const count = await VendorModel.countDocuments({ tenantId });
+        code = `VND-${String(count + 1).padStart(4, "0")}`;
+      }
       const vendor = await ErpAccountingService.createVendor({
         tenantId,
         ...req.body,
+        code,
       });
       res.json({ success: true, vendor: serializeDoc(vendor) });
     } catch (error: any) {
@@ -16151,6 +19614,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/delivery/orders/unassigned", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = getTenantIdFromRequest(req) || "demo-tenant";
+      const orders = await DeliveryOrderModel.find({
+        tenantId,
+        status: "pending",
+        $or: [{ driverId: null }, { driverId: { $exists: false } }]
+      }).sort({ createdAt: 1 });
+      res.json({ success: true, orders: orders.map(serializeDoc) });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch unassigned orders" });
+    }
+  });
+
   app.get("/api/delivery/orders/:id", requireAuth, async (req: AuthRequest, res) => {
     try {
       const order = await deliveryService.getDeliveryOrder(req.params.id);
@@ -16253,56 +19730,159 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/delivery/stats", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.employee?.tenantId || "demo-tenant";
+      const branchId = req.query.branchId as string | undefined;
+      const period = req.query.period as string || 'today';
+
+      let fromDate: Date | undefined;
+      if (period === 'today') {
+        fromDate = getSaudiStartOfDay();
+      } else if (period === 'week') {
+        fromDate = new Date(getSaudiStartOfDay().getTime() - 7 * 24 * 60 * 60 * 1000);
+      } else if (period === 'month') {
+        const s = getSaudiStartOfDay(); fromDate = new Date(s.getFullYear(), s.getMonth(), 1);
+      }
+
+      const stats = await deliveryService.getDeliveryStats(tenantId, branchId, fromDate);
+      res.json({ success: true, stats });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch delivery stats" });
+    }
+  });
+
+  app.post("/api/delivery/orders/:id/auto-assign", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.employee?.tenantId || "demo-tenant";
+      const branchId = req.employee?.branchId;
+      const order = await deliveryService.autoAssignDriver(req.params.id, tenantId, branchId);
+      if (order) {
+        res.json({ success: true, order: serializeDoc(order) });
+      } else {
+        res.status(404).json({ error: "لا يوجد سائقين متاحين أو الطلب غير جاهز" });
+      }
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "فشل التعيين التلقائي" });
+    }
+  });
+
+  // Driver logout
+  app.post("/api/delivery/drivers/logout", async (req, res) => {
+    try {
+      const driverId = (req.session as any).driverId;
+      if (driverId) {
+        await deliveryService.updateDriverStatus(driverId, "offline");
+        delete (req.session as any).driverId;
+      }
+      res.json({ success: true, message: "تم تسجيل الخروج" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "فشل تسجيل الخروج" });
+    }
+  });
+
+  // Driver accept assigned order
+  app.post("/api/delivery/orders/:id/accept", requireAuth, requireDeliveryAccess, async (req: AuthRequest, res) => {
+    try {
+      const order = await deliveryService.updateOrderStatus(req.params.id, "picking_up");
+      if (!order) return res.status(404).json({ error: "الطلب غير موجود" });
+      res.json({ success: true, order: serializeDoc(order) });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "فشل قبول الطلب" });
+    }
+  });
+
+  // Driver reject/unaccept order (sends it back to pending)
+  app.post("/api/delivery/orders/:id/reject", requireAuth, requireDeliveryAccess, async (req: AuthRequest, res) => {
+    try {
+      const order = await DeliveryOrderModel.findOneAndUpdate(
+        { id: req.params.id },
+        { status: "pending", driverId: null, driverName: null, driverPhone: null, updatedAt: new Date() },
+        { new: true }
+      );
+      if (!order) return res.status(404).json({ error: "الطلب غير موجود" });
+      // Free up the driver
+      if ((order as any).driverId) {
+        await deliveryService.updateDriverStatus((order as any).driverId, "available");
+      }
+      res.json({ success: true, order: serializeDoc(order) });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "فشل رفض الطلب" });
+    }
+  });
+
+  // Driver rate order / customer rating
+  app.patch("/api/delivery/orders/:id/rate", async (req, res) => {
+    try {
+      const { rating, comment } = req.body;
+      if (!rating || rating < 1 || rating > 5) return res.status(400).json({ error: "تقييم غير صالح" });
+      const order = await DeliveryOrderModel.findOneAndUpdate(
+        { id: req.params.id },
+        { customerRating: rating, customerComment: comment, updatedAt: new Date() },
+        { new: true }
+      );
+      if (!order) return res.status(404).json({ error: "الطلب غير موجود" });
+      // Update driver rating average
+      if ((order as any).driverId) {
+        const driverOrders = await DeliveryOrderModel.find({ driverId: (order as any).driverId, customerRating: { $gt: 0 } });
+        const avgRating = driverOrders.reduce((sum, o) => sum + ((o as any).customerRating || 0), 0) / driverOrders.length;
+        await deliveryService.updateDriver((order as any).driverId, { rating: Math.round(avgRating * 10) / 10, ratingCount: driverOrders.length });
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to rate order" });
+    }
+  });
+
   // ============================================================
   // ADVANCED ANALYTICS API
   // ============================================================
   app.get("/api/analytics/advanced", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const { period = 'today', branchId: qBranch, from, to } = req.query as Record<string, string>;
+      const { period = 'today', branchId: qBranch } = req.query;
       const finalBranchId = qBranch || req.employee?.branchId;
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+
+      // ── Cache check ──────────────────────────────────────────────────────────
+      const ck = cacheKey('analytics:advanced', tenantId, String(period), String(finalBranchId || 'all'));
+      const cached = cache.get<any>(ck);
+      if (cached) return res.json(cached);
+      // ────────────────────────────────────────────────────────────────────────
+
       const { OrderModel, CoffeeItemModel, EmployeeModel } = await import("@shared/schema");
 
-      const now = new Date();
       let startDate: Date;
-      let endDate: Date | null = null;
       let prevStartDate: Date;
       let prevEndDate: Date;
 
-      if (from || to) {
-        // Custom date range overrides period
-        startDate = from ? new Date(from) : new Date(0);
-        startDate.setHours(0, 0, 0, 0);
-        endDate = to ? new Date(to) : new Date();
-        endDate.setHours(23, 59, 59, 999);
-        const rangeMs = endDate.getTime() - startDate.getTime();
-        prevEndDate = new Date(startDate);
-        prevStartDate = new Date(startDate.getTime() - rangeMs);
-      } else {
-        switch (period) {
-          case 'week':
-            startDate = new Date(now); startDate.setDate(now.getDate() - 7); startDate.setHours(0,0,0,0);
-            prevStartDate = new Date(startDate); prevStartDate.setDate(startDate.getDate() - 7);
-            prevEndDate = new Date(startDate);
-            break;
-          case 'month':
-            startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-            prevStartDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-            prevEndDate = new Date(startDate);
-            break;
-          case 'year':
-            startDate = new Date(now.getFullYear(), 0, 1);
-            prevStartDate = new Date(now.getFullYear() - 1, 0, 1);
-            prevEndDate = new Date(startDate);
-            break;
-          default: // today
-            startDate = new Date(now); startDate.setHours(0,0,0,0);
-            prevStartDate = new Date(startDate); prevStartDate.setDate(startDate.getDate() - 1);
-            prevEndDate = new Date(startDate);
+      switch (period) {
+        case 'week':
+          startDate = new Date(getSaudiStartOfDay().getTime() - 6 * 24 * 60 * 60 * 1000);
+          prevStartDate = new Date(startDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+          prevEndDate = new Date(startDate);
+          break;
+        case 'month': {
+          const s = getSaudiStartOfDay();
+          startDate = new Date(s.getFullYear(), s.getMonth(), 1);
+          prevStartDate = new Date(s.getFullYear(), s.getMonth() - 1, 1);
+          prevEndDate = new Date(startDate);
+          break;
         }
+        case 'year': {
+          const s = getSaudiStartOfDay();
+          startDate = new Date(s.getFullYear(), 0, 1);
+          prevStartDate = new Date(s.getFullYear() - 1, 0, 1);
+          prevEndDate = new Date(startDate);
+          break;
+        }
+        default: // today
+          startDate = getSaudiStartOfDay();
+          prevStartDate = new Date(startDate.getTime() - 24 * 60 * 60 * 1000);
+          prevEndDate = new Date(startDate);
       }
 
       const baseMatch: any = {
-        createdAt: endDate ? { $gte: startDate, $lte: endDate } : { $gte: startDate },
+        createdAt: { $gte: startDate },
         status: { $ne: 'cancelled' }
       };
       if (finalBranchId) baseMatch.branchId = finalBranchId;
@@ -16357,21 +19937,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           itemCountMap[id].revenue += (Number(item.price) || 0) * (Number(item.quantity) || 1);
         }
       }
-      // Attach images AND include all products from catalog (even with 0 sales)
-      const allCoffeeItems = await CoffeeItemModel.find({}, { id: 1, nameAr: 1, nameEn: 1, imageUrl: 1, category: 1 }).lean();
-      for (const ci of allCoffeeItems) {
-        if (!itemCountMap[ci.id]) {
-          itemCountMap[ci.id] = { nameAr: ci.nameAr || 'منتج', nameEn: ci.nameEn || '', qty: 0, revenue: 0, imageUrl: ci.imageUrl };
-        } else {
-          // Prefer canonical names/images from catalog
-          itemCountMap[ci.id].nameAr = ci.nameAr || itemCountMap[ci.id].nameAr;
-          itemCountMap[ci.id].nameEn = ci.nameEn || itemCountMap[ci.id].nameEn;
-          itemCountMap[ci.id].imageUrl = ci.imageUrl || itemCountMap[ci.id].imageUrl;
+      // Attach images
+      const allItemIds = Object.keys(itemCountMap);
+      if (allItemIds.length > 0) {
+        const coffeeItems = await CoffeeItemModel.find({ id: { $in: allItemIds } }, { id: 1, imageUrl: 1 }).lean();
+        for (const ci of coffeeItems) {
+          if (itemCountMap[ci.id]) itemCountMap[ci.id].imageUrl = ci.imageUrl;
         }
       }
       const topProducts = Object.entries(itemCountMap)
         .map(([id, d]) => ({ id, ...d, revenue: Math.round(d.revenue * 100) / 100 }))
-        .sort((a, b) => b.qty - a.qty || b.revenue - a.revenue);
+        .sort((a, b) => b.qty - a.qty)
+        .slice(0, 10);
 
       // ---- Employee performance ----
       const empMap: Record<string, { name: string; orders: number; revenue: number }> = {};
@@ -16418,7 +19995,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentBreakdown[m] = (paymentBreakdown[m] || 0) + (Number(o.totalAmount) || 0);
       }
 
-      res.json({
+      const analyticsResult = {
         period,
         summary: {
           totalRevenue: Math.round(totalRevenue * 100) / 100,
@@ -16440,10 +20017,293 @@ export async function registerRoutes(app: Express): Promise<Server> {
           amount: Math.round(amount * 100) / 100,
           percentage: totalRevenue > 0 ? Math.round((amount / totalRevenue) * 100) : 0
         }))
-      });
+      };
+
+      // Store in cache with period-aware TTL
+      const analyticsTtl = period === 'today' ? CACHE_TTL.ANALYTICS_TODAY
+        : period === 'week' ? CACHE_TTL.ANALYTICS_WEEK
+        : period === 'month' ? CACHE_TTL.ANALYTICS_MONTH
+        : CACHE_TTL.ANALYTICS_YEAR;
+      cache.set(ck, analyticsResult, analyticsTtl);
+
+      res.json(analyticsResult);
     } catch (error) {
       console.error("[ANALYTICS] Error:", error);
       res.status(500).json({ error: "Failed to fetch analytics" });
+    }
+  });
+
+  app.get("/api/reports/unified", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { period = 'today' } = req.query;
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const empBranchForKey = req.employee?.branchId || 'all';
+
+      // ── Cache check ──────────────────────────────────────────────────────────
+      const ck = cacheKey('reports:unified', tenantId, String(period), empBranchForKey);
+      const cached = cache.get<any>(ck);
+      if (cached) return res.json(cached);
+      // ────────────────────────────────────────────────────────────────────────
+
+      const { OrderModel, CoffeeItemModel, EmployeeModel } = await import("@shared/schema");
+      const { BranchModel } = await import("@shared/schema");
+
+      let startDate: Date;
+      { const s = getSaudiStartOfDay();
+        switch (period) {
+          case 'week':
+            startDate = new Date(s.getTime() - 6 * 24 * 60 * 60 * 1000);
+            break;
+          case 'month':
+            startDate = new Date(s.getFullYear(), s.getMonth(), 1);
+            break;
+          case 'year':
+            startDate = new Date(s.getFullYear(), 0, 1);
+            break;
+          default:
+            startDate = s;
+        }
+      }
+
+      const baseMatch: any = { createdAt: { $gte: startDate }, status: { $ne: 'cancelled' } };
+      const empRole = req.employee?.role || '';
+      const empBranch = req.employee?.branchId;
+      if (!['owner', 'admin'].includes(empRole) && empBranch) {
+        baseMatch.branchId = empBranch;
+      }
+      const orders = await OrderModel.find(baseMatch).lean();
+
+      let branches: any[] = [];
+      try { branches = await BranchModel.find({}).lean(); } catch {}
+
+      const branchMap: Record<string, {
+        branchId: string; name: string;
+        revenue: number; orders: number; avgOrder: number;
+        cashSales: number; cardSales: number; loyaltySales: number;
+        topItems: Record<string, { name: string; qty: number; revenue: number }>;
+        orderTypes: Record<string, number>;
+        customers: Set<string>;
+      }> = {};
+
+      const initBranch = (id: string) => {
+        if (!branchMap[id]) {
+          const branch = branches.find((b: any) => b.id === id || (b._id && b._id.toString() === id));
+          branchMap[id] = {
+            branchId: id,
+            name: branch?.nameAr || branch?.name || id || 'الفرع الرئيسي',
+            revenue: 0, orders: 0, avgOrder: 0,
+            cashSales: 0, cardSales: 0, loyaltySales: 0,
+            topItems: {}, orderTypes: {}, customers: new Set(),
+          };
+        }
+      };
+
+      let totalRevenue = 0, totalOrders = 0, totalCash = 0, totalCard = 0, totalLoyalty = 0;
+      const allCustomers = new Set<string>();
+      const dailyRevenue: Record<string, number> = {};
+
+      for (const o of orders) {
+        const bid = (o as any).branchId || 'main';
+        initBranch(bid);
+        const b = branchMap[bid];
+        const amount = Number(o.totalAmount) || 0;
+
+        b.revenue += amount;
+        b.orders++;
+        totalRevenue += amount;
+        totalOrders++;
+
+        const method = ((o.paymentMethod as string) || '').toLowerCase();
+        if (method === 'cash') { b.cashSales += amount; totalCash += amount; }
+        else if (method === 'qahwa-card' || method === 'loyalty-card' || method === 'qirox-card') { b.loyaltySales += amount; totalLoyalty += amount; }
+        else if (method) { b.cardSales += amount; totalCard += amount; }
+        // empty method: counted in totalRevenue but not in payment-specific buckets
+
+        const orderType = ((o as any).orderType || 'takeaway').toLowerCase();
+        b.orderTypes[orderType] = (b.orderTypes[orderType] || 0) + 1;
+
+        const custId = o.customerId || (o.customerInfo as any)?.phone;
+        if (custId) { b.customers.add(custId); allCustomers.add(custId); }
+
+        const dateKey = new Date(o.createdAt).toLocaleDateString('ar-SA', { month: 'short', day: 'numeric' });
+        dailyRevenue[dateKey] = (dailyRevenue[dateKey] || 0) + amount;
+
+        const items = Array.isArray(o.items) ? o.items : [];
+        for (const item of items) {
+          const itemId = item.coffeeItemId || item.id || 'unknown';
+          const itemName = item.nameAr || item.name || 'منتج';
+          if (!b.topItems[itemId]) b.topItems[itemId] = { name: itemName, qty: 0, revenue: 0 };
+          b.topItems[itemId].qty += Number(item.quantity) || 1;
+          b.topItems[itemId].revenue += (Number(item.price) || 0) * (Number(item.quantity) || 1);
+        }
+      }
+
+      const branchReports = Object.values(branchMap).map(b => ({
+        branchId: b.branchId,
+        name: b.name,
+        revenue: Math.round(b.revenue * 100) / 100,
+        orders: b.orders,
+        avgOrder: b.orders > 0 ? Math.round((b.revenue / b.orders) * 100) / 100 : 0,
+        cashSales: Math.round(b.cashSales * 100) / 100,
+        cardSales: Math.round(b.cardSales * 100) / 100,
+        loyaltySales: Math.round(b.loyaltySales * 100) / 100,
+        customers: b.customers.size,
+        orderTypes: b.orderTypes,
+        topItems: Object.entries(b.topItems)
+          .map(([id, d]) => ({ id, ...d, revenue: Math.round(d.revenue * 100) / 100 }))
+          .sort((a, b) => b.qty - a.qty)
+          .slice(0, 5),
+      })).sort((a, b) => b.revenue - a.revenue);
+
+      const unifiedResult = {
+        period,
+        totalBranches: branchReports.length,
+        summary: {
+          totalRevenue: Math.round(totalRevenue * 100) / 100,
+          totalOrders,
+          avgOrderValue: totalOrders > 0 ? Math.round((totalRevenue / totalOrders) * 100) / 100 : 0,
+          uniqueCustomers: allCustomers.size,
+          cashSales: Math.round(totalCash * 100) / 100,
+          cardSales: Math.round(totalCard * 100) / 100,
+          loyaltySales: Math.round(totalLoyalty * 100) / 100,
+        },
+        branches: branchReports,
+        dailyRevenue: Object.entries(dailyRevenue).map(([date, amount]) => ({
+          date, amount: Math.round(amount * 100) / 100
+        })),
+      };
+
+      cache.set(ck, unifiedResult, CACHE_TTL.REPORTS_UNIFIED);
+      res.json(unifiedResult);
+    } catch (error) {
+      console.error("[UNIFIED REPORTS] Error:", error);
+      res.status(500).json({ error: "Failed to fetch unified reports" });
+    }
+  });
+
+  app.get("/api/accounting/export", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { period = 'month', format = 'csv', branchId } = req.query;
+      const { OrderModel } = await import("@shared/schema");
+
+      let startDate: Date;
+      { const s = getSaudiStartOfDay();
+        switch (period) {
+          case 'today':
+            startDate = s;
+            break;
+          case 'week':
+            startDate = new Date(s.getTime() - 6 * 24 * 60 * 60 * 1000);
+            break;
+          case 'year':
+            startDate = new Date(s.getFullYear(), 0, 1);
+            break;
+          default:
+            startDate = new Date(s.getFullYear(), s.getMonth(), 1);
+        }
+      }
+
+      const match: any = { createdAt: { $gte: startDate }, status: { $ne: 'cancelled' } };
+      const exportRole = req.employee?.role || '';
+      const exportBranch = req.employee?.branchId;
+      if (!['owner', 'admin'].includes(exportRole)) {
+        if (branchId && branchId !== exportBranch) {
+          return res.status(403).json({ error: "غير مصرح بالوصول لهذا الفرع" });
+        }
+        if (exportBranch) match.branchId = exportBranch;
+      } else if (branchId) {
+        match.branchId = branchId;
+      }
+      const orders = await OrderModel.find(match).sort({ createdAt: 1 }).lean();
+
+      const journalEntries: any[] = [];
+      let entryNum = 1;
+
+      for (const o of orders) {
+        const amount = Number(o.totalAmount) || 0;
+        const vatRate = VAT_RATE;
+        const vatAmount = Math.round((amount * vatRate / (1 + vatRate)) * 100) / 100;
+        const netAmount = Math.round((amount - vatAmount) * 100) / 100;
+        const method = ((o.paymentMethod as string) || '').toLowerCase();
+        const date = new Date(o.createdAt).toISOString().split('T')[0];
+        const orderNum = (o as any).orderNumber || o.id || entryNum;
+
+        let debitAccount = '1101';
+        let debitAccountName = 'النقدية';
+        if (method === 'card' || method === 'network' || method === 'pos' || method === 'pos-network' ||
+            method === 'mada' || method === 'apple_pay' || method === 'paymob-apple-pay' ||
+            method === 'neoleap-apple-pay' || method === 'stc-pay' || method === 'geidea' ||
+            method === 'paymob-card' || method === 'paymob') {
+          debitAccount = '1102';
+          debitAccountName = 'الشبكة/المحافظ الرقمية';
+        } else if (method === 'qahwa-card' || method === 'loyalty-card' || method === 'qirox-card') {
+          debitAccount = '1103';
+          debitAccountName = 'بطاقة الولاء';
+        } else if (method === 'bank_transfer' || method === 'rajhi' || method === 'alinma') {
+          debitAccount = '1104';
+          debitAccountName = 'التحويل البنكي';
+        } else if (!method || method === 'unknown' || method === 'other') {
+          debitAccount = '1101';
+          debitAccountName = 'غير محدد';
+        }
+
+        journalEntries.push({
+          entryNumber: entryNum,
+          date,
+          orderNumber: orderNum,
+          debitAccount,
+          debitAccountName,
+          debitAmount: amount,
+          creditAccount: '4101',
+          creditAccountName: 'إيرادات المبيعات',
+          creditAmount: netAmount,
+          vatAccount: '2201',
+          vatAccountName: 'ضريبة القيمة المضافة',
+          vatAmount,
+          description: `مبيعات طلب #${orderNum}`,
+          status: o.status === 'cancelled' ? 'ملغي' : 'مؤكد',
+          paymentMethod: method === 'cash' ? 'نقدي' : (method === 'card' || method === 'mada') ? 'شبكة' : 'بطاقة كلوني',
+          customerName: (o.customerInfo as any)?.name || '',
+          branchId: (o as any).branchId || '',
+        });
+        entryNum++;
+      }
+
+      if (format === 'json') {
+        return res.json({
+          period,
+          totalEntries: journalEntries.length,
+          totalRevenue: journalEntries.reduce((s, e) => s + e.debitAmount, 0),
+          totalVAT: journalEntries.reduce((s, e) => s + e.vatAmount, 0),
+          entries: journalEntries,
+        });
+      }
+
+      const headers = [
+        'رقم القيد', 'التاريخ', 'رقم الطلب',
+        'رمز الحساب المدين', 'اسم الحساب المدين', 'المبلغ المدين',
+        'رمز الحساب الدائن', 'اسم الحساب الدائن', 'المبلغ الدائن',
+        'رمز حساب الضريبة', 'مبلغ الضريبة',
+        'الوصف', 'الحالة', 'طريقة الدفع', 'اسم العميل', 'الفرع'
+      ];
+      const csvRows = [headers.join(',')];
+      for (const e of journalEntries) {
+        csvRows.push([
+          e.entryNumber, e.date, e.orderNumber,
+          e.debitAccount, e.debitAccountName, e.debitAmount,
+          e.creditAccount, e.creditAccountName, e.creditAmount,
+          e.vatAccount, e.vatAmount,
+          `"${e.description}"`, e.status, e.paymentMethod, `"${e.customerName}"`, e.branchId
+        ].join(','));
+      }
+
+      const BOM = '\uFEFF';
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="cluny-accounting-${period}.csv"`);
+      res.send(BOM + csvRows.join('\n'));
+    } catch (error) {
+      console.error("[ACCOUNTING EXPORT] Error:", error);
+      res.status(500).json({ error: "Failed to export accounting data" });
     }
   });
 
@@ -16484,6 +20344,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(serializeDoc(card));
     } catch (error) {
       res.status(500).json({ error: "فشل إنشاء بطاقة الهدية" });
+    }
+  });
+
+  // Public endpoint for customer gift card redemption (no employee auth needed)
+  // DEPRECATED: Gift card deduction is now handled atomically inside POST /api/orders.
+  // This endpoint is kept only for backward compatibility but now requires a valid orderId
+  // to prevent unauthorized redemptions.
+  app.post("/api/gift-cards/:code/redeem-customer", async (req, res) => {
+    try {
+      const { GiftCardModel, OrderModel } = await import("@shared/schema");
+      const { amount, orderId } = req.body;
+      const code = req.params.code.toUpperCase();
+
+      // Require orderId to prevent standalone abuse
+      if (!orderId) {
+        return res.status(400).json({ error: "orderId مطلوب لاسترداد بطاقة الهدية" });
+      }
+
+      // Verify the order exists and already references this gift card (set by POST /api/orders)
+      const order = await OrderModel.findById(orderId);
+      if (!order) return res.status(404).json({ error: "الطلب غير موجود" });
+      if ((order as any).giftCardCode !== code) {
+        return res.status(400).json({ error: "بطاقة الهدية لا تنتمي لهذا الطلب" });
+      }
+      // If the order already deducted the card (via POST /api/orders), return success immediately
+      if ((order as any).giftCardAmountUsed) {
+        return res.json({ success: true, deducted: (order as any).giftCardAmountUsed, alreadyProcessed: true });
+      }
+
+      const card = await GiftCardModel.findOne({ code });
+      if (!card) return res.status(404).json({ error: "بطاقة الهدية غير موجودة" });
+      if (card.status !== 'active') return res.status(400).json({ error: "البطاقة غير نشطة" });
+      if (Number(card.balance) <= 0) return res.status(400).json({ error: "رصيد البطاقة صفر" });
+      const deductAmount = Math.min(Number(amount), Number(card.balance));
+      card.balance = Number(card.balance) - deductAmount;
+      card.updatedAt = new Date();
+      if (card.balance <= 0) card.status = 'used';
+      await card.save();
+      res.json({ success: true, deducted: deductAmount, remainingBalance: card.balance, status: card.status });
+    } catch (error) {
+      res.status(500).json({ error: "فشل استخدام بطاقة الهدية" });
     }
   });
 
@@ -16637,19 +20538,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const empQuery: any = { isActive: { $ne: false } };
       if (finalBranchId) empQuery.branchId = finalBranchId;
       const employees = await EmployeeModel.find(empQuery).lean();
-      const attQuery: any = { date: { $gte: startDate.toISOString().split('T')[0], $lte: endDate.toISOString().split('T')[0] } };
+
+      // Fix: use shiftDate (correct field name) instead of date
+      const attQuery: any = { shiftDate: { $gte: startDate, $lte: endDate } };
       if (finalBranchId) attQuery.branchId = finalBranchId;
       const attendances = await AttendanceModel.find(attQuery).lean();
+
+      // Saudi default work week: Sunday–Thursday
+      const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const DEFAULT_WORK_DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday'];
+
+      // Build list of all working days in the month per employee schedule
+      function getScheduledWorkDays(workDays: string[]): string[] {
+        const schedule = workDays.length > 0 ? workDays.map(d => d.toLowerCase()) : DEFAULT_WORK_DAYS;
+        const days: string[] = [];
+        for (let d = new Date(startDate); d <= endDate; d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)) {
+          if (schedule.includes(DAY_NAMES[d.getDay()])) {
+            days.push(d.toISOString().split('T')[0]);
+          }
+        }
+        return days;
+      }
+
       const payrollData = employees.map(emp => {
         const empAtt = attendances.filter(a => a.employeeId === emp.id || String(a.employeeId) === String((emp as any)._id));
-        const presentDays = empAtt.filter(a => a.status === 'checked_in' || a.status === 'checked_out' || a.checkInTime).length;
-        const absentDays = empAtt.filter(a => a.status === 'absent').length;
-        const lateDays = empAtt.filter(a => (a as any).isLate || (a.lateMinutes ?? 0) > 0).length;
-        const totalWorkingDays = new Date(targetYear, targetMonth + 1, 0).getDate();
+
+        // Days employee actually attended (any check-in record regardless of status)
+        const presentDays = empAtt.filter(a => a.status === 'checked_in' || a.status === 'checked_out' || a.status === 'late' || a.checkInTime).length;
+
+        // Explicit absences (manager-recorded)
+        const explicitAbsentDays = empAtt.filter(a => a.status === 'absent').length;
+
+        // Late days and total late minutes
+        const lateRecords = empAtt.filter(a => (a as any).isLate === 1 || (a.lateMinutes ?? 0) > 0);
+        const lateDays = lateRecords.length;
+        const totalLateMinutes = lateRecords.reduce((sum, a) => sum + (a.lateMinutes ?? 0), 0);
+
+        // Scheduled working days for this employee based on their workDays config
+        const scheduledDays = getScheduledWorkDays((emp as any).workDays || []);
+        const totalWorkingDays = scheduledDays.length;
+
+        // Implicit absences: scheduled days with NO attendance record at all
+        const attendedDates = new Set(
+          empAtt.map(a => new Date(a.shiftDate).toISOString().split('T')[0])
+        );
+        const implicitAbsentDays = scheduledDays.filter(day => !attendedDates.has(day)).length;
+
+        // Total absences = implicit (no-show) + explicit (marked absent)
+        const absentDays = implicitAbsentDays + explicitAbsentDays;
+
         const baseSalary = Number((emp as any).salary || (emp as any).baseSalary || 0);
         const dailyRate = baseSalary / (totalWorkingDays || 26);
         const deductions = absentDays * dailyRate;
-        const lateDeductions = lateDays * (dailyRate * 0.25);
+
+        // Calculate shift duration from employee's schedule (default 8 hours)
+        let shiftHours = 8;
+        const shiftStart = (emp as any).shiftStartTime as string | undefined;
+        const shiftEnd = (emp as any).shiftEndTime as string | undefined;
+        if (shiftStart && shiftEnd) {
+          const [sh, sm] = shiftStart.split(':').map(Number);
+          const [eh, em] = shiftEnd.split(':').map(Number);
+          const computed = (eh * 60 + em - sh * 60 - sm) / 60;
+          if (computed > 0) shiftHours = computed;
+        }
+        const minutesPerDay = shiftHours * 60;
+
+        // Late deduction proportional to actual late minutes (not flat 25%)
+        // e.g. 30 min late in an 8-hour day = 30/480 of daily rate
+        const lateDeductions = minutesPerDay > 0 ? (totalLateMinutes / minutesPerDay) * dailyRate : 0;
         const netSalary = Math.max(0, baseSalary - deductions - lateDeductions);
         return {
           employeeId: emp.id || String((emp as any)._id),
@@ -16658,7 +20614,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           baseSalary,
           presentDays,
           absentDays,
+          explicitAbsentDays,
+          implicitAbsentDays,
           lateDays,
+          totalLateMinutes,
+          shiftHours,
           totalWorkingDays,
           deductions: Math.round(deductions * 100) / 100,
           lateDeductions: Math.round(lateDeductions * 100) / 100,
@@ -16681,6 +20641,106 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "فشل إنشاء تقرير الرواتب" });
     }
   });
+
+  // ── Payroll Snapshot CRUD ──────────────────────────────────────────────────
+
+  // GET /api/payroll/snapshots?year=&month= — fetch existing snapshot for a month
+  app.get("/api/payroll/snapshots", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { PayrollSnapshotModel } = await import("@shared/schema");
+      const tenantId = (req as any).employee?.tenantId || 'demo-tenant';
+      const query: any = { tenantId };
+      if (req.query.year) query.year = Number(req.query.year);
+      if (req.query.month) query.month = Number(req.query.month);
+      const snapshots = await PayrollSnapshotModel.find(query).sort({ year: -1, month: -1 }).lean();
+      res.json(snapshots.map(serializeDoc));
+    } catch (error) {
+      res.status(500).json({ error: "فشل جلب سجلات الرواتب المجمدة" });
+    }
+  });
+
+  // POST /api/payroll/snapshots — freeze payroll for a given month (saves live calculation)
+  app.post("/api/payroll/snapshots", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { PayrollSnapshotModel } = await import("@shared/schema");
+      const tenantId = (req as any).employee?.tenantId || 'demo-tenant';
+      const { year, month, employees, totals, notes } = req.body;
+
+      if (!year || !month || !employees) {
+        return res.status(400).json({ error: "year و month و employees مطلوبة" });
+      }
+
+      // Prevent duplicate snapshots for the same month
+      const existing = await PayrollSnapshotModel.findOne({ tenantId, year, month });
+      if (existing) {
+        return res.status(409).json({ error: "يوجد كشف رواتب مجمد بالفعل لهذا الشهر", snapshotId: existing.id });
+      }
+
+      const snapshot = await PayrollSnapshotModel.create({
+        id: nanoid(),
+        tenantId,
+        year,
+        month,
+        status: 'frozen',
+        employees,
+        totals,
+        notes: notes || '',
+        frozenAt: new Date(),
+        frozenBy: (req as any).employee?.id || 'unknown',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      res.status(201).json(serializeDoc(snapshot));
+    } catch (error: any) {
+      if (error.code === 11000) {
+        return res.status(409).json({ error: "يوجد كشف رواتب مجمد بالفعل لهذا الشهر" });
+      }
+      res.status(500).json({ error: "فشل تجميد كشف الرواتب" });
+    }
+  });
+
+  // PATCH /api/payroll/snapshots/:id/approve — approve a frozen snapshot
+  app.patch("/api/payroll/snapshots/:id/approve", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { PayrollSnapshotModel } = await import("@shared/schema");
+      const tenantId = (req as any).employee?.tenantId || 'demo-tenant';
+      const snapshot = await PayrollSnapshotModel.findOneAndUpdate(
+        { id: req.params.id, tenantId, status: 'frozen' },
+        {
+          $set: {
+            status: 'approved',
+            approvedAt: new Date(),
+            approvedBy: (req as any).employee?.id || 'unknown',
+            updatedAt: new Date(),
+          }
+        },
+        { new: true }
+      );
+      if (!snapshot) return res.status(404).json({ error: "الكشف غير موجود أو تمت الموافقة عليه مسبقاً" });
+      res.json(serializeDoc(snapshot));
+    } catch (error) {
+      res.status(500).json({ error: "فشل اعتماد كشف الرواتب" });
+    }
+  });
+
+  // DELETE /api/payroll/snapshots/:id — unfreeze (only draft/frozen, not approved)
+  app.delete("/api/payroll/snapshots/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { PayrollSnapshotModel } = await import("@shared/schema");
+      const tenantId = (req as any).employee?.tenantId || 'demo-tenant';
+      const snapshot = await PayrollSnapshotModel.findOne({ id: req.params.id, tenantId });
+      if (!snapshot) return res.status(404).json({ error: "الكشف غير موجود" });
+      if (snapshot.status === 'approved') {
+        return res.status(403).json({ error: "لا يمكن حذف كشف راتب معتمد" });
+      }
+      await PayrollSnapshotModel.deleteOne({ id: req.params.id, tenantId });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "فشل حذف كشف الرواتب" });
+    }
+  });
+  // ──────────────────────────────────────────────────────────────────────────
 
   // ============================================================
   // COGS / PROFIT MARGIN REPORT
@@ -16728,217 +20788,3608 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ============================================================
-  // APPLE WALLET PASS GENERATION
-  // ============================================================
-  app.get("/api/customer/apple-wallet-pass", async (req: any, res) => {
+  app.get("/api/reports/employee-sales", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
-      const { LoyaltyCardModel, CustomerModel } = await import("@shared/schema");
-      const { PKPass } = await import("passkit-generator");
+      const { OrderModel, EmployeeModel } = await import("@shared/schema");
+      const { period, branchId } = req.query;
+      const now = new Date();
+      let startDate: Date;
 
-      // Accept phone from query param OR from active session
-      let rawPhone: string = (req.query.phone as string) || req.session?.customer?.phone || "";
-      if (!rawPhone) return res.status(400).json({ error: "رقم الهاتف مطلوب" });
+      switch (period) {
+        case 'today':
+          startDate = getSaudiStartOfDay();
+          break;
+        case 'week':
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        default:
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      }
 
-      const digits = rawPhone.replace(/\D/g, '');
-      const short9  = digits.slice(-9);
-      const phoneVariants = [short9, `0${short9}`, `+966${short9}`, `966${short9}`];
+      const orderQuery: any = { createdAt: { $gte: startDate }, status: { $in: ['completed', 'delivered'] } };
+      if (req.employee?.role !== 'admin' && req.employee?.role !== 'owner') {
+        orderQuery.branchId = req.employee?.branchId;
+      } else if (branchId) {
+        orderQuery.branchId = branchId;
+      }
 
-      // Look up loyalty card by any phone variant
-      let card = await LoyaltyCardModel.findOne({
-        phoneNumber: { $in: phoneVariants }
-      }).lean() as any;
+      const salesByEmployee = await OrderModel.aggregate([
+        { $match: orderQuery },
+        { $group: {
+          _id: "$employeeId",
+          totalSales: { $sum: "$totalAmount" },
+          orderCount: { $sum: 1 },
+          avgOrderValue: { $avg: "$totalAmount" }
+        }},
+        { $sort: { totalSales: -1 } }
+      ]);
 
-      // Fallback: look up customer and then their card
-      if (!card) {
-        const dbCustomer = await CustomerModel.findOne({ phone: { $in: phoneVariants } }).lean() as any;
-        if (dbCustomer) {
-          const cid = String(dbCustomer._id || dbCustomer.id);
-          card = await LoyaltyCardModel.findOne({ customerId: cid }).lean() as any;
+      const enriched = await Promise.all(salesByEmployee.map(async (s: any) => {
+        const emp = await EmployeeModel.findOne({ $or: [{ id: s._id }, { _id: s._id }] }).lean();
+        return {
+          employeeId: s._id,
+          employeeName: (emp as any)?.fullName || 'غير معروف',
+          role: (emp as any)?.role || 'unknown',
+          totalSales: Math.round(s.totalSales * 100) / 100,
+          orderCount: s.orderCount,
+          avgOrderValue: Math.round(s.avgOrderValue * 100) / 100
+        };
+      }));
+
+      const bestSellerItems = await OrderModel.aggregate([
+        { $match: orderQuery },
+        { $unwind: "$items" },
+        { $group: {
+          _id: "$items.name",
+          totalQuantity: { $sum: "$items.quantity" },
+          totalRevenue: { $sum: { $multiply: ["$items.price", "$items.quantity"] } }
+        }},
+        { $sort: { totalQuantity: -1 } },
+        { $limit: 10 }
+      ]);
+
+      res.json({
+        period: period || 'month',
+        startDate: startDate.toISOString(),
+        employees: enriched,
+        topItems: bestSellerItems.map((item: any) => ({
+          name: item._id,
+          quantity: item.totalQuantity,
+          revenue: Math.round(item.totalRevenue * 100) / 100
+        }))
+      });
+    } catch (error) {
+      console.error("Error getting employee sales report:", error);
+      res.status(500).json({ error: "فشل في جلب تقرير المبيعات" });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get("/api/system/status", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { OrderModel, EmployeeModel, AttendanceModel, CoffeeItemModel, BranchModel } = await import("@shared/schema");
+      const today = getSaudiStartOfDay();
+      const tomorrow = getSaudiEndOfDay();
+
+      const isGlobal = req.employee?.role === 'admin' || req.employee?.role === 'owner';
+      const branchFilter: any = isGlobal ? {} : { branchId: req.employee?.branchId };
+      const orderDateFilter = { createdAt: { $gte: today, $lt: tomorrow }, ...branchFilter };
+
+      const [todayOrders, activeEmployees, todayAttendance, menuItems, branches] = await Promise.all([
+        OrderModel.countDocuments(orderDateFilter),
+        EmployeeModel.countDocuments({ isActive: { $ne: false }, ...branchFilter }),
+        AttendanceModel.countDocuments({ shiftDate: { $gte: today, $lt: tomorrow }, status: 'checked_in', ...branchFilter }),
+        CoffeeItemModel.countDocuments({ isAvailable: { $ne: false } }),
+        BranchModel.countDocuments({ isActive: { $ne: false } })
+      ]);
+
+      const todayRevenue = await OrderModel.aggregate([
+        { $match: { ...orderDateFilter, status: { $in: ['completed', 'delivered'] } } },
+        { $group: { _id: null, total: { $sum: "$totalAmount" } } }
+      ]);
+
+      const pendingOrders = await OrderModel.countDocuments({ 
+        ...orderDateFilter, 
+        status: { $in: ['pending', 'preparing'] } 
+      });
+
+      res.json({
+        serverTime: new Date().toISOString(),
+        uptime: process.uptime(),
+        database: 'connected',
+        todayOrders,
+        todayRevenue: todayRevenue[0]?.total || 0,
+        pendingOrders,
+        activeEmployees,
+        presentToday: todayAttendance,
+        menuItemsActive: menuItems,
+        activeBranches: branches,
+        systemHealth: 'operational'
+      });
+    } catch (error) {
+      res.status(500).json({ error: "فشل في جلب حالة النظام", systemHealth: 'degraded' });
+    }
+  });
+
+  // ─── AI Chat with Business Context ──────────────────────────────────────
+  app.post("/api/ai/chat", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { message, history } = req.body;
+      if (!message) return res.status(400).json({ error: "الرسالة مطلوبة" });
+
+      // Gather business context
+      const todayStart = getSaudiStartOfDay();
+      const weekStart = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      const aiTenantId = req.employee?.tenantId || 'demo-tenant';
+      let businessContext = "";
+      try {
+        const { OrderModel: AiOrderModel } = await import("@shared/schema");
+        const allOrders = await AiOrderModel.find({ tenantId: aiTenantId }).sort({ createdAt: -1 }).limit(500).lean();
+        const todayOrders = allOrders.filter((o: any) => new Date(o.createdAt) >= todayStart);
+        const weekOrders = allOrders.filter((o: any) => new Date(o.createdAt) >= weekStart);
+
+        const todayRevenue = todayOrders.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+        const weekRevenue = weekOrders.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+
+        // Top selling items
+        const itemCounts: Record<string, { count: number; revenue: number }> = {};
+        weekOrders.forEach((o: any) => {
+          (o.items || []).forEach((item: any) => {
+            const name = item.nameAr || item.name || "بدون اسم";
+            if (!itemCounts[name]) itemCounts[name] = { count: 0, revenue: 0 };
+            itemCounts[name].count += item.quantity || 1;
+            itemCounts[name].revenue += (item.price || 0) * (item.quantity || 1);
+          });
+        });
+        const topItems = Object.entries(itemCounts).sort((a, b) => b[1].count - a[1].count).slice(0, 5);
+
+        // Day performance
+        const dayRevenue: Record<string, number> = {};
+        weekOrders.forEach((o: any) => {
+          const day = new Date(o.createdAt).toLocaleDateString("ar-SA", { weekday: "long" });
+          dayRevenue[day] = (dayRevenue[day] || 0) + (o.totalAmount || 0);
+        });
+        const bestDay = Object.entries(dayRevenue).sort((a, b) => b[1] - a[1])[0];
+
+        const allEmployees = await storage.getEmployees();
+        const products = await getCachedCoffeeItems(aiTenantId);
+
+        businessContext = `
+معلومات الكافيه (محدثة الآن):
+- إجمالي مبيعات اليوم: ${todayRevenue.toFixed(2)} ريال (${todayOrders.length} طلب)
+- إجمالي مبيعات الأسبوع: ${weekRevenue.toFixed(2)} ريال (${weekOrders.length} طلب)
+- عدد الموظفين: ${allEmployees.length}
+- عدد المنتجات في المنيو: ${products.length}
+- متوسط قيمة الطلب (هذا الأسبوع): ${weekOrders.length > 0 ? (weekRevenue / weekOrders.length).toFixed(2) : 0} ريال
+- أفضل يوم هذا الأسبوع: ${bestDay ? `${bestDay[0]} (${bestDay[1].toFixed(2)} ريال)` : "غير متاح"}
+- أكثر 5 منتجات مبيعاً هذا الأسبوع:
+${topItems.map((item, i) => `  ${i + 1}. ${item[0]}: ${item[1].count} طلب (${item[1].revenue.toFixed(2)} ريال)`).join("\n") || "  لا بيانات"}
+`;
+      } catch {
+        businessContext = "لم تتوفر بيانات المبيعات الآن.";
+      }
+
+      const systemPrompt = `أنت مساعد ذكاء اصطناعي متخصص لإدارة المقاهي والمطاعم، تعمل لصالح نظام CLUNY CAFE.
+أنت خبير في:
+- تحليل المبيعات والأرباح
+- تحسين قائمة الطعام والتسعير
+- إدارة الموظفين وجدولة الوردايات
+- استراتيجيات التسويق والعروض الترويجية
+- تحسين تجربة العملاء
+- إدارة المخزون والتكاليف
+
+${businessContext}
+
+قواعد الإجابة (مهمة جداً — يجب الالتزام بها دائماً):
+- أجب دائماً بالعربية ما لم يسألك المستخدم بالإنجليزية
+- إذا سألك المستخدم بالإنجليزية، أجب بالإنجليزية
+- لا ترد أبداً بالصينية أو اليابانية أو الكورية أو أي لغة أخرى غير العربية والإنجليزية
+- CRITICAL: Only respond in Arabic or English. NEVER use Chinese, Japanese, Korean, or any other language.
+- كن موجزاً ومفيداً وعملياً
+- استخدم الأرقام والبيانات المتاحة في إجاباتك
+- قدم توصيات قابلة للتنفيذ
+- استخدم الإيموجي لتحسين القراءة`;
+
+      const messages = [
+        { role: "system", content: systemPrompt },
+        ...(Array.isArray(history) ? history.slice(-10) : []),
+        { role: "user", content: message },
+      ];
+
+      const kimiKey = process.env.KIMI_API_KEY;
+      if (!kimiKey) return res.status(200).json({ response: "مساعد الذكاء الاصطناعي غير مفعّل — يرجى ضبط مفتاح KIMI_API_KEY.", configured: false });
+
+      const response = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${kimiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "moonshot-v1-32k", messages, max_tokens: 1000, temperature: 0.7 }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("Kimi AI chat error:", errText);
+        return res.status(500).json({ error: "فشل الاتصال بـ Kimi AI" });
+      }
+
+      const data = await response.json() as any;
+      const reply = data.choices?.[0]?.message?.content || "";
+      res.json({ reply, model: "kimi/moonshot-v1-32k" });
+    } catch (error: any) {
+      console.error("AI chat error:", error);
+      res.status(500).json({ error: error.message || "خطأ في الذكاء الاصطناعي" });
+    }
+  });
+
+  // ─── AI Quick Insights (auto-generated) ──────────────────────────────────
+  app.get("/api/ai/insights", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+
+      const insightsTenantId = req.employee?.tenantId || 'demo-tenant';
+      const todayStart = getSaudiStartOfDay();
+      const weekStart = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      const { OrderModel: InsightsOrderModel } = await import("@shared/schema");
+      const allOrders = await InsightsOrderModel.find({ tenantId: insightsTenantId }).sort({ createdAt: -1 }).limit(500).lean();
+      const todayOrders = allOrders.filter((o: any) => new Date(o.createdAt) >= todayStart);
+      const weekOrders = allOrders.filter((o: any) => new Date(o.createdAt) >= weekStart);
+      const prevWeekStart = new Date(weekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const prevWeekOrders = allOrders.filter((o: any) => new Date(o.createdAt) >= prevWeekStart && new Date(o.createdAt) < weekStart);
+
+      const todayRevenue = todayOrders.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+      const weekRevenue = weekOrders.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+      const prevWeekRevenue = prevWeekOrders.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+      const growthPct = prevWeekRevenue > 0 ? ((weekRevenue - prevWeekRevenue) / prevWeekRevenue * 100).toFixed(1) : null;
+
+      const itemCounts: Record<string, number> = {};
+      weekOrders.forEach((o: any) => {
+        (o.items || []).forEach((item: any) => {
+          const name = item.nameAr || item.name || "؟";
+          itemCounts[name] = (itemCounts[name] || 0) + (item.quantity || 1);
+        });
+      });
+      const topItems = Object.entries(itemCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n, c]) => `${n} (${c}x)`).join("، ");
+
+      const hourCounts: Record<number, number> = {};
+      weekOrders.forEach((o: any) => {
+        const h = new Date(o.createdAt).getHours();
+        hourCounts[h] = (hourCounts[h] || 0) + 1;
+      });
+      const peakHour = Object.entries(hourCounts).sort((a, b) => Number(b[1]) - Number(a[1]))[0];
+
+      const prompt = `أنت مستشار أعمال لمقهى. حلل هذه البيانات وأعطني 4 رؤى استراتيجية قصيرة ومفيدة:
+
+بيانات هذا الأسبوع:
+- المبيعات: ${weekRevenue.toFixed(0)} ريال (${weekOrders.length} طلب)
+${growthPct ? `- النمو مقارنة بالأسبوع الماضي: ${growthPct}%` : ""}
+- مبيعات اليوم: ${todayRevenue.toFixed(0)} ريال (${todayOrders.length} طلب)
+- أكثر المنتجات طلباً: ${topItems || "لا بيانات"}
+- وقت الذروة: ${peakHour ? `الساعة ${peakHour[0]}:00 (${peakHour[1]} طلب)` : "غير محدد"}
+
+أعطني 4 رؤى مختلفة بهذا الشكل (JSON array فقط):
+[
+  {"icon": "📈", "title": "عنوان قصير", "insight": "جملة واحدة مفيدة"},
+  ...
+]
+لا تضف أي نص خارج الـ JSON.`;
+
+      const insightsMsgs = [{ role: "user", content: prompt }];
+      const kimiKey = process.env.KIMI_API_KEY;
+      if (!kimiKey) {
+        return res.json({ insights: [], stats: { todayRevenue, todayOrders: todayOrders.length, weekRevenue, weekOrders: weekOrders.length, growthPct }, configured: false });
+      }
+
+      const response = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${kimiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "moonshot-v1-32k", messages: insightsMsgs, max_tokens: 500, temperature: 0.6 }),
+      });
+
+      if (!response.ok) return res.json({ insights: [], stats: { todayRevenue, todayOrders: todayOrders.length, weekRevenue, weekOrders: weekOrders.length, growthPct }, error: "فشل الاتصال بـ Kimi AI" });
+
+      const data = await response.json() as any;
+      const content = (data.choices?.[0]?.message?.content || "").trim();
+
+      try {
+        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        const insights = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+        res.json({ insights, stats: { todayRevenue, todayOrders: todayOrders.length, weekRevenue, weekOrders: weekOrders.length, growthPct } });
+      } catch {
+        res.json({ insights: [], stats: { todayRevenue, todayOrders: todayOrders.length, weekRevenue, weekOrders: weekOrders.length, growthPct } });
+      }
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "خطأ في الذكاء الاصطناعي" });
+    }
+  });
+
+  // ─── AI Smart Report ───────────────────────────────────────────────────
+  app.post("/api/ai/smart-report", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { type, period } = req.body;
+      if (!type || !period) return res.status(400).json({ error: "type and period are required" });
+
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const todayStart = getSaudiStartOfDay();
+      const weekStart = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const monthStart = new Date(todayStart.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+      const periodStart = period === 'today' ? todayStart : period === 'week' ? weekStart : monthStart;
+
+      const { OrderModel: SmartOrderModel } = await import("@shared/schema");
+      const orders = await SmartOrderModel.find({
+        tenantId,
+        createdAt: { $gte: periodStart }
+      }).lean();
+
+      const revenue = orders.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+      const avgOrder = orders.length > 0 ? revenue / orders.length : 0;
+
+      const itemCounts: Record<string, { count: number; revenue: number }> = {};
+      orders.forEach((o: any) => {
+        (o.items || []).forEach((item: any) => {
+          const name = item.nameAr || item.name || "؟";
+          if (!itemCounts[name]) itemCounts[name] = { count: 0, revenue: 0 };
+          itemCounts[name].count += item.quantity || 1;
+          itemCounts[name].revenue += (item.price || 0) * (item.quantity || 1);
+        });
+      });
+      const topItems = Object.entries(itemCounts).sort((a, b) => b[1].count - a[1].count).slice(0, 8);
+
+      const hourCounts: Record<number, number> = {};
+      orders.forEach((o: any) => {
+        const h = new Date(o.createdAt).getHours();
+        hourCounts[h] = (hourCounts[h] || 0) + 1;
+      });
+      const peakHour = Object.entries(hourCounts).sort((a, b) => Number(b[1]) - Number(a[1]))[0];
+
+      const employees = await storage.getEmployees();
+      const products = await getCachedCoffeeItems(tenantId);
+
+      const periodLabel = period === 'today' ? 'اليوم' : period === 'week' ? 'هذا الأسبوع' : 'هذا الشهر';
+
+      const contextData = `
+بيانات الكافيه للفترة (${periodLabel}):
+- إجمالي الطلبات: ${orders.length}
+- إجمالي الإيرادات: ${revenue.toFixed(2)} ريال
+- متوسط قيمة الطلب: ${avgOrder.toFixed(2)} ريال
+- وقت الذروة: ${peakHour ? `الساعة ${peakHour[0]}:00 (${peakHour[1]} طلب)` : "غير محدد"}
+- عدد الموظفين: ${employees.length}
+- عدد المنتجات: ${products.length}
+- أكثر المنتجات طلباً:
+${topItems.slice(0, 5).map((item, i) => `  ${i + 1}. ${item[0]}: ${item[1].count} طلب (${item[1].revenue.toFixed(0)} ريال)`).join("\n") || "  لا بيانات"}
+`;
+
+      const typePrompts: Record<string, string> = {
+        sales: "ركز على المبيعات والإيرادات والمنتجات والفترات الزمنية",
+        employees: "ركز على الموظفين والإنتاجية والأداء",
+        inventory: "ركز على المخزون والمنتجات والنقص المحتمل والهدر",
+        customers: "ركز على سلوك العملاء والولاء ومعدل التكرار",
+        full: "قدم تحليلاً شاملاً لجميع جوانب الكافيه",
+      };
+
+      const prompt = `أنت خبير تحليل أعمال لمقهى. ${typePrompts[type] || "قدم تحليلاً متكاملاً"}.
+
+${contextData}
+
+أنشئ تقريراً ذكياً منظماً بالتنسيق التالي (JSON فقط، لا تضف أي نص خارج الـ JSON):
+{
+  "summary": "ملخص تنفيذي من 2-3 جمل",
+  "kpis": [
+    {"label": "اسم المؤشر", "value": "القيمة مع الوحدة", "trend": "up|down|flat"},
+    ...
+  ],
+  "sections": [
+    {
+      "icon": "📊",
+      "title": "عنوان القسم",
+      "content": "فقرة تحليلية من 2-3 جمل",
+      "bullets": ["نقطة 1", "نقطة 2", "نقطة 3"],
+      "highlight": "أبرز إنجاز أو رقم في هذا القسم (اختياري)"
+    }
+  ],
+  "recommendations": ["توصية 1 قابلة للتنفيذ", "توصية 2", "توصية 3"],
+  "risks": ["خطر أو تحذير 1", "خطر أو تحذير 2"]
+}
+
+القواعد:
+- استخدم البيانات الحقيقية المتوفرة
+- اجعل التوصيات قابلة للتنفيذ وعملية
+- اذكر أرقاماً حقيقية من البيانات
+- 3-4 أقسام مناسبة لنوع التقرير
+- 3-4 مؤشرات KPI
+- JSON صحيح فقط`;
+
+      const kimiKey = process.env.KIMI_API_KEY;
+      if (!kimiKey) return res.status(200).json({ report: null, configured: false, error: "مفتاح Kimi AI غير مضبوط" });
+
+      const response = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${kimiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "moonshot-v1-32k",
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 1500,
+          temperature: 0.5,
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("Kimi AI smart-report error:", errText);
+        return res.status(500).json({ error: "فشل الاتصال بـ Kimi AI" });
+      }
+
+      const data = await response.json() as any;
+      const content = (data.choices?.[0]?.message?.content || "").trim();
+
+      try {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        const report = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+        res.json({
+          ...report,
+          type,
+          period,
+          generatedAt: new Date().toISOString(),
+        });
+      } catch (parseErr) {
+        res.status(500).json({ error: "فشل تحليل رد AI" });
+      }
+    } catch (error: any) {
+      console.error("Smart report error:", error);
+      res.status(500).json({ error: error.message || "خطأ في توليد التقرير" });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  app.post("/api/ai/menu-assist", async (req, res) => {
+    try {
+      const { nameAr, nameEn, category, task, existingDescription, existingIngredients } = req.body;
+
+      if (!nameAr && !nameEn) {
+        return res.status(400).json({ error: "يرجى إدخال اسم المنتج أولاً" });
+      }
+
+      const categoryLabels: Record<string, string> = {
+        hot: "مشروب ساخن / hot beverage",
+        cold: "مشروب بارد / cold beverage",
+        desserts: "حلويات وكيك / desserts & cakes",
+        bakery: "مخبوزات / bakery",
+        sandwiches: "ساندوتشات / sandwiches",
+        specialty: "مشروب متخصص / specialty drink",
+      };
+      const catLabel = categoryLabels[category] || category || "منتج كافيه";
+
+      const systemPrompt = `أنت خبير تسويق إبداعي متخصص في صناعة القهوة والمقاهي العالمية من مستوى Starbucks وBlue Bottle وPeet's Coffee.
+مهمتك توليد محتوى تسويقي إبداعي، شهي، وجذاب لمنيو المقاهي.
+يجب أن يكون المحتوى:
+- شاعرياً وجذاباً يستفز حواس القارئ
+- يستخدم مصطلحات قهوة عالمية دقيقة
+- مثالي للعرض في قائمة طعام راقية
+- يذكر النكهات، الأحاسيس، الرائحة عند الاقتضاء
+- باللغتين العربية والإنجليزية حسب المطلوب
+
+CRITICAL LANGUAGE RULE: Respond ONLY in Arabic or English. NEVER use Chinese, Japanese, Korean, or any other language under any circumstances. If Arabic is requested, write in Arabic. If English is requested, write in English.`;
+
+      const tasks: Record<string, string> = {
+        description_ar: `اكتب وصفاً إبداعياً وشهياً باللغة العربية الفصيحة للمنتج التالي:
+الاسم: ${nameAr}${nameEn ? ` / ${nameEn}` : ""}
+النوع: ${catLabel}
+${existingDescription ? `الوصف الحالي: ${existingDescription}` : ""}
+
+الوصف يجب أن يكون من 2-3 جمل، يصف النكهة والمكونات الرئيسية والإحساس عند تناوله. استخدم لغة راقية وشاعرية.
+أعطني الوصف مباشرة بدون مقدمات أو شرح.`,
+
+        description_en: `Write a creative, appetizing description in English for:
+Name: ${nameEn || nameAr}
+Type: ${catLabel}
+${existingDescription ? `Current description: ${existingDescription}` : ""}
+
+Write 2-3 poetic, sensory sentences describing the flavor, texture, aroma, and experience. Use premium café language like Starbucks/Blue Bottle.
+Return only the description, no intro or explanation.`,
+
+        description_both: `اكتب وصفاً مزدوجاً إبداعياً (عربي وإنجليزي) للمنتج التالي:
+الاسم: ${nameAr}${nameEn ? ` / ${nameEn}` : ""}
+النوع: ${catLabel}
+
+أعطني:
+🇸🇦 الوصف العربي: [وصف شاعري راقي 2-3 جمل]
+🇬🇧 English: [creative 2-3 sentences poetic description]
+
+لا تضف مقدمات أو شرح إضافي.`,
+
+        name_en: `Suggest 3 creative English names for this Arabic café item:
+Arabic name: ${nameAr}
+Type: ${catLabel}
+
+Requirements: Premium café naming style, memorable, brandable, can include poetic adjectives.
+Format: numbered list 1, 2, 3 — names only, no explanation.`,
+
+        ingredients: `أنت طاهٍ متخصص في صناعة القهوة والمشروبات. اقترح قائمة المكونات المفصلة لتحضير هذا المنتج:
+المنتج: ${nameAr}${nameEn ? ` / ${nameEn}` : ""}
+النوع: ${catLabel}
+${existingIngredients ? `المكونات الحالية: ${existingIngredients}` : ""}
+
+قدم القائمة بهذا الشكل:
+• [اسم المكون] — [الكمية المقترحة] [الوحدة]
+
+اذكر كل المكونات الأساسية مع الكميات النموذجية لكوب واحد. كن دقيقاً ومفصلاً.`,
+
+        addons: `اقترح إضافات وخيارات تخصيص احترافية لهذا المنتج في مقهى راقٍ:
+المنتج: ${nameAr}${nameEn ? ` / ${nameEn}` : ""}
+النوع: ${catLabel}
+
+قدم 5-8 إضافات متنوعة بهذا الشكل:
+• [اسم الإضافة] — [السعر المقترح بالريال]
+
+تشمل: الأحجام المختلفة، نوع الحليب، النكهات الإضافية، الإضافات الخاصة.`,
+
+        flavor_profile: `صِف ملف النكهة والحواس الكامل لهذا المنتج بأسلوب التقييم المهني:
+المنتج: ${nameAr}${nameEn ? ` / ${nameEn}` : ""}
+النوع: ${catLabel}
+
+اكتب بهذا الشكل:
+☕ النكهة الرئيسية: ...
+🌸 الرائحة: ...  
+🎨 اللون والمظهر: ...
+✨ الإحساس في الفم: ...
+💡 مقترح التقديم: ...
+
+استخدم لغة تذوق احترافية.`,
+      };
+
+      const userPrompt = tasks[task] || tasks.description_ar;
+
+      const menuMsgs = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ];
+
+      const kimiKey = process.env.KIMI_API_KEY;
+      if (!kimiKey) return res.status(200).json({ message: "المساعد غير مفعّل حالياً. يرجى ضبط KIMI_API_KEY.", configured: false });
+
+      const menuResponse = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${kimiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "moonshot-v1-32k", messages: menuMsgs, max_tokens: 600, temperature: 0.85 }),
+      });
+
+      if (!menuResponse.ok) {
+        const errText = await menuResponse.text();
+        console.error("Groq menu error:", errText);
+        return res.status(500).json({ error: "فشل في الاتصال بـ Groq" });
+      }
+
+      const data = await menuResponse.json() as any;
+      const content = data.choices?.[0]?.message?.content || "";
+      res.json({ result: content, task, model: "kimi/moonshot-v1-32k" });
+    } catch (error: any) {
+      console.error("AI Menu Assist error:", error);
+      res.status(500).json({ error: error.message || "حدث خطأ في الذكاء الاصطناعي" });
+    }
+  });
+
+  // ─── QIROX Studio External API Proxy ───────────────────────────────────────
+  const QIROX_STUDIO_BASE = "https://www.cluny.cafe/api/v1";
+  const qiroxStudioHeaders = () => ({
+    Authorization: `Bearer ${process.env.QIROX_STUDIO_API_KEY || ""}`,
+    "Content-Type": "application/json",
+  });
+
+  const qiroxStudioProxy = async (endpoint: string, res: any) => {
+    try {
+      const response = await fetch(`${QIROX_STUDIO_BASE}${endpoint}`, {
+        headers: qiroxStudioHeaders(),
+      });
+      if (!response.ok) {
+        return res.status(response.status).json({ error: `CLUNY Studio API error: ${response.statusText}` });
+      }
+      const data = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      console.error(`QIROX Studio proxy error (${endpoint}):`, error.message);
+      res.status(500).json({ error: "فشل الاتصال بـ CLUNY Studio API" });
+    }
+  };
+
+  app.get("/api/qirox-studio/me", async (_req, res) => qiroxStudioProxy("/me", res));
+  app.get("/api/qirox-studio/stats", async (_req, res) => qiroxStudioProxy("/stats", res));
+  app.get("/api/qirox-studio/orders", async (_req, res) => qiroxStudioProxy("/orders", res));
+  app.get("/api/qirox-studio/projects", async (_req, res) => qiroxStudioProxy("/projects", res));
+  app.get("/api/qirox-studio/invoices", async (_req, res) => qiroxStudioProxy("/invoices", res));
+  app.get("/api/qirox-studio/wallet", async (_req, res) => qiroxStudioProxy("/wallet", res));
+  app.get("/api/qirox-studio/customers", async (_req, res) => qiroxStudioProxy("/customers", res));
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // ── Cloud Print Queue ──────────────────────────────────────────────────────
+  // Allows browsers (Tab Sense/Android) to submit print jobs to the cloud,
+  // so a local print agent (running near the printer) can pick them up via TCP.
+  // Auth: browser submits with employee session; agent uses PRINT_AGENT_KEY.
+  {
+    const crypto = await import('crypto');
+    const PRINT_AGENT_KEY: string = crypto.default
+      .createHash('sha256')
+      .update((process.env.SESSION_SECRET || 'qirox-default') + '-print-agent-v1')
+      .digest('hex')
+      .slice(0, 32);
+
+    const agentAuth = (req: any, res: any, next: any) => {
+      const key = req.headers['x-print-agent-key'] || req.query.key;
+      if (key !== PRINT_AGENT_KEY) {
+        return res.status(401).json({ error: 'Invalid print agent key' });
+      }
+      next();
+    };
+
+    // Submit a print job (called by browser; employee session required)
+    app.post('/api/print-queue', requireAuth as any, async (req: any, res: any) => {
+      try {
+        const { data, printerIp, printerPort } = req.body;
+        if (!data || !printerIp) {
+          return res.status(400).json({ error: 'data and printerIp are required' });
+        }
+        const job = await PrintJobModel.create({ data, printerIp, printerPort: printerPort || 9100 });
+        res.json({ ok: true, jobId: job._id });
+      } catch (e: any) {
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+
+    // Poll for the oldest pending job (called by print agent)
+    app.get('/api/print-queue/pending', agentAuth, async (_req: any, res: any) => {
+      try {
+        const job = await PrintJobModel.findOne({ status: 'pending' }).sort({ createdAt: 1 }).lean();
+        res.json({ job: job || null });
+      } catch (e: any) {
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+
+    // Mark job as done or error (called by print agent)
+    app.patch('/api/print-queue/:id/done', agentAuth, async (req: any, res: any) => {
+      try {
+        const update: any = { status: req.body.error ? 'error' : 'done', doneAt: new Date() };
+        if (req.body.error) update.errorMsg = req.body.error;
+        await PrintJobModel.findByIdAndUpdate(req.params.id, update);
+        res.json({ ok: true });
+      } catch (e: any) {
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+
+    // Get agent config (server URL + key) — for settings page
+    app.get('/api/print-queue/agent-info', requireAuth as any, async (_req: any, res: any) => {
+      const serverUrl = process.env.SITE_URL ||
+        (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : 'http://localhost:5000');
+      res.json({ serverUrl, agentKey: PRINT_AGENT_KEY });
+    });
+  }
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // ─── WASTAGE API ──────────────────────────────────────────────────────────
+  app.get("/api/inventory/wastage", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { WastageModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const { limit = '100', rawItemId, reason } = req.query as any;
+      const query: any = { $or: [{ tenantId }, { tenantId: { $exists: false } }] };
+      if (rawItemId) query.rawItemId = rawItemId;
+      if (reason) query.reason = reason;
+      const records = await WastageModel.find(query).sort({ recordedAt: -1 }).limit(parseInt(limit)).lean();
+      res.json(records);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/inventory/wastage", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { WastageModel, RawItemModel } = await import("@shared/schema");
+      const { nanoid } = await import("nanoid");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const { rawItemId, quantity, reason, reasonNote } = req.body;
+      if (!rawItemId || !quantity || !reason) return res.status(400).json({ error: 'rawItemId, quantity, reason required' });
+      // Fetch raw item for cost + name
+      const rawItem = await RawItemModel.findOne({ id: rawItemId }).lean() as any;
+      const unitCost = rawItem?.unitCost || 0;
+      const totalCost = unitCost * Number(quantity);
+      const wastage = await WastageModel.create({
+        id: nanoid(),
+        tenantId,
+        rawItemId,
+        rawItemName: rawItem?.nameAr || rawItemId,
+        rawItemCode: rawItem?.code,
+        quantity: Number(quantity),
+        unit: rawItem?.unit || 'piece',
+        reason,
+        reasonNote,
+        unitCost,
+        totalCost,
+        recordedBy: req.employee?.fullName || req.employee?.username || 'manager',
+        recordedAt: new Date(),
+      });
+      // Deduct from stock
+      if (rawItem) {
+        await RawItemModel.updateOne({ id: rawItemId }, { $inc: { currentStock: -Number(quantity), currentStockLevel: -Number(quantity) } });
+      }
+      res.status(201).json(wastage);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.get("/api/inventory/wastage/summary", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { WastageModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const since = new Date(); since.setDate(since.getDate() - 30);
+      const records = await WastageModel.find({
+        $or: [{ tenantId }, { tenantId: { $exists: false } }],
+        recordedAt: { $gte: since }
+      }).lean() as any[];
+      const totalCost = records.reduce((s: number, r: any) => s + (r.totalCost || 0), 0);
+      const byReason = records.reduce((acc: any, r: any) => {
+        acc[r.reason] = (acc[r.reason] || 0) + (r.totalCost || 0);
+        return acc;
+      }, {});
+      const byItem = records.reduce((acc: any, r: any) => {
+        if (!acc[r.rawItemId]) acc[r.rawItemId] = { name: r.rawItemName, qty: 0, cost: 0 };
+        acc[r.rawItemId].qty  += r.quantity || 0;
+        acc[r.rawItemId].cost += r.totalCost || 0;
+        return acc;
+      }, {});
+      res.json({ totalCost, count: records.length, byReason, byItem });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/inventory/wastage/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { WastageModel } = await import("@shared/schema");
+      await WastageModel.deleteOne({ id: req.params.id });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── PRODUCTION API ────────────────────────────────────────────────────────
+  app.get("/api/inventory/production", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { ProductionModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const { status, limit = '100' } = req.query as any;
+      const query: any = { $or: [{ tenantId }, { tenantId: { $exists: false } }] };
+      if (status) query.status = status;
+      const batches = await ProductionModel.find(query).sort({ plannedDate: -1 }).limit(parseInt(limit)).lean();
+      res.json(batches);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/inventory/production", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { ProductionModel } = await import("@shared/schema");
+      const { nanoid } = await import("nanoid");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const { productName, quantity, unit, ingredients = [], plannedDate, notes } = req.body;
+      if (!productName || !quantity || !plannedDate) return res.status(400).json({ error: 'productName, quantity, plannedDate required' });
+      const totalCost = (ingredients as any[]).reduce((s: number, i: any) => s + (i.totalCost || 0), 0);
+      const count = await ProductionModel.countDocuments({ $or: [{ tenantId }, { tenantId: { $exists: false } }] });
+      const batch = await ProductionModel.create({
+        id: nanoid(),
+        tenantId,
+        batchNumber: `PROD-${String(count + 1).padStart(4, '0')}`,
+        productName,
+        quantity: Number(quantity),
+        unit: unit || 'piece',
+        ingredients,
+        totalCost,
+        status: 'planned',
+        plannedDate: new Date(plannedDate),
+        notes,
+        producedBy: req.employee?.fullName || req.employee?.username || 'manager',
+      });
+      res.status(201).json(batch);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.put("/api/inventory/production/:id/status", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { ProductionModel, RawItemModel } = await import("@shared/schema");
+      const { status } = req.body;
+      const batch = await ProductionModel.findOne({ id: req.params.id }) as any;
+      if (!batch) return res.status(404).json({ error: 'Not found' });
+      batch.status = status;
+      if (status === 'completed') {
+        batch.completedDate = new Date();
+        // Deduct ingredients from stock
+        for (const ing of batch.ingredients || []) {
+          if (ing.rawItemId && ing.quantityUsed > 0) {
+            await RawItemModel.updateOne({ id: ing.rawItemId }, { $inc: { currentStock: -ing.quantityUsed, currentStockLevel: -ing.quantityUsed } });
+          }
+        }
+      }
+      await batch.save();
+      res.json(batch);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/inventory/production/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { ProductionModel } = await import("@shared/schema");
+      await ProductionModel.deleteOne({ id: req.params.id });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── STOCK FORECASTING API ─────────────────────────────────────────────────
+  app.get("/api/inventory/forecast", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { RawItemModel, StockMovementModel, WastageModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const since = new Date(); since.setDate(since.getDate() - 30);
+
+      const rawItems = await RawItemModel.find({
+        $or: [{ tenantId }, { tenantId: { $exists: false } }],
+        isActive: 1,
+      }).lean() as any[];
+
+      // Get stock movements (deductions) in last 30 days
+      const movements = await StockMovementModel.find({
+        $or: [{ tenantId }, { tenantId: { $exists: false } }],
+        type: { $in: ['deduction', 'sale', 'adjustment', 'deduct', 'use'] },
+        createdAt: { $gte: since },
+      }).lean() as any[];
+
+      // Get wastage in last 30 days
+      const wastageRecords = await WastageModel.find({
+        $or: [{ tenantId }, { tenantId: { $exists: false } }],
+        recordedAt: { $gte: since },
+      }).lean() as any[];
+
+      const forecast = rawItems.map((item: any) => {
+        // Sum deductions per item
+        const itemMovements = movements.filter((m: any) => m.rawItemId === item.id || m.itemId === item.id);
+        const itemWastage = wastageRecords.filter((w: any) => w.rawItemId === item.id);
+        const totalDeducted = itemMovements.reduce((s: number, m: any) => s + Math.abs(m.quantity || 0), 0);
+        const totalWasted   = itemWastage.reduce((s: number, w: any) => s + (w.quantity || 0), 0);
+        const totalConsumed = totalDeducted + totalWasted;
+        const avgDailyUsage = totalConsumed / 30;
+        const currentStock  = item.currentStock || item.currentStockLevel || 0;
+        const daysUntilStockout = avgDailyUsage > 0 ? Math.floor(currentStock / avgDailyUsage) : 999;
+        const suggestedReorder  = Math.max(0, (item.maxStockLevel || item.minStockLevel * 3) - currentStock);
+        const stockoutRisk = daysUntilStockout < 3 ? 'critical' : daysUntilStockout < 7 ? 'high' : daysUntilStockout < 14 ? 'medium' : 'low';
+
+        return {
+          id: item.id,
+          nameAr: item.nameAr,
+          nameEn: item.nameEn,
+          unit: item.unit,
+          currentStock,
+          minStockLevel: item.minStockLevel,
+          maxStockLevel: item.maxStockLevel,
+          unitCost: item.unitCost || 0,
+          totalDeducted,
+          totalWasted,
+          avgDailyUsage: Math.round(avgDailyUsage * 100) / 100,
+          daysUntilStockout,
+          suggestedReorder: Math.round(suggestedReorder * 100) / 100,
+          stockoutRisk,
+          reorderCost: Math.round(suggestedReorder * (item.unitCost || 0) * 100) / 100,
+        };
+      });
+
+      // Sort: critical first, then high, then medium, then low
+      const riskOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+      forecast.sort((a: any, b: any) => (riskOrder[a.stockoutRisk as keyof typeof riskOrder] || 3) - (riskOrder[b.stockoutRisk as keyof typeof riskOrder] || 3));
+
+      const summary = {
+        critical: forecast.filter((f: any) => f.stockoutRisk === 'critical').length,
+        high: forecast.filter((f: any) => f.stockoutRisk === 'high').length,
+        medium: forecast.filter((f: any) => f.stockoutRisk === 'medium').length,
+        low: forecast.filter((f: any) => f.stockoutRisk === 'low').length,
+        totalReorderCost: forecast.reduce((s: number, f: any) => s + (f.reorderCost || 0), 0),
+      };
+
+      res.json({ items: forecast, summary });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // EMPLOYEE TASKS API
+  // ═══════════════════════════════════════════════════════════════════════════
+  app.get("/api/employee-tasks", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeTaskModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const { status, assignedTo, priority, limit = '200' } = req.query as any;
+      const query: any = { $or: [{ tenantId }, { tenantId: { $exists: false } }] };
+      if (status) query.status = status;
+      if (assignedTo) query.assignedTo = assignedTo;
+      if (priority) query.priority = priority;
+      const tasks = await EmployeeTaskModel.find(query).sort({ createdAt: -1 }).limit(parseInt(limit)).lean();
+      res.json(tasks);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/employee-tasks", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeTaskModel } = await import("@shared/schema");
+      const { nanoid } = await import("nanoid");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const { title, description, assignedTo, priority, dueDate, category, notes } = req.body;
+      if (!title || !assignedTo) return res.status(400).json({ error: 'title, assignedTo required' });
+      const task = await EmployeeTaskModel.create({
+        id: nanoid(), tenantId, title, description, assignedTo,
+        assignedBy: req.employee?.fullName || req.employee?.username || 'manager',
+        priority: priority || 'normal',
+        dueDate: dueDate ? new Date(dueDate) : undefined,
+        category: category || 'other', notes,
+      });
+      res.status(201).json(task);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.put("/api/employee-tasks/:id", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeTaskModel } = await import("@shared/schema");
+      const update: any = { ...req.body };
+      if (update.status === 'completed' && !update.completedAt) update.completedAt = new Date();
+      const task = await EmployeeTaskModel.findOneAndUpdate({ id: req.params.id }, update, { new: true });
+      res.json(task);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/employee-tasks/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeTaskModel } = await import("@shared/schema");
+      await EmployeeTaskModel.deleteOne({ id: req.params.id });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // EMPLOYEE VIOLATIONS API
+  // ═══════════════════════════════════════════════════════════════════════════
+  app.get("/api/employee-violations", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeViolationModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const { employeeId, severity, status, limit = '200' } = req.query as any;
+      const query: any = { $or: [{ tenantId }, { tenantId: { $exists: false } }] };
+      if (employeeId) query.employeeId = employeeId;
+      if (severity) query.severity = severity;
+      if (status) query.status = status;
+      const violations = await EmployeeViolationModel.find(query).sort({ occurredAt: -1 }).limit(parseInt(limit)).lean();
+      res.json(violations);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/employee-violations", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeViolationModel, EmployeeModel } = await import("@shared/schema");
+      const { nanoid } = await import("nanoid");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const { employeeId, type, severity, description, penaltyAmount, penaltyPoints, occurredAt } = req.body;
+      if (!employeeId || !type || !description) return res.status(400).json({ error: 'employeeId, type, description required' });
+      const emp = await EmployeeModel.findOne({ id: employeeId }).lean() as any;
+      const violation = await EmployeeViolationModel.create({
+        id: nanoid(), tenantId,
+        employeeId, employeeName: emp?.fullName || employeeId,
+        type, severity: severity || 'minor', description,
+        penaltyAmount: Number(penaltyAmount || 0),
+        penaltyPoints: Number(penaltyPoints || 0),
+        reportedBy: req.employee?.fullName || req.employee?.username || 'manager',
+        occurredAt: occurredAt ? new Date(occurredAt) : new Date(),
+      });
+      res.status(201).json(violation);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.put("/api/employee-violations/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeViolationModel } = await import("@shared/schema");
+      const v = await EmployeeViolationModel.findOneAndUpdate({ id: req.params.id }, req.body, { new: true });
+      res.json(v);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/employee-violations/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeViolationModel } = await import("@shared/schema");
+      await EmployeeViolationModel.deleteOne({ id: req.params.id });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // EMPLOYEE BREAKS API
+  // ═══════════════════════════════════════════════════════════════════════════
+  app.get("/api/employee-breaks", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeBreakModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const { employeeId, active, limit = '100' } = req.query as any;
+      const query: any = { $or: [{ tenantId }, { tenantId: { $exists: false } }] };
+      if (employeeId) query.employeeId = employeeId;
+      if (active === 'true') query.endedAt = { $exists: false };
+      const breaks = await EmployeeBreakModel.find(query).sort({ startedAt: -1 }).limit(parseInt(limit)).lean();
+      res.json(breaks);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/employee-breaks/start", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeBreakModel, EmployeeModel } = await import("@shared/schema");
+      const { nanoid } = await import("nanoid");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const employeeId = req.body.employeeId || req.employee?.id;
+      const { type, notes, attendanceId } = req.body;
+      if (!employeeId) return res.status(400).json({ error: 'employeeId required' });
+      // Check for active break
+      const active = await EmployeeBreakModel.findOne({ employeeId, endedAt: { $exists: false } });
+      if (active) return res.status(400).json({ error: 'Already on a break', active });
+      const emp = await EmployeeModel.findOne({ id: employeeId }).lean() as any;
+      const brk = await EmployeeBreakModel.create({
+        id: nanoid(), tenantId, employeeId,
+        employeeName: emp?.fullName || employeeId,
+        type: type || 'rest', notes, attendanceId,
+        startedAt: new Date(),
+      });
+      res.status(201).json(brk);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/employee-breaks/:id/end", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeBreakModel } = await import("@shared/schema");
+      const brk = await EmployeeBreakModel.findOne({ id: req.params.id }) as any;
+      if (!brk) return res.status(404).json({ error: 'Not found' });
+      const endedAt = new Date();
+      brk.endedAt = endedAt;
+      brk.durationMinutes = Math.round((endedAt.getTime() - brk.startedAt.getTime()) / 60000);
+      await brk.save();
+      res.json(brk);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // EMPLOYEE LIVE STATUS (overview)
+  // ═══════════════════════════════════════════════════════════════════════════
+  app.get("/api/employees/live-status", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeModel, AttendanceModel, EmployeeBreakModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const employees = await EmployeeModel.find({ $or: [{ tenantId }, { tenantId: { $exists: false } }], isActive: 1 }).lean() as any[];
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      const attendance = await AttendanceModel.find({ shiftDate: { $gte: todayStart }, status: 'checked_in' }).lean() as any[];
+      const activeBreaks = await EmployeeBreakModel.find({ endedAt: { $exists: false } }).lean() as any[];
+      const onShiftIds = new Set(attendance.map((a: any) => a.employeeId));
+      const onBreakIds = new Set(activeBreaks.map((b: any) => b.employeeId));
+      const status = employees.map((e: any) => {
+        let s: 'on_shift' | 'on_break' | 'off_duty' = 'off_duty';
+        if (onBreakIds.has(e.id)) s = 'on_break';
+        else if (onShiftIds.has(e.id)) s = 'on_shift';
+        const att = attendance.find((a: any) => a.employeeId === e.id);
+        const brk = activeBreaks.find((b: any) => b.employeeId === e.id);
+        return {
+          id: e.id, fullName: e.fullName, role: e.role, jobTitle: e.jobTitle,
+          imageUrl: e.imageUrl, branchId: e.branchId,
+          status: s,
+          checkInTime: att?.checkInTime,
+          breakStartedAt: brk?.startedAt,
+          breakType: brk?.type,
+          isLate: att?.isLate || 0,
+          lateMinutes: att?.lateMinutes || 0,
+        };
+      });
+      res.json({
+        employees: status,
+        summary: {
+          total: employees.length,
+          onShift: status.filter(s => s.status === 'on_shift').length,
+          onBreak: status.filter(s => s.status === 'on_break').length,
+          offDuty: status.filter(s => s.status === 'off_duty').length,
+          late: status.filter(s => s.isLate === 1).length,
+        }
+      });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PERFORMANCE SCORING + LEADERBOARD
+  // ═══════════════════════════════════════════════════════════════════════════
+  app.get("/api/employees/performance", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeModel, AttendanceModel, EmployeeViolationModel, EmployeeTaskModel, OrderModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const { period = 'month' } = req.query as any;
+      const since = new Date();
+      if (period === 'week') since.setDate(since.getDate() - 7);
+      else if (period === 'month') since.setDate(since.getDate() - 30);
+      else if (period === 'year') since.setDate(since.getDate() - 365);
+
+      const employees = await EmployeeModel.find({ $or: [{ tenantId }, { tenantId: { $exists: false } }], isActive: 1 }).lean() as any[];
+
+      const [attendance, violations, tasks, orders] = await Promise.all([
+        AttendanceModel.find({ shiftDate: { $gte: since } }).lean() as any,
+        EmployeeViolationModel.find({ $or: [{ tenantId }, { tenantId: { $exists: false } }], occurredAt: { $gte: since } }).lean() as any,
+        EmployeeTaskModel.find({ $or: [{ tenantId }, { tenantId: { $exists: false } }], createdAt: { $gte: since } }).lean() as any,
+        OrderModel.find({ createdAt: { $gte: since }, paymentStatus: 'paid' }).lean() as any,
+      ]);
+
+      const performance = employees.map((emp: any) => {
+        const empAttendance = (attendance as any[]).filter((a: any) => a.employeeId === emp.id);
+        const empViolations = (violations as any[]).filter((v: any) => v.employeeId === emp.id);
+        const empTasks = (tasks as any[]).filter((t: any) => t.assignedTo === emp.id);
+        const empOrders = (orders as any[]).filter((o: any) => o.assignedCashierId === emp.id || o.employeeId === emp.id);
+
+        const lateCount = empAttendance.filter((a: any) => a.isLate === 1).length;
+        const lateMinutes = empAttendance.reduce((s: number, a: any) => s + (a.lateMinutes || 0), 0);
+        const presentDays = empAttendance.length;
+        const completedTasks = empTasks.filter((t: any) => t.status === 'completed').length;
+        const totalTasks = empTasks.length;
+        const taskCompletionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 100;
+        const totalSales = empOrders.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+        const orderCount = empOrders.length;
+        const violationPoints = empViolations.reduce((s: number, v: any) => {
+          const sevPts = v.severity === 'critical' ? 25 : v.severity === 'major' ? 15 : v.severity === 'moderate' ? 8 : 3;
+          return s + sevPts + (v.penaltyPoints || 0);
+        }, 0);
+        const totalPenalty = empViolations.reduce((s: number, v: any) => s + (v.penaltyAmount || 0), 0);
+
+        // Composite score: attendance(40) + tasks(30) + sales(20) - violations(weighted)
+        let score = 0;
+        const attendanceScore = Math.max(0, 40 - (lateCount * 4) - (lateMinutes * 0.1));
+        const taskScore = (taskCompletionRate / 100) * 30;
+        const salesScore = orderCount > 0 ? Math.min(20, orderCount / 10) : 0;
+        const violationDeduction = Math.min(40, violationPoints);
+        score = Math.max(0, Math.round(attendanceScore + taskScore + salesScore + 10 - violationDeduction));
+
+        const rating = score >= 85 ? 'excellent' : score >= 70 ? 'good' : score >= 50 ? 'average' : 'needs_improvement';
+
+        return {
+          id: emp.id, fullName: emp.fullName, role: emp.role, jobTitle: emp.jobTitle, imageUrl: emp.imageUrl,
+          score, rating,
+          attendance: { presentDays, lateCount, lateMinutes, score: Math.round(attendanceScore) },
+          tasks: { completed: completedTasks, total: totalTasks, completionRate: taskCompletionRate, score: Math.round(taskScore) },
+          sales: { totalSales: Math.round(totalSales * 100) / 100, orderCount, score: Math.round(salesScore) },
+          violations: { count: empViolations.length, points: violationPoints, totalPenalty },
+        };
+      });
+
+      performance.sort((a: any, b: any) => b.score - a.score);
+      res.json({ period, employees: performance });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.get("/api/employees/leaderboard", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { OrderModel, EmployeeModel } = await import("@shared/schema");
+      const { period = 'month', limit = '20' } = req.query as any;
+      const since = new Date();
+      if (period === 'today') since.setHours(0, 0, 0, 0);
+      else if (period === 'week') since.setDate(since.getDate() - 7);
+      else if (period === 'month') since.setDate(since.getDate() - 30);
+      const orders = await OrderModel.find({ createdAt: { $gte: since }, paymentStatus: 'paid' }).lean() as any[];
+      const byEmp: Record<string, { sales: number; count: number }> = {};
+      for (const o of orders) {
+        const eid = o.assignedCashierId || o.employeeId;
+        if (!eid) continue;
+        if (!byEmp[eid]) byEmp[eid] = { sales: 0, count: 0 };
+        byEmp[eid].sales += o.totalAmount || 0;
+        byEmp[eid].count += 1;
+      }
+      const empIds = Object.keys(byEmp);
+      const emps = await EmployeeModel.find({ id: { $in: empIds } }).lean() as any[];
+      const board = emps.map((e: any) => ({
+        id: e.id, fullName: e.fullName, role: e.role, jobTitle: e.jobTitle, imageUrl: e.imageUrl,
+        sales: Math.round((byEmp[e.id]?.sales || 0) * 100) / 100,
+        orderCount: byEmp[e.id]?.count || 0,
+        avgOrderValue: byEmp[e.id]?.count > 0 ? Math.round((byEmp[e.id].sales / byEmp[e.id].count) * 100) / 100 : 0,
+      })).sort((a: any, b: any) => b.sales - a.sales).slice(0, parseInt(limit));
+      res.json({ period, leaderboard: board });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PAYROLL EXPORT
+  // ═══════════════════════════════════════════════════════════════════════════
+  app.get("/api/employees/payroll-export", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EmployeeModel, AttendanceModel, EmployeeViolationModel, OrderModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const { month, year, format = 'json' } = req.query as any;
+      const now = new Date();
+      const m = parseInt(month || (now.getMonth() + 1).toString());
+      const y = parseInt(year || now.getFullYear().toString());
+      const start = new Date(y, m - 1, 1);
+      const end = new Date(y, m, 0, 23, 59, 59);
+
+      const employees = await EmployeeModel.find({ $or: [{ tenantId }, { tenantId: { $exists: false } }], isActive: 1 }).lean() as any[];
+      const [attendance, violations, orders] = await Promise.all([
+        AttendanceModel.find({ shiftDate: { $gte: start, $lte: end } }).lean(),
+        EmployeeViolationModel.find({ occurredAt: { $gte: start, $lte: end } }).lean(),
+        OrderModel.find({ createdAt: { $gte: start, $lte: end }, paymentStatus: 'paid' }).lean(),
+      ]);
+
+      const rows = employees.map((e: any) => {
+        const empAtt = (attendance as any[]).filter((a: any) => a.employeeId === e.id);
+        const empViol = (violations as any[]).filter((v: any) => v.employeeId === e.id);
+        const empOrders = (orders as any[]).filter((o: any) => o.assignedCashierId === e.id || o.employeeId === e.id);
+        const presentDays = empAtt.length;
+        const lateMinutes = empAtt.reduce((s: number, a: any) => s + (a.lateMinutes || 0), 0);
+        const totalHours = empAtt.reduce((s: number, a: any) => {
+          if (!a.checkOutTime) return s;
+          return s + ((new Date(a.checkOutTime).getTime() - new Date(a.checkInTime).getTime()) / 3600000);
+        }, 0);
+        const totalSales = empOrders.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+        const baseSalary = e.salary || 0;
+        const commission = e.commissionPercentage ? (totalSales * e.commissionPercentage / 100) : 0;
+        const deductions = empViol.reduce((s: number, v: any) => s + (v.penaltyAmount || 0), 0);
+        const netPay = baseSalary + commission - deductions;
+        return {
+          employeeId: e.id, employmentNumber: e.employmentNumber || '',
+          fullName: e.fullName, role: e.role, jobTitle: e.jobTitle, phone: e.phone,
+          presentDays, lateMinutes, totalHours: Math.round(totalHours * 100) / 100,
+          orderCount: empOrders.length, totalSales: Math.round(totalSales * 100) / 100,
+          baseSalary, commissionPct: e.commissionPercentage || 0,
+          commission: Math.round(commission * 100) / 100,
+          violationsCount: empViol.length,
+          deductions: Math.round(deductions * 100) / 100,
+          netPay: Math.round(netPay * 100) / 100,
+        };
+      });
+
+      if (format === 'csv') {
+        const headers = ['ID','Emp #','Full Name','Role','Job','Phone','Present Days','Late Min','Hours','Orders','Sales SAR','Base SAR','Commission %','Commission SAR','Violations','Deductions SAR','Net Pay SAR'];
+        const lines = ['\uFEFF' + headers.join(',')];
+        for (const r of rows) {
+          lines.push([r.employeeId, r.employmentNumber, `"${r.fullName}"`, r.role, `"${r.jobTitle}"`, r.phone, r.presentDays, r.lateMinutes, r.totalHours, r.orderCount, r.totalSales, r.baseSalary, r.commissionPct, r.commission, r.violationsCount, r.deductions, r.netPay].join(','));
+        }
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="payroll-${y}-${String(m).padStart(2,'0')}.csv"`);
+        return res.send(lines.join('\n'));
+      }
+
+      res.json({ month: m, year: y, rows, totals: {
+        totalNet: rows.reduce((s, r) => s + r.netPay, 0),
+        totalSales: rows.reduce((s, r) => s + r.totalSales, 0),
+        totalDeductions: rows.reduce((s, r) => s + r.deductions, 0),
+      } });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PERMISSIONS MATRIX
+  // ═══════════════════════════════════════════════════════════════════════════
+  app.get("/api/employees/permissions-matrix", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { PermissionsEngine } = await import("./permissions-engine");
+      const roles = ['cleaner','driver','accountant','cashier','barista','supervisor','branch_manager','owner','admin'];
+      const matrix = roles.map(r => ({
+        role: r,
+        roleNameAr: PermissionsEngine.getRoleNameAr(r as any),
+        permissions: PermissionsEngine.getPermissions(r),
+        accessiblePages: PermissionsEngine.getAccessiblePages(r),
+      }));
+      res.json({ roles: matrix });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── AUDIT LOGS API ───────────────────────────────────────────────────────
+  app.get("/api/audit-logs", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { AuditLogModel } = await import("@shared/schema");
+      const employee = req.employee;
+      const tenantId = (employee as any)?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const { action, actorType, search, limit = '50', offset = '0' } = req.query as any;
+
+      const query: any = { tenantId };
+      if (action && action !== 'all') query.action = action;
+      if (actorType && actorType !== 'all') query.actorType = actorType;
+      if (search) {
+        const safeSearch = String(search).replace(/[.*+?^${}()|[\\]\\]/g, '\\$&');
+        query.$or = [
+          { actorName: { $regex: safeSearch, $options: 'i' } },
+          { entityLabel: { $regex: safeSearch, $options: 'i' } },
+          { entityId: { $regex: safeSearch, $options: 'i' } },
+        ];
+      }
+
+      const [logs, total] = await Promise.all([
+        AuditLogModel.find(query).sort({ createdAt: -1 }).skip(parseInt(offset)).limit(parseInt(limit)).lean(),
+        AuditLogModel.countDocuments(query),
+      ]);
+
+      res.json({ logs: logs.map(serializeDoc), total });
+    } catch (error) {
+      console.error("[AUDIT_LOGS] Error:", error);
+      res.status(500).json({ error: "Failed to fetch audit logs" });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  RELIABILITY SYSTEM (Phase 5)
+  // ════════════════════════════════════════════════════════════════════════
+
+  // ─── CRASH RECOVERY ─────────────────────────────────────────────────────
+  app.post("/api/crash-sessions/save", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { CrashSessionModel } = await import("@shared/schema");
+      const employee = req.employee!;
+      const { page, sessionData, deviceId } = req.body || {};
+      if (!page || !sessionData) return res.status(400).json({ error: "page and sessionData required" });
+      const id = `crash-${employee.id}-${page}`;
+      await CrashSessionModel.findOneAndUpdate(
+        { id },
+        {
+          id,
+          tenantId: employee.tenantId || 'demo-tenant',
+          branchId: employee.branchId,
+          ownerId: employee.id,
+          ownerName: (employee as any).fullName || (employee as any).username,
+          deviceId,
+          page,
+          sessionData,
+          recovered: false,
+          updatedAt: new Date(),
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.get("/api/crash-sessions/mine", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { CrashSessionModel } = await import("@shared/schema");
+      const employee = req.employee!;
+      const list = await CrashSessionModel.find({ ownerId: employee.id, recovered: false }).sort({ updatedAt: -1 }).limit(20).lean();
+      res.json(list.map(serializeDoc));
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/crash-sessions/:id/recover", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { CrashSessionModel } = await import("@shared/schema");
+      const employee = req.employee!;
+      const session = await CrashSessionModel.findOne({ id: req.params.id, ownerId: employee.id }).lean() as any;
+      if (!session) return res.status(404).json({ error: "Not found" });
+      await CrashSessionModel.updateOne({ id: req.params.id }, { $set: { recovered: true } });
+      res.json(serializeDoc(session));
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/crash-sessions/:id", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { CrashSessionModel } = await import("@shared/schema");
+      const employee = req.employee!;
+      await CrashSessionModel.deleteOne({ id: req.params.id, ownerId: employee.id });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.get("/api/crash-sessions/all", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { CrashSessionModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const list = await CrashSessionModel.find({
+        $or: [{ tenantId }, { tenantId: { $exists: false } }],
+        recovered: false,
+      }).sort({ updatedAt: -1 }).limit(100).lean();
+      res.json(list.map(serializeDoc));
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── QUEUE JOBS ─────────────────────────────────────────────────────────
+  app.post("/api/queue-jobs", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { QueueJobModel } = await import("@shared/schema");
+      const employee = req.employee!;
+      const { type, payload, priority, deviceId, targetEntity, maxAttempts } = req.body || {};
+      if (!type) return res.status(400).json({ error: "type required" });
+      const job = await QueueJobModel.create({
+        id: nanoid(),
+        tenantId: employee.tenantId || 'demo-tenant',
+        branchId: employee.branchId,
+        type,
+        status: 'pending',
+        priority: priority || 3,
+        payload: payload || {},
+        attempts: 0,
+        maxAttempts: maxAttempts || 3,
+        deviceId,
+        targetEntity,
+        createdAt: new Date(),
+      });
+      res.status(201).json(serializeDoc(job.toObject()));
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.get("/api/queue-jobs", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { QueueJobModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const { type, status, limit = '100' } = req.query as any;
+      const q: any = { $or: [{ tenantId }, { tenantId: { $exists: false } }] };
+      if (type && type !== 'all') q.type = type;
+      if (status && status !== 'all') q.status = status;
+      const jobs = await QueueJobModel.find(q).sort({ createdAt: -1 }).limit(parseInt(limit)).lean();
+      res.json(jobs.map(serializeDoc));
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.get("/api/queue-jobs/stats", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { QueueJobModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const since = new Date(Date.now() - 24 * 3600 * 1000);
+      const all = await QueueJobModel.find({
+        $or: [{ tenantId }, { tenantId: { $exists: false } }],
+        createdAt: { $gte: since },
+      }).lean() as any[];
+      const byType: Record<string, any> = {};
+      const byStatus: Record<string, number> = { pending: 0, processing: 0, completed: 0, failed: 0, retrying: 0 };
+      for (const j of all) {
+        if (!byType[j.type]) byType[j.type] = { total: 0, pending: 0, completed: 0, failed: 0, avgDuration: 0, durations: [] };
+        byType[j.type].total++;
+        if (j.status === 'pending' || j.status === 'retrying') byType[j.type].pending++;
+        if (j.status === 'completed') {
+          byType[j.type].completed++;
+          if (j.durationMs) byType[j.type].durations.push(j.durationMs);
+        }
+        if (j.status === 'failed') byType[j.type].failed++;
+        byStatus[j.status] = (byStatus[j.status] || 0) + 1;
+      }
+      for (const k of Object.keys(byType)) {
+        const ds = byType[k].durations;
+        byType[k].avgDuration = ds.length ? Math.round(ds.reduce((a: number, b: number) => a + b, 0) / ds.length) : 0;
+        delete byType[k].durations;
+      }
+      res.json({ byType, byStatus, total: all.length, period: '24h' });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/queue-jobs/:id/retry", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { QueueJobModel } = await import("@shared/schema");
+      const job = await QueueJobModel.findOneAndUpdate(
+        { id: req.params.id },
+        { $set: { status: 'pending', lastError: null }, $inc: { attempts: 0 } },
+        { new: true }
+      ).lean() as any;
+      if (!job) return res.status(404).json({ error: "Not found" });
+      res.json(serializeDoc(job));
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/queue-jobs/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { QueueJobModel } = await import("@shared/schema");
+      await QueueJobModel.deleteOne({ id: req.params.id });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.patch("/api/queue-jobs/:id/status", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { QueueJobModel } = await import("@shared/schema");
+      const { status, lastError, durationMs } = req.body || {};
+      const update: any = { status };
+      if (status === 'processing') update.startedAt = new Date();
+      if (status === 'completed' || status === 'failed') update.completedAt = new Date();
+      if (lastError) update.lastError = lastError;
+      if (durationMs) update.durationMs = durationMs;
+      const inc: any = {};
+      if (status === 'processing' || status === 'failed') inc.attempts = 1;
+      const job = await QueueJobModel.findOneAndUpdate({ id: req.params.id }, { $set: update, $inc: inc }, { new: true }).lean() as any;
+      if (!job) return res.status(404).json({ error: "Not found" });
+      res.json(serializeDoc(job));
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── SYSTEM HEALTH & MONITORING ─────────────────────────────────────────
+  app.get("/api/system/health", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { ApiMetricModel, QueueJobModel, CrashSessionModel } = await import("@shared/schema");
+      const since = new Date(Date.now() - 60 * 60 * 1000);
+      const [metrics, failedQueue, activeCrashes] = await Promise.all([
+        ApiMetricModel.find({ createdAt: { $gte: since } }).lean() as any,
+        QueueJobModel.countDocuments({ status: 'failed', createdAt: { $gte: since } }),
+        CrashSessionModel.countDocuments({ recovered: false }),
+      ]);
+
+      const total = metrics.length || 1;
+      const errors = metrics.filter((m: any) => m.isError).length;
+      const errorRate = (errors / total) * 100;
+      const avgLatency = total ? Math.round(metrics.reduce((s: number, m: any) => s + m.durationMs, 0) / total) : 0;
+      const sortedDurations = metrics.map((m: any) => m.durationMs).sort((a: number, b: number) => a - b);
+      const p95 = sortedDurations[Math.floor(sortedDurations.length * 0.95)] || 0;
+      const p99 = sortedDurations[Math.floor(sortedDurations.length * 0.99)] || 0;
+
+      const memUsage = process.memoryUsage();
+      const uptimeHours = Math.round((process.uptime() / 3600) * 10) / 10;
+
+      const status = errorRate > 5 || p95 > 3000 ? 'critical'
+                   : errorRate > 1 || p95 > 1500 || failedQueue > 5 ? 'warning'
+                   : 'healthy';
+
+      // Import queue stats
+      let queueStats = null;
+      try {
+        const { queue: jobQueue } = await import("./queue");
+        queueStats = jobQueue.stats();
+      } catch {}
+
+      res.json({
+        status,
+        errorRate: Math.round(errorRate * 100) / 100,
+        avgLatency,
+        p95Latency: p95,
+        p99Latency: p99,
+        totalRequests: total,
+        totalErrors: errors,
+        failedQueueJobs: failedQueue,
+        activeCrashSessions: activeCrashes,
+        memory: {
+          heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),
+          heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
+          rssMB: Math.round(memUsage.rss / 1024 / 1024),
+        },
+        uptimeHours,
+        period: '1h',
+        cache: cache.stats(),
+        queue: queueStats,
+      });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ── Queue monitoring endpoint ─────────────────────────────────────────────
+  app.get("/api/system/queue", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { queue: jobQueue } = await import("./queue");
+      res.json({
+        stats: jobQueue.stats(),
+        pending: jobQueue.pendingJobs(),
+        cache: cache.stats(),
+      });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ── Cache control endpoint ────────────────────────────────────────────────
+  app.delete("/api/system/cache", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+    const { pattern } = req.query;
+    if (pattern) {
+      cache.invalidate(String(pattern));
+      res.json({ message: `Invalidated cache keys matching: ${pattern}` });
+    } else {
+      // Full cache flush — use sparingly
+      const statsBefore = cache.stats();
+      cache.invalidate(''); // invalidate all (empty string matches everything in includes check)
+      res.json({ message: 'Full cache flushed', keysFlushed: statsBefore.size });
+    }
+  });
+
+  app.get("/api/system/api-performance", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { ApiMetricModel } = await import("@shared/schema");
+      const hours = parseInt((req.query.hours as string) || '24');
+      const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+      const metrics = await ApiMetricModel.find({ createdAt: { $gte: since } }).lean() as any[];
+
+      // Group by path
+      const byPath: Record<string, any> = {};
+      for (const m of metrics) {
+        const k = `${m.method} ${m.path}`;
+        if (!byPath[k]) byPath[k] = { route: k, count: 0, errors: 0, durations: [] };
+        byPath[k].count++;
+        if (m.isError) byPath[k].errors++;
+        byPath[k].durations.push(m.durationMs);
+      }
+      const rows = Object.values(byPath).map((r: any) => {
+        const ds = r.durations.sort((a: number, b: number) => a - b);
+        return {
+          route: r.route,
+          count: r.count,
+          errors: r.errors,
+          errorRate: Math.round((r.errors / r.count) * 10000) / 100,
+          avgMs: Math.round(ds.reduce((s: number, d: number) => s + d, 0) / ds.length),
+          p95Ms: ds[Math.floor(ds.length * 0.95)] || 0,
+          maxMs: ds[ds.length - 1] || 0,
+        };
+      });
+      rows.sort((a: any, b: any) => b.avgMs - a.avgMs);
+      res.json({ rows: rows.slice(0, 100), period: `${hours}h`, totalRequests: metrics.length });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.get("/api/system/devices", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { ApiMetricModel } = await import("@shared/schema");
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const metrics = await ApiMetricModel.find({ createdAt: { $gte: since }, userId: { $exists: true, $ne: null } }).lean() as any[];
+      const byDevice: Record<string, any> = {};
+      for (const m of metrics) {
+        const k = `${m.userId}::${m.ipAddress || 'unknown'}`;
+        if (!byDevice[k]) byDevice[k] = { userId: m.userId, ipAddress: m.ipAddress, userAgent: m.userAgent, count: 0, errors: 0, lastSeen: m.createdAt };
+        byDevice[k].count++;
+        if (m.isError) byDevice[k].errors++;
+        if (new Date(m.createdAt) > new Date(byDevice[k].lastSeen)) byDevice[k].lastSeen = m.createdAt;
+      }
+      const rows = Object.values(byDevice).map((d: any) => ({
+        ...d,
+        errorRate: Math.round((d.errors / d.count) * 10000) / 100,
+        healthy: (d.errors / d.count) < 0.05,
+      }));
+      rows.sort((a: any, b: any) => b.errors - a.errors);
+      res.json({ rows: rows.slice(0, 50), period: '24h' });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.get("/api/system/recent-errors", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { ApiMetricModel } = await import("@shared/schema");
+      const errors = await ApiMetricModel.find({ isError: true }).sort({ createdAt: -1 }).limit(50).lean();
+      res.json(errors.map(serializeDoc));
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  PHASE 6 — AI + AUTOMATION
+  //  Smart Suggestions · AI Reports · Inventory Forecasting
+  // ════════════════════════════════════════════════════════════════════════
+
+  // Helper: call Groq for natural-language generation
+  async function callGroq(systemPrompt: string, userPrompt: string, maxTokens = 600): Promise<string | null> {
+    const kimiKey = process.env.KIMI_API_KEY;
+    if (!kimiKey) return null;
+    try {
+      const r = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${kimiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "moonshot-v1-32k",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.5,
+          max_tokens: maxTokens,
+        }),
+      });
+      const data = await r.json();
+      return data.choices?.[0]?.message?.content || null;
+    } catch (e) { return null; }
+  }
+
+  // ─── SMART SUGGESTIONS (Pattern detection — 5 categories) ───────────────
+  app.get("/api/ai/smart-suggestions", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { OrderModel, RawItemModel, EmployeeModel, ApiMetricModel, AuditLogModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const todayStart = getSaudiStartOfDay();
+      const weekStart = new Date(todayStart.getTime() - 7 * 24 * 3600 * 1000);
+      const monthStart = new Date(todayStart.getTime() - 30 * 24 * 3600 * 1000);
+
+      const [orders, rawItems, employees, apiErrors, audits] = await Promise.all([
+        OrderModel.find({ tenantId, createdAt: { $gte: monthStart } }).lean() as any,
+        RawItemModel.find({ $or: [{ tenantId }, { tenantId: { $exists: false } }], isActive: 1 }).lean() as any,
+        EmployeeModel.find({ $or: [{ tenantId }, { tenantId: { $exists: false } }] }).lean() as any,
+        ApiMetricModel.find({ isError: true, createdAt: { $gte: new Date(Date.now() - 24 * 3600 * 1000) } }).lean() as any,
+        AuditLogModel.find({ tenantId, action: { $in: ['cancel', 'discount', 'void', 'refund'] }, createdAt: { $gte: weekStart } }).lean() as any,
+      ]);
+
+      const suggestions: any[] = [];
+
+      // ── 1) MISSING/LOW PRODUCTS ──
+      const lowStock = rawItems.filter((r: any) => (r.currentStock || 0) <= r.minStockLevel);
+      const outStock = rawItems.filter((r: any) => (r.currentStock || 0) === 0);
+      if (outStock.length > 0) {
+        suggestions.push({
+          id: 'out-stock',
+          type: 'critical',
+          category: 'inventory',
+          icon: 'package',
+          title: `${outStock.length} منتج نافد كلياً`,
+          message: `المنتجات: ${outStock.slice(0, 3).map((i: any) => i.nameAr).join('، ')}${outStock.length > 3 ? '...' : ''}. اطلبها فوراً لتجنب توقف العمل.`,
+          action: 'اذهب للمشتريات',
+          actionLink: '/manager/inventory/purchases',
+          impact: 'high',
+        });
+      }
+      if (lowStock.length > outStock.length) {
+        const justLow = lowStock.filter((i: any) => (i.currentStock || 0) > 0).slice(0, 5);
+        suggestions.push({
+          id: 'low-stock',
+          type: 'warning',
+          category: 'inventory',
+          icon: 'alert-triangle',
+          title: `${justLow.length} منتج اقترب من النفاد`,
+          message: `${justLow.map((i: any) => `${i.nameAr} (${i.currentStock} ${i.unit})`).join('، ')}`,
+          action: 'مراجعة المخزون',
+          actionLink: '/manager/inventory/raw-items',
+          impact: 'medium',
+        });
+      }
+
+      // ── 2) BEST EMPLOYEE SHIFT TIMES (correlation analysis) ──
+      const empSales: Record<string, { hours: Record<number, number>, totalSales: number }> = {};
+      for (const o of orders) {
+        const eid = o.assignedCashierId || o.employeeId;
+        if (!eid) continue;
+        const hr = new Date(o.createdAt).getHours();
+        if (!empSales[eid]) empSales[eid] = { hours: {}, totalSales: 0 };
+        empSales[eid].hours[hr] = (empSales[eid].hours[hr] || 0) + (o.totalAmount || 0);
+        empSales[eid].totalSales += o.totalAmount || 0;
+      }
+      const topPerformers: any[] = [];
+      for (const [eid, data] of Object.entries(empSales)) {
+        const emp = employees.find((e: any) => e.id === eid);
+        if (!emp || data.totalSales < 100) continue;
+        const peakHour = Object.entries(data.hours).sort((a, b) => Number(b[1]) - Number(a[1]))[0];
+        if (peakHour) {
+          topPerformers.push({
+            name: emp.fullName || emp.username,
+            peakHour: parseInt(peakHour[0]),
+            peakSales: Number(peakHour[1]),
+          });
+        }
+      }
+      topPerformers.sort((a, b) => b.peakSales - a.peakSales);
+      if (topPerformers.length > 0) {
+        const top = topPerformers.slice(0, 3);
+        suggestions.push({
+          id: 'best-shifts',
+          type: 'info',
+          category: 'employees',
+          icon: 'users',
+          title: 'أفضل أوقات لكل موظف',
+          message: top.map((p: any) =>
+            `${p.name}: ${p.peakHour}:00 (${Math.round(p.peakSales)} ر.س)`
+          ).join(' · '),
+          action: 'إدارة الورديات',
+          actionLink: '/manager/employees/hub',
+          impact: 'medium',
+          extra: { performers: top },
+        });
+      }
+
+      // ── 3) SALES PREDICTION (next 7 days) ──
+      const dailyRev: Record<string, number> = {};
+      const dowRev: Record<number, { sum: number, count: number }> = {};
+      for (const o of orders) {
+        const d = new Date(o.createdAt);
+        const key = d.toISOString().slice(0, 10);
+        dailyRev[key] = (dailyRev[key] || 0) + (o.totalAmount || 0);
+        const dow = d.getDay();
+        if (!dowRev[dow]) dowRev[dow] = { sum: 0, count: 0 };
+      }
+      for (const [key, rev] of Object.entries(dailyRev)) {
+        const dow = new Date(key).getDay();
+        dowRev[dow].sum += rev;
+        dowRev[dow].count++;
+      }
+      const dowAvg: Record<number, number> = {};
+      for (const [dow, v] of Object.entries(dowRev)) {
+        dowAvg[parseInt(dow)] = v.count > 0 ? v.sum / v.count : 0;
+      }
+      const next7: any[] = [];
+      const dayNames = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+      for (let i = 1; i <= 7; i++) {
+        const d = new Date();
+        d.setDate(d.getDate() + i);
+        const dow = d.getDay();
+        next7.push({
+          date: d.toISOString().slice(0, 10),
+          dayName: dayNames[dow],
+          predictedRevenue: Math.round(dowAvg[dow] || 0),
+        });
+      }
+      const totalPredicted = next7.reduce((s, d) => s + d.predictedRevenue, 0);
+      const lastWeekRev = Object.entries(dailyRev)
+        .filter(([k]) => new Date(k) >= weekStart)
+        .reduce((s, [, v]) => s + v, 0);
+      const trend = lastWeekRev > 0 ? ((totalPredicted - lastWeekRev) / lastWeekRev) * 100 : 0;
+
+      if (orders.length > 10) {
+        suggestions.push({
+          id: 'sales-forecast',
+          type: trend < -5 ? 'warning' : 'success',
+          category: 'sales',
+          icon: 'trending-up',
+          title: `توقع المبيعات للأسبوع القادم: ${Math.round(totalPredicted).toLocaleString()} ر.س`,
+          message: trend > 0
+            ? `متوقع نمو ${Math.abs(trend).toFixed(0)}% مقارنة بالأسبوع الماضي`
+            : trend < -5
+            ? `تحذير: انخفاض متوقع ${Math.abs(trend).toFixed(0)}% — راجع العروض والتسويق`
+            : `المبيعات مستقرة بمعدل ${Math.round(totalPredicted / 7).toLocaleString()} ر.س يومياً`,
+          action: 'عرض التحليلات',
+          actionLink: '/manager/bi-analytics',
+          impact: trend < -10 ? 'high' : 'medium',
+          extra: { next7, trend: Math.round(trend) },
+        });
+      }
+
+      // ── 4) THEFT/FRAUD DETECTION ──
+      const cancelByEmp: Record<string, number> = {};
+      const discountByEmp: Record<string, number> = {};
+      for (const a of audits) {
+        if (!a.actorId) continue;
+        if (a.action === 'cancel' || a.action === 'void') cancelByEmp[a.actorId] = (cancelByEmp[a.actorId] || 0) + 1;
+        if (a.action === 'discount' || a.action === 'refund') discountByEmp[a.actorId] = (discountByEmp[a.actorId] || 0) + 1;
+      }
+      const suspiciousEmps: any[] = [];
+      for (const [eid, count] of Object.entries(cancelByEmp)) {
+        if (count >= 5) {
+          const emp = employees.find((e: any) => e.id === eid);
+          suspiciousEmps.push({
+            name: emp?.fullName || emp?.username || eid,
+            cancels: count,
+            discounts: discountByEmp[eid] || 0,
+            reason: count >= 10 ? 'إلغاءات كثيرة جداً' : 'إلغاءات أعلى من المعدل',
+          });
+        }
+      }
+      if (suspiciousEmps.length > 0) {
+        suggestions.push({
+          id: 'theft-alert',
+          type: 'critical',
+          category: 'security',
+          icon: 'shield-alert',
+          title: `${suspiciousEmps.length} نشاط مشبوه يستحق المراجعة`,
+          message: suspiciousEmps.slice(0, 3).map((e: any) =>
+            `${e.name}: ${e.cancels} إلغاء${e.discounts > 0 ? ` + ${e.discounts} خصم` : ''}`
+          ).join(' · '),
+          action: 'مراجعة سجل التدقيق',
+          actionLink: '/manager/reliability',
+          impact: 'high',
+          extra: { suspicious: suspiciousEmps },
+        });
+      }
+
+      // ── 5) ERROR/PERFORMANCE DETECTION ──
+      if (apiErrors.length >= 10) {
+        const byPath: Record<string, number> = {};
+        for (const e of apiErrors) byPath[e.path] = (byPath[e.path] || 0) + 1;
+        const topPath = Object.entries(byPath).sort((a, b) => b[1] - a[1])[0];
+        suggestions.push({
+          id: 'system-errors',
+          type: apiErrors.length >= 50 ? 'critical' : 'warning',
+          category: 'system',
+          icon: 'alert-circle',
+          title: `${apiErrors.length} خطأ في النظام آخر 24 ساعة`,
+          message: topPath ? `أكثر مسار يفشل: ${topPath[0]} (${topPath[1]} مرة)` : 'يحتاج لمراجعة',
+          action: 'مراجعة الموثوقية',
+          actionLink: '/manager/reliability',
+          impact: 'high',
+        });
+      }
+
+      // ── 6) DEAD HOURS DETECTION ──
+      const hourCounts: Record<number, number> = {};
+      const recentOrders = orders.filter((o: any) => new Date(o.createdAt) >= weekStart);
+      for (const o of recentOrders) {
+        const h = new Date(o.createdAt).getHours();
+        hourCounts[h] = (hourCounts[h] || 0) + 1;
+      }
+      const businessHours = Array.from({ length: 17 }, (_, i) => i + 7); // 7am-11pm
+      const deadHours = businessHours.filter(h => (hourCounts[h] || 0) <= 1);
+      if (deadHours.length >= 3) {
+        suggestions.push({
+          id: 'dead-hours',
+          type: 'info',
+          category: 'sales',
+          icon: 'clock',
+          title: `${deadHours.length} ساعات ميتة في اليوم`,
+          message: `الساعات: ${deadHours.slice(0, 5).map(h => `${h}:00`).join('، ')}. فكّر في عروض خاصة لهذه الفترات.`,
+          action: 'إنشاء عرض ترويجي',
+          actionLink: '/manager/promotions',
+          impact: 'medium',
+        });
+      }
+
+      // Sort by impact
+      const impactOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
+      suggestions.sort((a: any, b: any) => impactOrder[a.impact] - impactOrder[b.impact]);
+
+      res.json({
+        suggestions,
+        summary: {
+          total: suggestions.length,
+          critical: suggestions.filter(s => s.type === 'critical').length,
+          warning: suggestions.filter(s => s.type === 'warning').length,
+          info: suggestions.filter(s => s.type === 'info' || s.type === 'success').length,
+        },
+        generatedAt: new Date(),
+      });
+    } catch (e: any) {
+      console.error("[smart-suggestions]", e);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ─── AI NARRATIVE REPORT (Natural-language story instead of tables) ─────
+  app.post("/api/ai/narrative-report", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { OrderModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const period = (req.body.period || 'week') as 'today' | 'week' | 'month';
+      const todayStart = getSaudiStartOfDay();
+      const since = new Date(todayStart.getTime() - (period === 'today' ? 0 : period === 'week' ? 7 : 30) * 24 * 3600 * 1000);
+      const prevSince = new Date(since.getTime() - (period === 'today' ? 1 : period === 'week' ? 7 : 30) * 24 * 3600 * 1000);
+
+      const [current, previous] = await Promise.all([
+        OrderModel.find({ tenantId, createdAt: { $gte: since } }).lean() as any,
+        OrderModel.find({ tenantId, createdAt: { $gte: prevSince, $lt: since } }).lean() as any,
+      ]);
+
+      const sumRev = (arr: any[]) => arr.reduce((s, o) => s + (o.totalAmount || 0), 0);
+      const curRev = sumRev(current);
+      const prevRev = sumRev(previous);
+      const growthPct = prevRev > 0 ? ((curRev - prevRev) / prevRev) * 100 : 0;
+
+      // Hour analysis
+      const hourBuckets = { morning: 0, afternoon: 0, evening: 0, night: 0 };
+      for (const o of current) {
+        const h = new Date(o.createdAt).getHours();
+        if (h < 12) hourBuckets.morning += o.totalAmount || 0;
+        else if (h < 17) hourBuckets.afternoon += o.totalAmount || 0;
+        else if (h < 21) hourBuckets.evening += o.totalAmount || 0;
+        else hourBuckets.night += o.totalAmount || 0;
+      }
+      const prevHours = { morning: 0, afternoon: 0, evening: 0, night: 0 };
+      for (const o of previous) {
+        const h = new Date(o.createdAt).getHours();
+        if (h < 12) prevHours.morning += o.totalAmount || 0;
+        else if (h < 17) prevHours.afternoon += o.totalAmount || 0;
+        else if (h < 21) prevHours.evening += o.totalAmount || 0;
+        else prevHours.night += o.totalAmount || 0;
+      }
+
+      // Top items
+      const itemCounts: Record<string, number> = {};
+      for (const o of current) {
+        for (const it of (o.items || [])) {
+          const n = it.nameAr || it.name || '؟';
+          itemCounts[n] = (itemCounts[n] || 0) + (it.quantity || 1);
+        }
+      }
+      const topItems = Object.entries(itemCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+      const stats = {
+        period,
+        currentRevenue: Math.round(curRev),
+        previousRevenue: Math.round(prevRev),
+        growthPct: Math.round(growthPct * 10) / 10,
+        currentOrders: current.length,
+        previousOrders: previous.length,
+        avgOrder: current.length ? Math.round(curRev / current.length) : 0,
+        hourBuckets: Object.fromEntries(Object.entries(hourBuckets).map(([k, v]) => [k, Math.round(v as number)])),
+        prevHours: Object.fromEntries(Object.entries(prevHours).map(([k, v]) => [k, Math.round(v as number)])),
+        topItems,
+      };
+
+      // Try Groq for natural narrative; otherwise rule-based
+      const periodLabel = period === 'today' ? 'اليوم' : period === 'week' ? 'هذا الأسبوع' : 'هذا الشهر';
+      const sys = `أنت محلل أعمال محترف لمقاهي. اكتب تقريراً سرديّاً بالعربية الفصحى (2-3 فقرات قصيرة) يشرح أداء المبيعات بشكل واضح وعملي. ركّز على: السبب الجذري لأي تغيّر، فترات اليوم الأقوى/الأضعف، توصيات محددة وقابلة للتنفيذ. تجنّب الأرقام الجافة وحدها — اشرحها.`;
+      const usr = `بيانات الفترة (${periodLabel}):\n${JSON.stringify(stats, null, 2)}`;
+      const narrative = await callGroq(sys, usr, 700);
+
+      // Fallback: rule-based narrative
+      let fallback = '';
+      if (!narrative) {
+        const direction = growthPct > 5 ? 'ارتفعت' : growthPct < -5 ? 'انخفضت' : 'استقرت';
+        const reasons: string[] = [];
+        for (const k of ['morning', 'afternoon', 'evening', 'night'] as const) {
+          const cur = hourBuckets[k]; const prv = prevHours[k];
+          if (prv > 0) {
+            const ch = ((cur - prv) / prv) * 100;
+            const labelMap = { morning: 'الصباح', afternoon: 'العصر', evening: 'المساء', night: 'الليل' };
+            if (Math.abs(ch) > 15) {
+              reasons.push(`${ch > 0 ? 'ارتفاع' : 'ضعف'} فترة ${labelMap[k]} بنسبة ${Math.abs(Math.round(ch))}%`);
+            }
+          }
+        }
+        fallback = `مبيعاتك ${direction} ${Math.abs(stats.growthPct)}% خلال ${periodLabel} لتصل إلى ${stats.currentRevenue.toLocaleString()} ر.س عبر ${stats.currentOrders} طلب بمتوسط ${stats.avgOrder} ر.س.\n\n${reasons.length ? `السبب الرئيسي: ${reasons.join('، ')}.` : ''}\n\nأكثر المنتجات مبيعاً: ${topItems.map(([n, c]) => `${n} (${c})`).join('، ')}.`;
+      }
+
+      res.json({
+        narrative: narrative || fallback,
+        source: narrative ? 'ai' : 'rule-based',
+        stats,
+        generatedAt: new Date(),
+      });
+    } catch (e: any) {
+      console.error("[narrative-report]", e);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ─── SMART INVENTORY FORECASTING ────────────────────────────────────────
+  app.get("/api/ai/inventory-forecast", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { OrderModel, RawItemModel, RecipeModel, CoffeeItemModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const since = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+
+      const [orders, rawItems, recipes, products] = await Promise.all([
+        OrderModel.find({ tenantId, createdAt: { $gte: since } }).lean() as any,
+        RawItemModel.find({ $or: [{ tenantId }, { tenantId: { $exists: false } }], isActive: 1 }).lean() as any,
+        RecipeModel.find({}).lean() as any,
+        CoffeeItemModel.find({}).lean() as any,
+      ]);
+
+      // Calculate consumption per raw item from orders × recipes
+      const productNameToId: Record<string, string> = {};
+      for (const p of products) productNameToId[p.nameAr] = p.id || p._id?.toString();
+
+      // Total qty sold per product
+      const productSold: Record<string, number> = {};
+      for (const o of orders) {
+        for (const it of (o.items || [])) {
+          const pid = it.coffeeItemId || it.itemId || productNameToId[it.nameAr];
+          if (pid) productSold[pid] = (productSold[pid] || 0) + (it.quantity || 1);
         }
       }
 
-      if (!card) return res.status(404).json({ error: "لا توجد بطاقة ولاء لهذا الرقم" });
-
-      const certB64 = process.env.APPLE_PASS_CERTIFICATE;
-      const keyB64 = process.env.APPLE_PASS_PRIVATE_KEY;
-      const wwdrB64 = process.env.APPLE_WWDR_CERTIFICATE;
-      const passTypeId = process.env.APPLE_PASS_TYPE_ID || "pass.cluny.cafe";
-      const teamId = process.env.APPLE_TEAM_ID || "V4K6RM59LS";
-
-      if (!certB64 || !keyB64 || !wwdrB64) {
-        return res.status(500).json({ error: "شهادات Apple Wallet غير مهيأة" });
+      // Consumption per raw item
+      const consumption: Record<string, number> = {};
+      for (const r of recipes) {
+        const sold = productSold[r.coffeeItemId] || 0;
+        if (sold === 0) continue;
+        for (const ing of (r.ingredients || r.items || [])) {
+          const ridv = ing.rawItemId;
+          const qty = (ing.quantity || ing.qty || 0) * sold;
+          if (ridv) consumption[ridv] = (consumption[ridv] || 0) + qty;
+        }
       }
 
-      const signerCert = Buffer.from(certB64, 'base64');
-      const signerKey = Buffer.from(keyB64, 'base64');
-      const wwdr = Buffer.from(wwdrB64, 'base64');
+      const forecast = rawItems.map((r: any) => {
+        const consumed30 = consumption[r.id] || 0;
+        const dailyConsumption = consumed30 / 30;
+        const currentStock = r.currentStock || 0;
+        const daysRemaining = dailyConsumption > 0 ? currentStock / dailyConsumption : null;
+        const reorderDate = daysRemaining != null ? new Date(Date.now() + daysRemaining * 24 * 3600 * 1000) : null;
+        const recommendedOrderQty = Math.ceil(dailyConsumption * 14); // 2 weeks supply
 
-      const points = Number(card.points) || 0;
-      const customerName = card.customerName || card.phoneNumber || short9 || "Cluny Member";
-      const serialNumber = String(card.id || card._id || short9);
-      const qrValue = card.qrToken || card.cardNumber || serialNumber;
-      const cardNumber = card.cardNumber || serialNumber;
-      const pointsValueSAR = (points < 0 ? 0 : points * 0.02).toFixed(2);
+        let urgency: 'critical' | 'high' | 'medium' | 'low' | 'ok' = 'ok';
+        if (currentStock === 0) urgency = 'critical';
+        else if (daysRemaining != null && daysRemaining <= 3) urgency = 'critical';
+        else if (daysRemaining != null && daysRemaining <= 7) urgency = 'high';
+        else if (daysRemaining != null && daysRemaining <= 14) urgency = 'medium';
+        else if (currentStock <= r.minStockLevel) urgency = 'medium';
+        else if (daysRemaining != null && daysRemaining <= 30) urgency = 'low';
 
-      // Fetch branches with coordinates for geofencing (iOS lock-screen notification)
-      const { BranchModel } = await import("@shared/schema");
-      const allBranches = await BranchModel.find({
-        isActive: { $in: [true, 1, "1", "true"] },
-        "location.lat": { $exists: true, $ne: null },
-        "location.lng": { $exists: true, $ne: null }
-      }).lean() as any[];
-      const passLocations = allBranches
-        .filter((b: any) => b.location?.lat && b.location?.lng)
-        .map((b: any) => ({
-          latitude: b.location.lat,
-          longitude: b.location.lng,
-          relevantText: `☕ لا تفوتك قهوتنا! أنت قريب من ${b.nameAr || "كلوني كافيه"}`
-        }));
-
-      const passJson = {
-        formatVersion: 1,
-        passTypeIdentifier: passTypeId,
-        serialNumber: serialNumber,
-        teamIdentifier: teamId,
-        organizationName: "Cluny Cafe",
-        description: "بطاقة كلوني للولاء",
-        logoText: "CLUNY CAFE",
-        foregroundColor: "rgb(255, 248, 240)",
-        backgroundColor: "rgb(33, 24, 18)",
-        labelColor: "rgb(217, 167, 116)",
-        storeCard: {
-          headerFields: [
-            {
-              key: "points_header",
-              label: "النقاط",
-              value: points < 0 ? 0 : points,
-              textAlignment: "PKTextAlignmentRight"
-            }
-          ],
-          primaryFields: [
-            {
-              key: "balance",
-              label: "الرصيد القابل للاستبدال",
-              value: points < 0 ? "0.00 ر.س" : `${pointsValueSAR} ر.س`,
-              textAlignment: "PKTextAlignmentLeft"
-            }
-          ],
-          secondaryFields: [
-            {
-              key: "member",
-              label: "العضو",
-              value: customerName,
-              textAlignment: "PKTextAlignmentLeft"
-            },
-            {
-              key: "tier",
-              label: "العضوية",
-              value: "كلوني للولاء",
-              textAlignment: "PKTextAlignmentRight"
-            }
-          ],
-          auxiliaryFields: [
-            {
-              key: "card_no",
-              label: "رقم البطاقة",
-              value: cardNumber,
-              textAlignment: "PKTextAlignmentLeft"
-            }
-          ],
-          backFields: [
-            {
-              key: "member_name",
-              label: "اسم العضو",
-              value: customerName
-            },
-            {
-              key: "points_balance",
-              label: "رصيد النقاط",
-              value: points < 0 ? "0" : String(points)
-            },
-            {
-              key: "sar_balance",
-              label: "القيمة القابلة للاستبدال",
-              value: `${points < 0 ? "0.00" : pointsValueSAR} ر.س`
-            },
-            {
-              key: "card_number_back",
-              label: "رقم البطاقة",
-              value: cardNumber
-            },
-            {
-              key: "program_info",
-              label: "برنامج الولاء",
-              value: "اكسب نقاطاً مع كل طلب في كلوني كافيه. كل 50 نقطة = 1 ريال سعودي. اعرض رمز QR للكاشير لكسب النقاط أو استبدالها."
-            },
-            {
-              key: "website",
-              label: "الموقع الإلكتروني",
-              value: "cluny.cafe"
-            }
-          ]
-        },
-        barcodes: [
-          {
-            message: qrValue,
-            format: "PKBarcodeFormatQR",
-            messageEncoding: "iso-8859-1",
-            altText: cardNumber
-          }
-        ],
-        barcode: {
-          message: qrValue,
-          format: "PKBarcodeFormatQR",
-          messageEncoding: "iso-8859-1",
-          altText: cardNumber
-        },
-        ...(passLocations.length > 0 ? { locations: passLocations } : {}),
-        maxDistance: 100
-      };
-
-      const fs = await import("fs");
-      const readImg = (name: string) => {
-        const p = path.resolve(process.cwd(), `public/${name}`);
-        return fs.existsSync(p) ? fs.readFileSync(p) : null;
-      };
-
-      const iconBuf    = readImg('pass-icon.png');
-      const icon2xBuf  = readImg('pass-icon@2x.png');
-      const icon3xBuf  = readImg('pass-icon@3x.png');
-      const logoBuf    = readImg('pass-logo.png');
-      const logo2xBuf  = readImg('pass-logo@2x.png');
-      // Note: strip image intentionally omitted so the card uses
-      // the rich fields-based layout (primary/secondary/auxiliary)
-
-      const files: Record<string, Buffer> = {
-        "pass.json": Buffer.from(JSON.stringify(passJson)),
-      };
-      if (iconBuf)    files["icon.png"]      = iconBuf;
-      if (icon2xBuf)  files["icon@2x.png"]   = icon2xBuf;
-      if (icon3xBuf)  files["icon@3x.png"]   = icon3xBuf;
-      if (!iconBuf && !icon2xBuf) {
-        // fallback: use logo as icon
-        if (logoBuf) { files["icon.png"] = logoBuf; files["icon@2x.png"] = logoBuf; }
-      }
-      if (logoBuf)    files["logo.png"]      = logoBuf;
-      if (logo2xBuf)  files["logo@2x.png"]   = logo2xBuf;
-
-      const pass = new PKPass(files, { wwdr, signerCert, signerKey });
-
-      const buffer = pass.getAsBuffer();
-
-      res.set({
-        "Content-Type": "application/vnd.apple.pkpass",
-        "Content-Disposition": `attachment; filename="cluny-loyalty.pkpass"`,
-        "Content-Length": buffer.length
+        return {
+          id: r.id,
+          code: r.code,
+          nameAr: r.nameAr,
+          unit: r.unit,
+          currentStock,
+          minStockLevel: r.minStockLevel,
+          consumed30Days: Math.round(consumed30 * 100) / 100,
+          dailyConsumption: Math.round(dailyConsumption * 100) / 100,
+          daysRemaining: daysRemaining != null ? Math.round(daysRemaining) : null,
+          reorderDate,
+          recommendedOrderQty,
+          estimatedCost: Math.round(recommendedOrderQty * (r.unitCost || 0) * 100) / 100,
+          urgency,
+        };
       });
-      res.send(buffer);
 
-    } catch (err: any) {
-      console.error("[PassKit] Error generating pass:", err);
-      res.status(500).json({ error: "فشل إنشاء بطاقة المحفظة", details: err?.message });
+      // Sort: critical first
+      const order: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, ok: 4 };
+      forecast.sort((a: any, b: any) => order[a.urgency] - order[b.urgency]);
+
+      const summary = {
+        totalItems: forecast.length,
+        critical: forecast.filter((f: any) => f.urgency === 'critical').length,
+        high: forecast.filter((f: any) => f.urgency === 'high').length,
+        medium: forecast.filter((f: any) => f.urgency === 'medium').length,
+        totalReorderCost: forecast
+          .filter((f: any) => f.urgency === 'critical' || f.urgency === 'high')
+          .reduce((s: number, f: any) => s + f.estimatedCost, 0),
+      };
+
+      res.json({ forecast, summary, generatedAt: new Date() });
+    } catch (e: any) {
+      console.error("[inventory-forecast]", e);
+      res.status(500).json({ error: "Internal server error" });
     }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  PHASE 7 — ECOSYSTEM (Open APIs · Webhooks · Integrations)
+  // ════════════════════════════════════════════════════════════════════════
+  const { requireApiKey, generateApiKey, hashKey, publishEvent, INTEGRATION_CATALOG, ECOSYSTEM_EVENTS, API_SCOPES } = await import("./ecosystem");
+
+  // ─── API KEYS MANAGEMENT (manager) ──────────────────────────────────────
+  app.get("/api/ecosystem/api-keys", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { ApiKeyModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const keys = await ApiKeyModel.find({ $or: [{ tenantId }, { tenantId: { $exists: false } }] }).sort({ createdAt: -1 }).lean();
+      res.json(keys.map((k: any) => ({ ...k, keyHash: undefined })));
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/ecosystem/api-keys", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { ApiKeyModel } = await import("@shared/schema");
+      const { name, scopes, environment = 'live', rateLimit = 100, expiresAt } = req.body;
+      if (!name || !Array.isArray(scopes) || scopes.length === 0) return res.status(400).json({ error: "name and scopes required" });
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const { plain, prefix, hash } = generateApiKey(environment);
+      const key = await ApiKeyModel.create({
+        id: nanoid(), tenantId, name, keyHash: hash, keyPrefix: prefix,
+        scopes, environment, rateLimit, expiresAt: expiresAt ? new Date(expiresAt) : undefined,
+        createdBy: req.employee?.id, isActive: true,
+      });
+      res.json({ ...key.toObject(), keyHash: undefined, plainKey: plain });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.patch("/api/ecosystem/api-keys/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { ApiKeyModel } = await import("@shared/schema");
+      const updated = await ApiKeyModel.findOneAndUpdate({ id: req.params.id }, { $set: req.body }, { new: true }).lean();
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/ecosystem/api-keys/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { ApiKeyModel } = await import("@shared/schema");
+      await ApiKeyModel.deleteOne({ id: req.params.id });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── WEBHOOKS MANAGEMENT ────────────────────────────────────────────────
+  app.get("/api/ecosystem/webhooks", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { WebhookModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const hooks = await WebhookModel.find({ $or: [{ tenantId }, { tenantId: { $exists: false } }] }).sort({ createdAt: -1 }).lean();
+      res.json(hooks);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/ecosystem/webhooks", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { WebhookModel } = await import("@shared/schema");
+      const { name, url, events, secret } = req.body;
+      if (!name || !url || !Array.isArray(events) || !events.length) return res.status(400).json({ error: "name, url, events required" });
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const webhookSecret = secret || crypto.randomBytes(24).toString("hex");
+      const hook = await WebhookModel.create({
+        id: nanoid(), tenantId, name, url, events, secret: webhookSecret, isActive: true, failureCount: 0,
+      });
+      res.json(hook);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.patch("/api/ecosystem/webhooks/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { WebhookModel } = await import("@shared/schema");
+      const updated = await WebhookModel.findOneAndUpdate({ id: req.params.id }, { $set: req.body }, { new: true }).lean();
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/ecosystem/webhooks/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { WebhookModel } = await import("@shared/schema");
+      await WebhookModel.deleteOne({ id: req.params.id });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/ecosystem/webhooks/:id/test", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { WebhookModel } = await import("@shared/schema");
+      const hook: any = await WebhookModel.findOne({ id: req.params.id }).lean();
+      if (!hook) return res.status(404).json({ error: "Webhook not found" });
+      await publishEvent("webhook.test", { message: "This is a test event from CLUNY", timestamp: new Date().toISOString() }, hook.tenantId);
+      res.json({ success: true, message: "Test event dispatched" });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.get("/api/ecosystem/webhooks/:id/deliveries", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { WebhookDeliveryModel } = await import("@shared/schema");
+      const deliveries = await WebhookDeliveryModel.find({ webhookId: req.params.id }).sort({ createdAt: -1 }).limit(50).lean();
+      res.json(deliveries);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── INTEGRATIONS CATALOG + CRUD ────────────────────────────────────────
+  app.get("/api/ecosystem/catalog", requireAuth, requireManager, async (_req, res) => {
+    res.json({ integrations: INTEGRATION_CATALOG, events: ECOSYSTEM_EVENTS, scopes: API_SCOPES });
+  });
+
+  app.get("/api/ecosystem/integrations", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EcosystemIntegrationModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const items = await EcosystemIntegrationModel.find({ $or: [{ tenantId }, { tenantId: { $exists: false } }] }).sort({ createdAt: -1 }).lean();
+      // Mask sensitive config values
+      const masked = items.map((it: any) => {
+        const masked = { ...it };
+        if (it.config && typeof it.config === 'object') {
+          masked.config = Object.fromEntries(Object.entries(it.config).map(([k, v]: any) => {
+            const sensitive = /key|secret|token|password/i.test(k);
+            return [k, sensitive && typeof v === 'string' && v.length > 6 ? v.slice(0, 4) + '••••' + v.slice(-3) : v];
+          }));
+        }
+        return masked;
+      });
+      res.json(masked);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/ecosystem/integrations", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EcosystemIntegrationModel } = await import("@shared/schema");
+      const { type, name, config = {} } = req.body;
+      const meta = INTEGRATION_CATALOG.find(i => i.type === type);
+      if (!meta) return res.status(400).json({ error: "Unknown integration type" });
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const item = await EcosystemIntegrationModel.create({
+        id: nanoid(), tenantId, type, name: name || meta.nameAr, category: meta.category,
+        config, status: 'pending', isActive: true,
+      });
+      res.json(item);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.patch("/api/ecosystem/integrations/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EcosystemIntegrationModel } = await import("@shared/schema");
+      const updated = await EcosystemIntegrationModel.findOneAndUpdate(
+        { id: req.params.id }, { $set: { ...req.body, updatedAt: new Date() } }, { new: true }
+      ).lean();
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/ecosystem/integrations/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EcosystemIntegrationModel } = await import("@shared/schema");
+      await EcosystemIntegrationModel.deleteOne({ id: req.params.id });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/ecosystem/integrations/:id/test", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EcosystemIntegrationModel } = await import("@shared/schema");
+      const it: any = await EcosystemIntegrationModel.findOne({ id: req.params.id }).lean();
+      if (!it) return res.status(404).json({ error: "Integration not found" });
+      // Lightweight ping: try the URL-like config field if present
+      const url = it.config?.url || it.config?.shopUrl || it.config?.apiUrl;
+      let status = 'connected';
+      let lastError: string | null = null;
+      if (url) {
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 5000);
+          const r = await fetch(url, { method: "HEAD", signal: ctrl.signal });
+          clearTimeout(t);
+          if (!r.ok && r.status !== 405) { status = 'error'; lastError = `HTTP ${r.status}`; }
+        } catch (e: any) { status = 'error'; lastError = e.message; }
+      }
+      await EcosystemIntegrationModel.updateOne({ id: req.params.id }, { $set: { status, lastError, lastSyncAt: new Date(), updatedAt: new Date() } });
+      res.json({ status, lastError });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.get("/api/ecosystem/stats", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { ApiKeyModel, WebhookModel, WebhookDeliveryModel, EcosystemIntegrationModel, ApiMetricModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const since = new Date(Date.now() - 24 * 3600 * 1000);
+      const tFilter: any = { $or: [{ tenantId }, { tenantId: { $exists: false } }] };
+      const [apiKeysActive, webhooksActive, integrationsConnected, deliveries24h, deliveriesFailed, apiCalls24h] = await Promise.all([
+        ApiKeyModel.countDocuments({ ...tFilter, isActive: true }),
+        WebhookModel.countDocuments({ ...tFilter, isActive: true }),
+        EcosystemIntegrationModel.countDocuments({ ...tFilter, status: 'connected' }),
+        WebhookDeliveryModel.countDocuments({ ...tFilter, createdAt: { $gte: since } }),
+        WebhookDeliveryModel.countDocuments({ ...tFilter, createdAt: { $gte: since }, success: false }),
+        ApiMetricModel.countDocuments({ path: { $regex: '^/api/v1/' }, createdAt: { $gte: since } }),
+      ]);
+      res.json({ apiKeysActive, webhooksActive, integrationsConnected, deliveries24h, deliveriesFailed, apiCalls24h });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── AUTOMATION RULES ────────────────────────────────────────────────────────
+  app.get("/api/ecosystem/automations", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { AutomationRuleModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const rules = await AutomationRuleModel.find({ $or: [{ tenantId }, { tenantId: { $exists: false } }] }).sort({ createdAt: -1 }).lean();
+      res.json(rules);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/ecosystem/automations", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { AutomationRuleModel } = await import("@shared/schema");
+      const { name, trigger, conditions = [], actions = [] } = req.body;
+      if (!name || !trigger) return res.status(400).json({ error: "name and trigger are required" });
+      if (!actions.length) return res.status(400).json({ error: "at least one action is required" });
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const rule = await AutomationRuleModel.create({
+        id: nanoid(), tenantId, name, trigger, conditions, actions, isActive: true, runCount: 0,
+      });
+      res.json(rule);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.patch("/api/ecosystem/automations/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { AutomationRuleModel } = await import("@shared/schema");
+      const updated = await AutomationRuleModel.findOneAndUpdate(
+        { id: req.params.id }, { $set: req.body }, { new: true }
+      ).lean();
+      res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/ecosystem/automations/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { AutomationRuleModel } = await import("@shared/schema");
+      await AutomationRuleModel.deleteOne({ id: req.params.id });
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/ecosystem/automations/:id/test", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { publishEvent } = await import("./ecosystem");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      await publishEvent("webhook.test", { message: "Automation test run", triggeredBy: req.employee?.fullName }, tenantId);
+      res.json({ success: true, message: "Test event dispatched" });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── EVENT LOG ────────────────────────────────────────────────────────────────
+  app.get("/api/ecosystem/events/recent", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { EventLogModel } = await import("@shared/schema");
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const limit = Math.min(parseInt(req.query.limit as string || '100'), 200);
+      const events = await EventLogModel.find({ $or: [{ tenantId }, { tenantId: { $exists: false } }] })
+        .sort({ createdAt: -1 }).limit(limit).lean();
+      res.json(events);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── AUTOMATION CATALOG ───────────────────────────────────────────────────────
+  app.get("/api/ecosystem/automation-types", requireAuth, requireManager, async (_req, res) => {
+    const { AUTOMATION_ACTION_TYPES } = await import("./ecosystem");
+    res.json(AUTOMATION_ACTION_TYPES);
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  PHASE 8 — PERFORMANCE MONITORING
+  // ════════════════════════════════════════════════════════════════════════
+
+  app.get("/api/performance/stats", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.employee?.tenantId || 'demo-tenant';
+      const role = req.employee?.role;
+      const isSuperAdmin = role === 'owner' || role === 'admin';
+      // Tenant scope: super-admins see system-wide, managers see only their tenant
+      const tScope: any = isSuperAdmin ? {} : { $or: [{ tenantId }, { tenantId: { $exists: false } }] };
+
+      // Server-side cache to absorb dashboard polling load (30s TTL)
+      const statsKey = cacheKey('perf-stats', isSuperAdmin ? 'super' : tenantId);
+      const cached = cache.get<any>(statsKey);
+      if (cached) return res.json(cached);
+
+      const { ApiMetricModel } = await import("@shared/schema");
+      const since = new Date(Date.now() - 60 * 60 * 1000); // last hour
+      const since24 = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+      const [overall, slowest, mostCalled, errorPaths, totals] = await Promise.all([
+        ApiMetricModel.aggregate([
+          { $match: { ...tScope, createdAt: { $gte: since } } },
+          { $group: {
+              _id: null,
+              count: { $sum: 1 },
+              avgMs: { $avg: "$durationMs" },
+              maxMs: { $max: "$durationMs" },
+              errors: { $sum: { $cond: ["$isError", 1, 0] } },
+          }},
+        ]),
+        ApiMetricModel.aggregate([
+          { $match: { ...tScope, createdAt: { $gte: since } } },
+          { $group: { _id: "$path", avgMs: { $avg: "$durationMs" }, maxMs: { $max: "$durationMs" }, count: { $sum: 1 } } },
+          { $sort: { avgMs: -1 } },
+          { $limit: 10 },
+        ]),
+        ApiMetricModel.aggregate([
+          { $match: { ...tScope, createdAt: { $gte: since } } },
+          { $group: { _id: "$path", count: { $sum: 1 }, avgMs: { $avg: "$durationMs" } } },
+          { $sort: { count: -1 } },
+          { $limit: 10 },
+        ]),
+        ApiMetricModel.aggregate([
+          { $match: { ...tScope, createdAt: { $gte: since24 }, isError: true } },
+          { $group: { _id: "$path", count: { $sum: 1 } } },
+          { $sort: { count: -1 } },
+          { $limit: 10 },
+        ]),
+        ApiMetricModel.countDocuments({ ...tScope, createdAt: { $gte: since24 } }),
+      ]);
+
+      const o = overall[0] || { count: 0, avgMs: 0, maxMs: 0, errors: 0 };
+      const cacheStats = cache.stats();
+      const memUsage = process.memoryUsage();
+
+      const payload = {
+        lastHour: {
+          requests: o.count,
+          avgMs: Math.round(o.avgMs || 0),
+          maxMs: o.maxMs || 0,
+          errors: o.errors,
+          errorRate: o.count ? Math.round((o.errors / o.count) * 100) : 0,
+        },
+        last24h: { requests: totals },
+        slowest: slowest.map((s: any) => ({ path: s._id, avgMs: Math.round(s.avgMs), maxMs: s.maxMs, count: s.count })),
+        mostCalled: mostCalled.map((s: any) => ({ path: s._id, count: s.count, avgMs: Math.round(s.avgMs) })),
+        errorPaths: errorPaths.map((s: any) => ({ path: s._id, count: s.count })),
+        cache: {
+          size: cacheStats.size,
+          maxEntries: cacheStats.maxEntries,
+          totalHits: cacheStats.totalHits,
+          totalMisses: cacheStats.totalMisses,
+          totalSets: cacheStats.totalSets,
+          totalInvalidations: cacheStats.totalInvalidations,
+          hitRate: cacheStats.hitRate,
+          topKeys: cache.topKeys(10),
+        },
+        memory: {
+          rssMB: Math.round(memUsage.rss / 1024 / 1024),
+          heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),
+          heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
+          externalMB: Math.round(memUsage.external / 1024 / 1024),
+        },
+        uptime: { seconds: Math.round(process.uptime()) },
+        scope: isSuperAdmin ? 'system' : 'tenant',
+      };
+      cache.set(statsKey, payload, 30);
+      res.json(payload);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // Clear cache (manager only)
+  app.post("/api/performance/cache/clear", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const pattern = (req.body?.pattern as string) || '';
+      if (pattern) cache.invalidate(pattern);
+      else {
+        const keys = cache.stats().keys;
+        keys.forEach(k => cache.invalidateKey(k));
+      }
+      res.json({ ok: true, cleared: pattern || 'all' });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  PHASE 9 — CODE QUALITY
+  // ════════════════════════════════════════════════════════════════════════
+  app.get("/api/code-quality/stats", requireAuth, async (req: AuthRequest, res) => {
+    const role = req.employee?.role;
+    if (role !== 'owner' && role !== 'admin') {
+      return res.status(403).json({ error: 'Forbidden — owner/admin only' });
+    }
+    try {
+      const ck = cacheKey('code-quality-stats', role);
+      const cached = cache.get<any>(ck);
+      if (cached) return res.json(cached);
+
+      const fs = await import("fs/promises");
+      const path = await import("path");
+      const { bus } = await import("./core/event-bus");
+
+      const ROOT = process.cwd();
+      const SCAN_DIRS = ["server", "client/src", "shared"];
+      const SKIP_DIRS = new Set(["node_modules", "dist", ".git", ".cache", "build", "coverage"]);
+      const FILE_EXT = /\.(ts|tsx|js|jsx)$/;
+
+      const files: { path: string; lines: number; bytes: number; todos: number; isTest: boolean }[] = [];
+      let totalLines = 0, totalBytes = 0, totalTodos = 0;
+
+      async function walk(dir: string) {
+        let entries: any[];
+        try { entries = await fs.readdir(dir, { withFileTypes: true }); }
+        catch { return; }
+        for (const e of entries) {
+          if (SKIP_DIRS.has(e.name) || e.name.startsWith(".")) continue;
+          const full = path.join(dir, e.name);
+          if (e.isDirectory()) await walk(full);
+          else if (e.isFile() && FILE_EXT.test(e.name)) {
+            try {
+              const content = await fs.readFile(full, "utf8");
+              const lines = content.split("\n").length;
+              const bytes = Buffer.byteLength(content, "utf8");
+              const todos = (content.match(/\b(TODO|FIXME|HACK|XXX)\b/g) || []).length;
+              const rel = path.relative(ROOT, full);
+              files.push({
+                path: rel,
+                lines,
+                bytes,
+                todos,
+                isTest: /\.(test|spec)\./.test(e.name) || rel.startsWith("tests/"),
+              });
+              totalLines += lines;
+              totalBytes += bytes;
+              totalTodos += todos;
+            } catch {}
+          }
+        }
+      }
+
+      await Promise.all(SCAN_DIRS.map(d => walk(path.join(ROOT, d))));
+
+      const largest = [...files].sort((a, b) => b.lines - a.lines).slice(0, 15);
+      const todoFiles = files.filter(f => f.todos > 0).sort((a, b) => b.todos - a.todos).slice(0, 15);
+      const testFiles = files.filter(f => f.isTest);
+      const oversized = files.filter(f => f.lines > 800);
+
+      // Module scoring
+      const moduleStats: Record<string, { files: number; lines: number; tests: number }> = {};
+      for (const f of files) {
+        const top = f.path.split(path.sep).slice(0, 2).join("/");
+        if (!moduleStats[top]) moduleStats[top] = { files: 0, lines: 0, tests: 0 };
+        moduleStats[top].files++;
+        moduleStats[top].lines += f.lines;
+        if (f.isTest) moduleStats[top].tests++;
+      }
+
+      // Health score (0-100). Lower is worse.
+      // -1 for each oversized file (capped at -30), -1 per 5 TODOs (cap -20), +20 if tests exist
+      const oversizedPenalty = Math.min(30, oversized.length);
+      const todoPenalty = Math.min(20, Math.floor(totalTodos / 5));
+      const testsBonus = testFiles.length > 0 ? 20 : 0;
+      const eventBonus = bus.listSubscriptions().length > 0 ? 10 : 0;
+      const healthScore = Math.max(0, Math.min(100, 70 - oversizedPenalty - todoPenalty + testsBonus + eventBonus));
+
+      const busStats = bus.getStats();
+      const subscriptions = bus.listSubscriptions();
+
+      const payload = {
+        summary: {
+          totalFiles: files.length,
+          totalLines,
+          totalBytes,
+          totalTodos,
+          testFiles: testFiles.length,
+          oversizedFiles: oversized.length,
+          avgLinesPerFile: files.length ? Math.round(totalLines / files.length) : 0,
+          healthScore,
+        },
+        largest: largest.map(f => ({ path: f.path, lines: f.lines, kb: Math.round(f.bytes / 1024) })),
+        todoFiles: todoFiles.map(f => ({ path: f.path, todos: f.todos })),
+        oversized: oversized.slice(0, 20).map(f => ({ path: f.path, lines: f.lines })),
+        modules: Object.entries(moduleStats)
+          .map(([k, v]) => ({ name: k, ...v, coverage: v.tests > 0 ? Math.round((v.tests / v.files) * 100) : 0 }))
+          .sort((a, b) => b.lines - a.lines)
+          .slice(0, 12),
+        tests: testFiles.map(f => f.path),
+        eventBus: {
+          totalEmitted: busStats.totalEmitted,
+          totalHandled: busStats.totalHandled,
+          totalErrors: busStats.totalErrors,
+          subscriptions,
+          topEvents: Object.entries(busStats.byEvent)
+            .map(([name, s]) => ({ name, ...s }))
+            .sort((a, b) => b.emitted - a.emitted)
+            .slice(0, 10),
+        },
+      };
+
+      cache.set(ck, payload, 60);
+      res.json(payload);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // Run core tests on demand (owner/admin only, single-flight, 60s timeout, dev only)
+  let _testsRunning: Promise<any> | null = null;
+  app.post("/api/code-quality/run-tests", requireAuth, async (req: AuthRequest, res) => {
+    const role = req.employee?.role;
+    if (role !== 'owner' && role !== 'admin') {
+      return res.status(403).json({ error: 'Forbidden — owner/admin only' });
+    }
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({ error: 'Test runner disabled in production' });
+    }
+    if (_testsRunning) {
+      return res.status(409).json({ error: 'Tests already running — wait for current run to finish' });
+    }
+    _testsRunning = (async () => {
+      const { spawn } = await import("child_process");
+      const child = spawn("node_modules/.bin/tsx", ["tests/core.test.ts"], { cwd: process.cwd() });
+      let out = "", err = "", killed = false;
+      const timer = setTimeout(() => { killed = true; try { child.kill('SIGKILL'); } catch {} }, 60000);
+      child.stdout.on("data", (d) => { out += d.toString(); });
+      child.stderr.on("data", (d) => { err += d.toString(); });
+      const code: number = await new Promise((r) => child.on("close", r));
+      clearTimeout(timer);
+      const passMatch = out.match(/(\d+)\s+passed/);
+      const failMatch = out.match(/(\d+)\s+failed/);
+      return {
+        exitCode: code,
+        timeout: killed,
+        passed: passMatch ? parseInt(passMatch[1]) : 0,
+        failed: failMatch ? parseInt(failMatch[1]) : 0,
+        ok: code === 0 && !killed,
+        output: (out + (err ? "\n[stderr]\n" + err : "")).slice(-4000),
+      };
+    })();
+    try {
+      const result = await _testsRunning;
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: "Internal server error" });
+    } finally {
+      _testsRunning = null;
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  PUBLIC OPEN API v1  (Authentication: Bearer qrx_live_... or qrx_test_...)
+  // ════════════════════════════════════════════════════════════════════════
+
+  // Tenant filter helper: limit to caller's tenant; if no tenantId, include legacy docs without tenantId
+  const tFilter = (tenantId?: string) => tenantId ? { $or: [{ tenantId }, { tenantId: { $exists: false } }] } : {};
+
+  // GET /api/v1/menu — list products
+  app.get("/api/v1/menu", requireApiKey("menu:read"), async (req: any, res) => {
+    try {
+      const { CoffeeItemModel } = await import("@shared/schema");
+      const items = await CoffeeItemModel.find({ ...tFilter(req.tenantId), isAvailable: 1 }).limit(500).lean();
+      res.json({ data: items, count: items.length });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // GET /api/v1/menu/:id
+  app.get("/api/v1/menu/:id", requireApiKey("menu:read"), async (req: any, res) => {
+    try {
+      const { CoffeeItemModel } = await import("@shared/schema");
+      const item = await CoffeeItemModel.findOne({ ...tFilter(req.tenantId), id: req.params.id }).lean();
+      if (!item) return res.status(404).json({ error: "Not found" });
+      res.json({ data: item });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // GET /api/v1/orders
+  app.get("/api/v1/orders", requireApiKey("orders:read"), async (req: any, res) => {
+    try {
+      const { OrderModel } = await import("@shared/schema");
+      const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+      const status = req.query.status;
+      const since = req.query.since ? new Date(req.query.since) : undefined;
+      const filter: any = tFilter(req.tenantId);
+      if (status) filter.status = status;
+      if (since) filter.createdAt = { $gte: since };
+      const orders = await OrderModel.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
+      res.json({ data: orders, count: orders.length });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // GET /api/v1/orders/:id
+  app.get("/api/v1/orders/:id", requireApiKey("orders:read"), async (req: any, res) => {
+    try {
+      const { OrderModel } = await import("@shared/schema");
+      const baseFilter = tFilter(req.tenantId);
+      const order = await OrderModel.findOne({ ...baseFilter, $or: [{ id: req.params.id }, { orderNumber: req.params.id }] }).lean();
+      if (!order) return res.status(404).json({ error: "Not found" });
+      res.json({ data: order });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // POST /api/v1/orders — create order from external source (Shopify/TikTok/etc.)
+  app.post("/api/v1/orders", requireApiKey("orders:write"), async (req: any, res) => {
+    try {
+      const { OrderModel } = await import("@shared/schema");
+      const orderData = req.body;
+      if (!orderData.items || !Array.isArray(orderData.items) || !orderData.items.length) {
+        return res.status(400).json({ error: "items array required" });
+      }
+      const orderNumber = `EXT-${Date.now().toString().slice(-6)}`;
+      // branchId is required by schema — derive from body or fall back to tenant's "main" branch
+      let branchId = orderData.branchId;
+      if (!branchId) {
+        try {
+          const { BranchModel } = await import("@shared/schema");
+          const branch: any = await BranchModel.findOne(tFilter(req.tenantId)).lean();
+          branchId = branch?.id || 'main';
+        } catch { branchId = 'main'; }
+      }
+      const order = await OrderModel.create({
+        id: nanoid(),
+        orderNumber,
+        tenantId: req.tenantId || 'demo-tenant',
+        branchId,
+        items: orderData.items,
+        totalAmount: orderData.totalAmount || orderData.items.reduce((s: number, i: any) => s + (i.price || 0) * (i.quantity || 1), 0),
+        customerName: orderData.customerName || 'External',
+        customerPhone: orderData.customerPhone || '',
+        status: 'pending',
+        orderType: orderData.orderType || 'pickup',
+        source: orderData.source || `api:${req.apiKey?.name || 'external'}`,
+        paymentMethod: orderData.paymentMethod || 'external',
+        deliveryMode: orderData.deliveryMode || 'delivery',
+        createdAt: new Date(),
+      });
+      publishEvent("order.created", { orderId: order.id, orderNumber, source: (order as any).source }, req.tenantId);
+      res.status(201).json({ data: order });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // GET /api/v1/customers
+  app.get("/api/v1/customers", requireApiKey("customers:read"), async (req: any, res) => {
+    try {
+      const { CustomerModel } = await import("@shared/schema");
+      const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+      const phone = req.query.phone;
+      const filter: any = tFilter(req.tenantId);
+      if (phone) filter.phone = phone;
+      const customers = await CustomerModel.find(filter).limit(limit).select("-password -walletPin").lean();
+      res.json({ data: customers, count: customers.length });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // GET /api/v1/loyalty/cards/:phone
+  app.get("/api/v1/loyalty/cards/:phone", requireApiKey("loyalty:read"), async (req: any, res) => {
+    try {
+      const { LoyaltyCardModel } = await import("@shared/schema");
+      const card = await LoyaltyCardModel.findOne({ ...tFilter(req.tenantId), phoneNumber: req.params.phone }).lean();
+      if (!card) return res.status(404).json({ error: "Not found" });
+      res.json({ data: card });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // POST /api/v1/loyalty/cards/:phone/points  { points, reason }
+  app.post("/api/v1/loyalty/cards/:phone/points", requireApiKey("loyalty:write"), async (req: any, res) => {
+    try {
+      const { LoyaltyCardModel } = await import("@shared/schema");
+      const { points, reason } = req.body;
+      if (typeof points !== 'number') return res.status(400).json({ error: "points (number) required" });
+      const card = await LoyaltyCardModel.findOneAndUpdate(
+        { ...tFilter(req.tenantId), phoneNumber: req.params.phone },
+        { $inc: { points: points }, $set: { updatedAt: new Date() } },
+        { new: true }
+      ).lean();
+      if (!card) return res.status(404).json({ error: "Card not found" });
+      publishEvent(points > 0 ? "loyalty.points_added" : "loyalty.points_redeemed", { phoneNumber: req.params.phone, points, reason, card }, req.tenantId);
+      res.json({ data: card });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // GET /api/v1/inventory
+  app.get("/api/v1/inventory", requireApiKey("inventory:read"), async (req: any, res) => {
+    try {
+      const { RawItemModel } = await import("@shared/schema");
+      const items = await RawItemModel.find({ ...tFilter(req.tenantId), isActive: 1 }).limit(500).lean();
+      res.json({ data: items, count: items.length });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // PATCH /api/v1/inventory/:id   { currentStock }
+  app.patch("/api/v1/inventory/:id", requireApiKey("inventory:write"), async (req: any, res) => {
+    try {
+      const { RawItemModel } = await import("@shared/schema");
+      const { currentStock } = req.body;
+      if (typeof currentStock !== 'number') return res.status(400).json({ error: "currentStock (number) required" });
+      const item = await RawItemModel.findOneAndUpdate({ ...tFilter(req.tenantId), id: req.params.id }, { $set: { currentStock, updatedAt: new Date() } }, { new: true }).lean();
+      if (!item) return res.status(404).json({ error: "Not found" });
+      publishEvent("inventory.updated", { rawItemId: item.id, currentStock }, req.tenantId);
+      res.json({ data: item });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── عاشراً: STOCKTAKING (Smart Inventory Count) ────────────────────────────
+
+  // GET /api/stocktake — list sessions
+  app.get("/api/stocktake", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "demo-tenant";
+      const sessions = await StocktakeSessionModel.find({ tenantId }).sort({ createdAt: -1 }).limit(50).lean();
+      res.json(sessions);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // POST /api/stocktake/start — start a new session with expected quantities from BranchStock
+  app.post("/api/stocktake/start", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "demo-tenant";
+      const { branchId } = req.body;
+      const branchFilter = branchId ? { branchId } : {};
+      const stocks = await BranchStockModel.find({ tenantId, ...branchFilter }).lean();
+      const rawItemIds = stocks.map((s: any) => s.rawItemId);
+      const rawItems = await RawItemModel.find({ tenantId, id: { $in: rawItemIds } }).lean();
+      const rawMap = Object.fromEntries(rawItems.map((r: any) => [r.id, r]));
+      const branch = branchId ? await BranchModel.findById(branchId).lean() : null;
+      const items = stocks.map((s: any) => {
+        const raw = rawMap[s.rawItemId] || {};
+        return {
+          rawItemId: s.rawItemId,
+          rawItemName: (raw as any).nameAr || s.rawItemId,
+          unit: (raw as any).unit || 'unit',
+          expectedQty: s.currentQuantity || 0,
+          actualQty: 0,
+          difference: 0,
+          adjustmentReason: '',
+          unitCost: (raw as any).lastCost || (raw as any).unitCost || 0,
+          adjustmentValue: 0,
+        };
+      });
+      const session = await StocktakeSessionModel.create({
+        tenantId, branchId, branchName: (branch as any)?.nameAr || branchId || 'الفرع الرئيسي',
+        status: 'draft', items, createdBy: req.employee?.id || 'manager',
+        notes: '', totalAdjustmentValue: 0,
+      });
+      res.status(201).json(session);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // GET /api/stocktake/:id — get single session
+  app.get("/api/stocktake/:id", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "demo-tenant";
+      const session = await StocktakeSessionModel.findOne({ tenantId, id: req.params.id }).lean()
+        || await StocktakeSessionModel.findById(req.params.id).lean();
+      if (!session) return res.status(404).json({ error: "جلسة الجرد غير موجودة" });
+      res.json(session);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // PATCH /api/stocktake/:id/items — update actual counts
+  app.patch("/api/stocktake/:id/items", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "demo-tenant";
+      const { items } = req.body; // Array<{ rawItemId, actualQty, adjustmentReason }>
+      const session = await StocktakeSessionModel.findOne({ tenantId, id: req.params.id })
+        || await StocktakeSessionModel.findById(req.params.id);
+      if (!session) return res.status(404).json({ error: "جلسة الجرد غير موجودة" });
+      if (session.status !== 'draft') return res.status(400).json({ error: "يمكن تعديل الجلسات المسودة فقط" });
+      let totalAdjVal = 0;
+      for (const upd of items) {
+        const item = session.items.find((it: any) => it.rawItemId === upd.rawItemId);
+        if (!item) continue;
+        (item as any).actualQty = upd.actualQty ?? (item as any).actualQty;
+        (item as any).adjustmentReason = upd.adjustmentReason ?? (item as any).adjustmentReason;
+        (item as any).difference = (item as any).actualQty - (item as any).expectedQty;
+        (item as any).adjustmentValue = (item as any).difference * ((item as any).unitCost || 0);
+        totalAdjVal += (item as any).adjustmentValue;
+      }
+      session.totalAdjustmentValue = totalAdjVal;
+      await session.save();
+      res.json(session);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // POST /api/stocktake/:id/submit — submit for approval
+  app.post("/api/stocktake/:id/submit", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "demo-tenant";
+      const session = await StocktakeSessionModel.findOne({ tenantId, id: req.params.id })
+        || await StocktakeSessionModel.findById(req.params.id);
+      if (!session) return res.status(404).json({ error: "جلسة الجرد غير موجودة" });
+      session.status = 'submitted';
+      session.submittedBy = req.employee?.id || 'manager';
+      (session as any).submittedAt = new Date();
+      if (req.body.notes) session.notes = req.body.notes;
+      await session.save();
+      res.json(session);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // POST /api/stocktake/:id/approve — approve & apply adjustments to BranchStock
+  app.post("/api/stocktake/:id/approve", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "demo-tenant";
+      const session = await StocktakeSessionModel.findOne({ tenantId, id: req.params.id })
+        || await StocktakeSessionModel.findById(req.params.id);
+      if (!session) return res.status(404).json({ error: "جلسة الجرد غير موجودة" });
+      if (session.status !== 'submitted') return res.status(400).json({ error: "يجب تقديم الجلسة أولاً" });
+
+      // Apply adjustments to BranchStock & create StockMovements
+      for (const item of session.items as any[]) {
+        if (item.difference === 0) continue;
+        await BranchStockModel.findOneAndUpdate(
+          { tenantId, branchId: session.branchId, rawItemId: item.rawItemId },
+          { $set: { currentQuantity: item.actualQty, lastUpdated: new Date() } }
+        );
+        await StockMovementModel.create({
+          id: (Math.random().toString(36).slice(2)), tenantId,
+          branchId: session.branchId, rawItemId: item.rawItemId,
+          rawItemName: item.rawItemName, movementType: 'adjustment',
+          quantity: item.difference, unit: item.unit,
+          reason: item.adjustmentReason || 'جرد دوري',
+          reference: session.id, createdBy: req.employee?.id || 'manager',
+          createdAt: new Date(),
+        });
+      }
+
+      // Accounting: inventory adjustment journal
+      try {
+        const adjLoss = session.items.filter((it: any) => it.difference < 0).reduce((s: number, it: any) => s + Math.abs(it.adjustmentValue || 0), 0);
+        if (adjLoss > 0) {
+          const invAcc = await AccountModel.findOne({ tenantId, accountNumber: "1130" });
+          const adjAcc = await AccountModel.findOne({ tenantId, accountNumber: "5200" }) || invAcc;
+          if (invAcc && adjAcc) {
+            await ErpAccountingService.createJournalEntry({
+              tenantId, entryDate: new Date(),
+              description: `فروقات جرد مخزون - ${session.branchName}`,
+              lines: [
+                { accountId: adjAcc.id, accountNumber: adjAcc.accountNumber, accountName: "فروقات جرد", debit: adjLoss, credit: 0, description: 'خسائر جرد', branchId: session.branchId },
+                { accountId: invAcc.id, accountNumber: "1130", accountName: "مخزون", debit: 0, credit: adjLoss, description: 'تعديل جرد', branchId: session.branchId },
+              ],
+              referenceType: 'stocktake', referenceId: session.id,
+              createdBy: req.employee?.id || 'system', autoPost: true,
+            });
+          }
+        }
+      } catch (accErr) { console.error('[STOCKTAKE] Accounting error:', accErr); }
+
+      session.status = 'approved';
+      session.approvedBy = req.employee?.id || 'manager';
+      (session as any).approvedAt = new Date();
+      await session.save();
+      res.json(session);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // POST /api/stocktake/:id/reject
+  app.post("/api/stocktake/:id/reject", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "demo-tenant";
+      const session = await StocktakeSessionModel.findOne({ tenantId, id: req.params.id })
+        || await StocktakeSessionModel.findById(req.params.id);
+      if (!session) return res.status(404).json({ error: "جلسة غير موجودة" });
+      session.status = 'rejected';
+      session.rejectionReason = req.body.reason || '';
+      await session.save();
+      res.json(session);
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── الحادي عشر: AI INVENTORY INSIGHTS ─────────────────────────────────────
+
+  app.post("/api/ai/inventory-insights", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "demo-tenant";
+      const tF = { tenantId };
+      const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const since7d  = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+      const [rawItems, branchStocks, wastage, movements, recentStocktakes, recipes] = await Promise.all([
+        RawItemModel.find(tF).lean(),
+        BranchStockModel.find(tF).lean(),
+        WastageModel.find({ ...tF, recordedAt: { $gte: since30d } }).lean(),
+        StockMovementModel.find({ ...tF, createdAt: { $gte: since30d } }).lean(),
+        StocktakeSessionModel.find({ ...tF, status: 'approved', createdAt: { $gte: since30d } }).lean(),
+        RecipeItemModel.find(tF).lean(),
+      ]);
+
+      // Build context
+      const stockSummary = rawItems.map((r: any) => {
+        const stock = (branchStocks as any[]).filter((b: any) => b.rawItemId === r.id);
+        const totalQty = stock.reduce((s: number, b: any) => s + (b.currentQuantity || 0), 0);
+        const itemMovements = (movements as any[]).filter((m: any) => m.rawItemId === r.id);
+        const totalConsumed = itemMovements.filter((m: any) => m.movementType === 'sale').reduce((s: number, m: any) => s + Math.abs(m.quantity), 0);
+        const totalWaste = (wastage as any[]).filter((w: any) => w.rawItemId === r.id).reduce((s: number, w: any) => s + Math.abs(w.quantity), 0);
+        const expectedFromRecipes = (recipes as any[]).filter((rec: any) => rec.rawItemId === r.id).length;
+        return `${r.nameAr}: مخزون=${totalQty.toFixed(1)}${r.unit} | مستهلك(30ي)=${totalConsumed.toFixed(1)} | هدر=${totalWaste.toFixed(1)} | مرتبط بـ${expectedFromRecipes} وصفة`;
+      }).join('\n');
+
+      const stocktakeDiffs = (recentStocktakes as any[]).flatMap((s: any) =>
+        (s.items || []).filter((it: any) => it.difference !== 0).map((it: any) =>
+          `${it.rawItemName}: فرق ${it.difference > 0 ? '+' : ''}${it.difference.toFixed(1)}${it.unit} (${it.adjustmentReason || 'بدون سبب'})`
+        )
+      ).slice(0, 20).join('\n');
+
+      const systemPrompt = `أنت محلل مخزون ذكي لنظام CLUNY لإدارة المطاعم والكافيهات. 
+مهمتك تحليل بيانات المخزون واكتشاف: الهدر غير الطبيعي، السرقة المحتملة، نفاد المواد، والمشتريات الموصى بها.
+كن دقيقاً وعملياً. قدم أرقاماً واضحة وتوصيات قابلة للتنفيذ.`;
+
+      const userMessage = (req.body.question || `حلل بيانات المخزون التالية وأعطني:
+1. كشف الهدر: هل هناك مواد بها هدر غير طبيعي؟
+2. كشف السرقة: مقارنة المبيعات بالاستهلاك — هل هناك فروقات مريبة؟
+3. توقع النفاد: أي المواد ستنفد خلال أسبوع؟
+4. توصيات الشراء: ماذا يجب شراؤه الآن؟`) + `\n\n📦 بيانات المخزون:\n${stockSummary}\n\n🔍 فروقات آخر جرد:\n${stocktakeDiffs || 'لا يوجد جرد حديث'}`;
+
+      const apiKey = process.env.KIMI_API_KEY;
+      if (!apiKey) return res.status(500).json({ error: "KIMI_API_KEY not configured" });
+
+      const history = req.body.history || [];
+      const response = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: "moonshot-v1-32k",
+          messages: [{ role: "system", content: systemPrompt }, ...history, { role: "user", content: userMessage }],
+          temperature: 0.3, max_tokens: 2000,
+        }),
+      });
+      const data: any = await response.json();
+      res.json({ answer: data.choices?.[0]?.message?.content || "لا يوجد رد" });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── الثالث عشر: CEO AI — Enhanced Manager AI with full business context ───
+
+  app.post("/api/ai/ceo-chat", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "demo-tenant";
+      const tF = { tenantId };
+      const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+      const [orders30d, orders7d, branchStocks, rawItems, expenses] = await Promise.all([
+        OrderModel.find({ ...tF, status: { $in: ['completed', 'payment_confirmed'] }, createdAt: { $gte: since30d } })
+          .select("totalAmount costOfGoods paymentMethod branchId items createdAt").lean(),
+        OrderModel.find({ ...tF, status: { $in: ['completed', 'payment_confirmed'] }, createdAt: { $gte: since7d } })
+          .select("totalAmount costOfGoods items createdAt").lean(),
+        BranchStockModel.find(tF).lean(),
+        RawItemModel.find(tF).lean(),
+        ExpenseErpModel ? ExpenseErpModel.find({ ...tF, date: { $gte: since30d } }).lean().catch(() => []) : Promise.resolve([]),
+      ]);
+
+      const rev30 = (orders30d as any[]).reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+      const cogs30 = (orders30d as any[]).reduce((s: number, o: any) => s + (o.costOfGoods || 0), 0);
+      const rev7 = (orders7d as any[]).reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+      const grossMargin = rev30 > 0 ? ((rev30 - cogs30) / rev30 * 100).toFixed(1) : 0;
+      const expTotal = (expenses as any[]).reduce((s: number, e: any) => s + (e.amount || 0), 0);
+      const netProfit = rev30 - cogs30 - expTotal;
+
+      const lowStockItems = rawItems.filter((r: any) => {
+        const stock = (branchStocks as any[]).filter((b: any) => b.rawItemId === r.id);
+        const qty = stock.reduce((s: number, b: any) => s + (b.currentQuantity || 0), 0);
+        return qty <= (r.minStock || r.reorderPoint || 0);
+      }).map((r: any) => r.nameAr).slice(0, 5).join('، ');
+
+      const contextData = `📊 ملخص الأعمال (آخر 30 يوم):
+- إجمالي الإيراد: ${rev30.toFixed(0)} ريال | آخر 7 أيام: ${rev7.toFixed(0)} ريال
+- تكلفة البضاعة (COGS): ${cogs30.toFixed(0)} ريال
+- هامش الربح الإجمالي: ${grossMargin}%
+- إجمالي المصروفات: ${expTotal.toFixed(0)} ريال
+- صافي الربح: ${netProfit.toFixed(0)} ريال
+- عدد الطلبات (30ي): ${orders30d.length} | (7ي): ${orders7d.length}
+- مواد منخفضة المخزون: ${lowStockItems || 'لا يوجد'}`;
+
+      const systemPrompt = `أنت مستشار أعمال ذكي (CEO AI) لنظام CLUNY. تحلل بيانات الكافيه وتجيب على أسئلة المدير بدقة ووضوح.
+استخدم الأرقام والبيانات المقدمة لك. كن عملياً وحاسماً في توصياتك.`;
+
+      const history = req.body.history || [];
+      const question = req.body.question || "حلل وضع الأعمال الحالي";
+      const fullMessage = `${contextData}\n\n❓ السؤال: ${question}`;
+
+      const apiKey = process.env.KIMI_API_KEY;
+      if (!apiKey) return res.status(500).json({ error: "KIMI_API_KEY not configured" });
+
+      const response = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: "moonshot-v1-32k",
+          messages: [{ role: "system", content: systemPrompt }, ...history, { role: "user", content: fullMessage }],
+          temperature: 0.4, max_tokens: 2000,
+        }),
+      });
+      const data: any = await response.json();
+      res.json({ answer: data.choices?.[0]?.message?.content || "لا يوجد رد" });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── الخامس عشر: DIGITAL TWIN — Per-branch snapshot ───────────────────────
+
+  app.get("/api/digital-twin", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "demo-tenant";
+      const tF = { tenantId };
+      const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const since7d  = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+      const [branches, allOrders, branchStocks, rawItems, employees] = await Promise.all([
+        BranchModel.find({ isActive: 1 }).lean(),
+        OrderModel.find({ ...tF, status: { $in: ['completed', 'payment_confirmed'] }, createdAt: { $gte: since30d } })
+          .select("totalAmount costOfGoods branchId createdAt").lean(),
+        BranchStockModel.find(tF).lean(),
+        RawItemModel.find(tF).lean(),
+        EmployeeModel ? EmployeeModel.find({ ...tF, isActive: true }).select("branchId role").lean().catch(() => []) : Promise.resolve([]),
+      ]);
+
+      const branchTwins = (branches as any[]).map((branch: any) => {
+        const bid = branch._id.toString();
+        const bOrders30 = (allOrders as any[]).filter((o: any) => o.branchId === bid);
+        const bOrders24h = bOrders30.filter((o: any) => new Date(o.createdAt) >= since24h);
+        const bOrders7d  = bOrders30.filter((o: any) => new Date(o.createdAt) >= since7d);
+        const rev30 = bOrders30.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+        const rev24h = bOrders24h.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+        const rev7d = bOrders7d.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+        const cogs30 = bOrders30.reduce((s: number, o: any) => s + (o.costOfGoods || 0), 0);
+        const margin = rev30 > 0 ? ((rev30 - cogs30) / rev30 * 100) : 0;
+        const stocks = (branchStocks as any[]).filter((s: any) => s.branchId === bid);
+        const lowStock = stocks.filter((s: any) => {
+          const raw = rawItems.find((r: any) => r.id === s.rawItemId) as any;
+          return s.currentQuantity <= (raw?.minStock || raw?.reorderPoint || 0);
+        }).length;
+        const empCount = (employees as any[]).filter((e: any) => e.branchId === bid).length;
+        const dailyAvg = rev30 / 30;
+        const forecast7d = dailyAvg * 7;
+        const healthScore = Math.min(100, Math.max(0,
+          (margin > 40 ? 30 : margin > 20 ? 15 : 0) +
+          (bOrders24h.length > 10 ? 30 : bOrders24h.length > 5 ? 15 : 0) +
+          (lowStock === 0 ? 25 : lowStock < 3 ? 10 : 0) +
+          (empCount > 0 ? 15 : 0)
+        ));
+        return {
+          branchId: bid,
+          branchName: branch.nameAr || branch.name,
+          kpis: {
+            revenue24h: parseFloat(rev24h.toFixed(2)),
+            revenue7d: parseFloat(rev7d.toFixed(2)),
+            revenue30d: parseFloat(rev30.toFixed(2)),
+            orders24h: bOrders24h.length,
+            orders7d: bOrders7d.length,
+            orders30d: bOrders30.length,
+            grossMargin: parseFloat(margin.toFixed(1)),
+            cogs30d: parseFloat(cogs30.toFixed(2)),
+            lowStockAlerts: lowStock,
+            employeeCount: empCount,
+          },
+          forecast: {
+            next7dRevenue: parseFloat(forecast7d.toFixed(2)),
+            dailyAvgRevenue: parseFloat(dailyAvg.toFixed(2)),
+          },
+          healthScore,
+          risks: [
+            ...(lowStock > 2 ? [`⚠️ ${lowStock} مادة أقل من الحد الأدنى`] : []),
+            ...(margin < 20 ? [`📉 هامش ربح منخفض (${margin.toFixed(1)}%)`] : []),
+            ...(bOrders24h.length === 0 ? ['🚨 لا توجد طلبات خلال 24 ساعة'] : []),
+          ],
+          opportunities: [
+            ...(rev7d > rev30 / 4 ? ['📈 أداء هذا الأسبوع أفضل من المتوسط'] : ['💡 فرصة لتحسين أداء المبيعات']),
+          ],
+        };
+      });
+
+      res.json({ branches: branchTwins, generatedAt: new Date() });
+    } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ─── INVENTORY CYCLE STATUS ─────────────────────────────────────────────────
+
+  // GET /api/inventory/cycle-status — full POS→Accounting automation status
+  app.get("/api/inventory/cycle-status", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = (req as any).tenantId || "demo-tenant";
+      const tF = tFilter(tenantId);
+      const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const since7d  = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+      const [
+        allProducts,
+        allRecipes,
+        allRawItems,
+        branchStocks,
+        recentOrders,
+        recentMovements,
+      ] = await Promise.all([
+        CoffeeItemModel.find({ ...tF, isActive: true }).select("id nameAr nameEn price costOfGoods category").lean(),
+        RecipeItemModel.find({ ...tF }).lean(),
+        RawItemModel.find({ ...tF, isActive: 1 }).select("id nameAr unit currentStock minStock reorderPoint lastCost unitCost").lean(),
+        BranchStockModel.find({ ...tF }).lean(),
+        OrderModel.find({ ...tF, status: { $in: ["completed", "payment_confirmed"] }, createdAt: { $gte: since24h } })
+          .select("orderNumber totalAmount costOfGoods inventoryDeducted items paymentMethod createdAt branchId")
+          .sort({ createdAt: -1 }).limit(50).lean(),
+        StockMovementModel.find({ ...tF, createdAt: { $gte: since7d }, movementType: "sale" })
+          .select("rawItemId quantity createdAt").lean(),
+      ]);
+
+      // Products with / without recipes
+      const linkedProductIds = new Set(allRecipes.map((r: any) => r.coffeeItemId));
+      const productsWithRecipe = (allProducts as any[]).filter((p: any) => linkedProductIds.has(p.id));
+      const productsWithoutRecipe = (allProducts as any[]).filter((p: any) => !linkedProductIds.has(p.id));
+
+      // COGS today
+      const cogsToday = recentOrders.reduce((s: number, o: any) => s + (o.costOfGoods || 0), 0);
+      const revenueToday = recentOrders.reduce((s: number, o: any) => s + (o.totalAmount || 0), 0);
+      const deductedCount = recentOrders.filter((o: any) => o.inventoryDeducted >= 1).length;
+      const notDeductedCount = recentOrders.filter((o: any) => !o.inventoryDeducted).length;
+
+      // Stock levels with consumption rate & days remaining
+      const movementsByItem: Record<string, number> = {};
+      for (const mv of recentMovements as any[]) {
+        movementsByItem[mv.rawItemId] = (movementsByItem[mv.rawItemId] || 0) + Math.abs(mv.quantity);
+      }
+
+      const stockLevels = (allRawItems as any[]).map((item: any) => {
+        const branchStock = (branchStocks as any[]).filter((bs: any) => bs.rawItemId === item.id);
+        const totalStock = branchStock.reduce((s: number, bs: any) => s + (bs.currentQuantity || 0), 0);
+        const weeklyConsumption = movementsByItem[item.id] || 0;
+        const dailyRate = weeklyConsumption / 7;
+        const daysRemaining = dailyRate > 0 ? Math.floor(totalStock / dailyRate) : null;
+        const isLow = totalStock <= (item.minStock || item.reorderPoint || 0);
+        return {
+          id: item.id,
+          nameAr: item.nameAr,
+          unit: item.unit,
+          currentStock: totalStock,
+          minStock: item.minStock || item.reorderPoint || 0,
+          dailyConsumption: parseFloat(dailyRate.toFixed(3)),
+          daysRemaining,
+          isLow,
+          unitCost: item.lastCost || item.unitCost || 0,
+        };
+      }).sort((a: any, b: any) => (a.daysRemaining ?? 9999) - (b.daysRemaining ?? 9999));
+
+      const lowStockItems = stockLevels.filter((s: any) => s.isLow);
+
+      // Top COGS consuming raw items (by recipe usage × recent sales)
+      const productSaleCount: Record<string, number> = {};
+      for (const order of recentOrders as any[]) {
+        const items = typeof order.items === "string" ? JSON.parse(order.items || "[]") : (order.items || []);
+        for (const item of items) {
+          const pid = item.coffeeItemId || item.id;
+          productSaleCount[pid] = (productSaleCount[pid] || 0) + (item.quantity || 1);
+        }
+      }
+
+      const rawItemCost: Array<{ id: string; nameAr: string; estimatedDailyCost: number }> = [];
+      for (const recipe of allRecipes as any[]) {
+        const salesQty = productSaleCount[recipe.coffeeItemId] || 0;
+        const raw = (allRawItems as any[]).find((r: any) => r.id === recipe.rawItemId);
+        if (!raw) continue;
+        const cost = (raw.lastCost || raw.unitCost || 0) * recipe.quantity * salesQty;
+        const existing = rawItemCost.find(x => x.id === recipe.rawItemId);
+        if (existing) { existing.estimatedDailyCost += cost; }
+        else { rawItemCost.push({ id: recipe.rawItemId, nameAr: raw.nameAr, estimatedDailyCost: cost }); }
+      }
+      rawItemCost.sort((a, b) => b.estimatedDailyCost - a.estimatedDailyCost);
+
+      res.json({
+        summary: {
+          totalProducts: allProducts.length,
+          productsWithRecipe: productsWithRecipe.length,
+          productsWithoutRecipe: productsWithoutRecipe.length,
+          recipeCompletionRate: allProducts.length > 0 ? Math.round((productsWithRecipe.length / allProducts.length) * 100) : 0,
+          ordersToday: recentOrders.length,
+          deductedOrders: deductedCount,
+          notDeductedOrders: notDeductedCount,
+          cogsToday: parseFloat(cogsToday.toFixed(2)),
+          revenueToday: parseFloat(revenueToday.toFixed(2)),
+          grossMarginToday: revenueToday > 0 ? parseFloat(((1 - cogsToday / revenueToday) * 100).toFixed(1)) : 0,
+          lowStockCount: lowStockItems.length,
+        },
+        productsWithoutRecipe: productsWithoutRecipe.slice(0, 20).map((p: any) => ({
+          id: p.id, nameAr: p.nameAr, price: p.price, category: p.category,
+        })),
+        stockLevels: stockLevels.slice(0, 30),
+        lowStockItems: lowStockItems.slice(0, 20),
+        topCogsItems: rawItemCost.slice(0, 10),
+        recentOrders: recentOrders.slice(0, 10).map((o: any) => ({
+          orderNumber: o.orderNumber,
+          totalAmount: o.totalAmount,
+          costOfGoods: o.costOfGoods,
+          inventoryDeducted: o.inventoryDeducted,
+          paymentMethod: o.paymentMethod,
+          createdAt: o.createdAt,
+        })),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ─── BRAND AI ENDPOINTS ────────────────────────────────────────────────────
+
+  // POST /api/ai/brand-chat — employee brand AI assistant (Kimi AI)
+  app.post("/api/ai/brand-chat", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const kimiKey = process.env.KIMI_API_KEY;
+      if (!kimiKey) return res.status(503).json({ error: "AI not configured" });
+
+      const { message, history = [] } = req.body;
+      if (!message) return res.status(400).json({ error: "message required" });
+
+      const tenantId = (req as any).tenantId || "demo-tenant";
+      const tF = tFilter(tenantId);
+
+      const [items, categories, config] = await Promise.all([
+        CoffeeItemModel.find({ ...tF, isActive: true }).select("nameAr nameEn description price").limit(60).lean(),
+        MenuCategoryModel.find({ ...tF }).select("nameAr nameEn").lean(),
+        BusinessConfigModel.findOne({ tenantId }).lean(),
+      ]);
+
+      const businessName = (config as any)?.businessName || "CLUNY CAFE";
+      const systemPrompt = `أنت مساعد ذكي للموظفين في ${businessName}. اسمك "مساعد ${businessName} الذكي".
+
+المنتجات المتاحة (${items.length} منتج):
+${items.map((i: any) => `• ${i.nameAr}${i.nameEn ? ` (${i.nameEn})` : ""}: ${i.description || "—"} | السعر: ${i.price} ريال`).join("\n")}
+
+الفئات: ${categories.map((c: any) => c.nameAr).join("، ")}
+
+مهامك:
+- مساعدة الموظفين في التشغيل اليومي والأسئلة العامة
+- شرح المنتجات والمكونات والأسعار
+- الإجابة على أسئلة السياسات والإجراءات
+- تقديم نصائح لخدمة العملاء
+- المساعدة في حل مشكلات الطلبات
+
+أجب دائماً بالعربية بأسلوب ودي ومهني ومختصر. للأسئلة خارج النطاق اعتذر بلطف.`;
+
+      const messages = [
+        { role: "system", content: systemPrompt },
+        ...history.slice(-12),
+        { role: "user", content: message },
+      ];
+
+      const aiRes = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${kimiKey}` },
+        body: JSON.stringify({ model: "moonshot-v1-8k", messages, max_tokens: 800, temperature: 0.7 }),
+      });
+
+      if (!aiRes.ok) {
+        const errText = await aiRes.text();
+        console.error("[Kimi AI brand-chat error]", errText);
+        return res.status(502).json({ error: "AI service unavailable" });
+      }
+
+      const aiData = await aiRes.json() as any;
+      const reply = aiData.choices?.[0]?.message?.content || "عذراً، لم أتمكن من الإجابة الآن.";
+      res.json({ reply });
+    } catch (e: any) {
+      console.error("[Brand AI]", e.message);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // POST /api/ai/accounting-audit — manager accounting AI (Kimi AI)
+  app.post("/api/ai/accounting-audit", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const kimiKey = process.env.KIMI_API_KEY;
+      if (!kimiKey) return res.status(503).json({ error: "AI not configured" });
+
+      const { question, period = "month" } = req.body;
+      const tenantId = (req as any).tenantId || "demo-tenant";
+      const tF = tFilter(tenantId);
+
+      const { ExpenseModel, RevenueModel } = await import("@shared/schema");
+      const [expenses, revenues, orders] = await Promise.all([
+        ExpenseModel.find({ ...tF }).sort({ createdAt: -1 }).limit(100).lean(),
+        RevenueModel.find({ ...tF }).sort({ createdAt: -1 }).limit(100).lean(),
+        OrderModel.find({ ...tF, status: "completed" }).sort({ createdAt: -1 }).limit(50)
+          .select("orderNumber totalAmount paymentMethod createdAt").lean(),
+      ]);
+
+      const totalRev = revenues.reduce((s: number, r: any) => s + (r.totalAmount || 0), 0);
+      const totalExp = expenses.reduce((s: number, e: any) => s + (e.totalAmount || 0), 0);
+      const netProfit = totalRev - totalExp;
+
+      const expenseLines = expenses.slice(0, 30).map((e: any) =>
+        `${new Date(e.createdAt).toLocaleDateString("ar-SA")} | ${e.category} | ${e.description} | ${e.totalAmount?.toFixed(2)} ر | ${e.status} | ${e.paymentMethod || "—"}`
+      ).join("\n");
+
+      const revenueLines = revenues.slice(0, 30).map((r: any) =>
+        `${new Date(r.createdAt).toLocaleDateString("ar-SA")} | ${r.category} | ${r.description} | ${r.totalAmount?.toFixed(2)} ر | ${r.paymentMethod}`
+      ).join("\n");
+
+      const expByCat: Record<string, number> = {};
+      for (const e of expenses as any[]) { expByCat[e.category] = (expByCat[e.category] || 0) + (e.totalAmount || 0); }
+
+      const systemPrompt = `أنت مدقق حسابات قانوني ومستشار مالي محترف لنظام CLUNY CAFE.
+
+ملخص البيانات المالية:
+━━━━━━━━━━━━━━━━━━━━━━
+• إجمالي الإيرادات: ${totalRev.toFixed(2)} ريال (${revenues.length} سجل)
+• إجمالي المصروفات: ${totalExp.toFixed(2)} ريال (${expenses.length} سجل)
+• صافي الربح: ${netProfit.toFixed(2)} ريال
+• هامش الربح: ${totalRev > 0 ? ((netProfit / totalRev) * 100).toFixed(1) : 0}%
+• عدد الطلبات المكتملة: ${orders.length}
+
+المصروفات حسب الفئة:
+${Object.entries(expByCat).map(([k, v]) => `  - ${k}: ${(v as number).toFixed(2)} ريال`).join("\n")}
+
+تفاصيل المصروفات (آخر 30):
+${expenseLines}
+
+تفاصيل الإيرادات (آخر 30):
+${revenueLines}
+
+أجب بتقرير منظم بالعربية يشمل:
+1. ملخص الوضع المالي
+2. الملاحظات والتحذيرات
+3. الأخطاء أو التلاعب المحتمل
+4. المصروفات الشاذة أو المكررة
+5. العمليات المشبوهة
+6. التوصيات والتصحيحات المقترحة`;
+
+      const userMsg = question || "راجع حساباتي وأعطني تقرير تدقيق شامل مع كشف أي تلاعب أو أخطاء أو مصروفات شاذة";
+
+      const aiRes = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${kimiKey}` },
+        body: JSON.stringify({
+          model: "moonshot-v1-32k",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMsg },
+          ],
+          max_tokens: 2500,
+          temperature: 0.2,
+        }),
+      });
+
+      if (!aiRes.ok) {
+        const errText = await aiRes.text();
+        console.error("[Kimi AI accounting-audit error]", errText);
+        return res.status(502).json({ error: "AI service unavailable" });
+      }
+
+      const aiData = await aiRes.json() as any;
+      const report = aiData.choices?.[0]?.message?.content || "لم أتمكن من إنشاء التقرير.";
+      res.json({ report });
+    } catch (e: any) {
+      console.error("[Accounting AI]", e.message);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ── Payment Logs Admin ───────────────────────────────────────────────────────
+  app.get("/api/admin/payment-logs", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = (req as any).employee?.tenantId || 'demo-tenant';
+      const { status, provider, event, page = '1', limit = '50', from, to, phone, orderNumber } = req.query as any;
+
+      const query: any = { tenantId };
+      if (status) query.status = status;
+      if (provider) query.provider = provider;
+      if (event) query.event = event;
+      const sanitize = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); if (phone) query.customerPhone = { $regex: sanitize(String(phone)), $options: 'i' };
+      if (orderNumber) query.orderNumber = { $regex: sanitize(String(orderNumber)), $options: 'i' };
+      if (from || to) {
+        query.createdAt = {};
+        if (from) query.createdAt.$gte = new Date(from);
+        if (to) query.createdAt.$lte = new Date(to);
+      }
+
+      const pageNum = Math.max(1, parseInt(page));
+      const limitNum = Math.min(200, parseInt(limit));
+      const skip = (pageNum - 1) * limitNum;
+
+      const [logs, total] = await Promise.all([
+        PaymentLogModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(limitNum).lean(),
+        PaymentLogModel.countDocuments(query),
+      ]);
+
+      // Summary stats
+      const today = getSaudiStartOfDay();
+      const [todayTotal, todaySuccess, todayFailed, todayPending] = await Promise.all([
+        PaymentLogModel.countDocuments({ tenantId, createdAt: { $gte: today } }),
+        PaymentLogModel.countDocuments({ tenantId, status: 'success', createdAt: { $gte: today } }),
+        PaymentLogModel.countDocuments({ tenantId, status: 'failed', createdAt: { $gte: today } }),
+        PaymentLogModel.countDocuments({ tenantId, status: 'pending', createdAt: { $gte: today } }),
+      ]);
+      const todayRevenue = await PaymentLogModel.aggregate([
+        { $match: { tenantId, status: 'success', event: { $in: ['callback', 'webhook', 'verify'] }, createdAt: { $gte: today } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } },
+      ]);
+
+      res.json({
+        logs,
+        total,
+        page: pageNum,
+        pages: Math.ceil(total / limitNum),
+        summary: {
+          todayTotal, todaySuccess, todayFailed, todayPending,
+          todayRevenue: todayRevenue[0]?.total || 0,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ── System Stats (active users, visitors) ───────────────────────────────────
+  app.get("/api/admin/system-stats", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const tenantId = (req as any).employee?.tenantId || 'demo-tenant';
+      const wsStats = wsManager.getStats();
+      const visitorStats = getVisitorStats();
+
+      // Payment stats for last 7 days
+      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const [weekPayments, weekSuccess, weekFailed] = await Promise.all([
+        PaymentLogModel.countDocuments({ tenantId, createdAt: { $gte: weekAgo } }),
+        PaymentLogModel.countDocuments({ tenantId, status: 'success', createdAt: { $gte: weekAgo } }),
+        PaymentLogModel.countDocuments({ tenantId, status: 'failed', createdAt: { $gte: weekAgo } }),
+      ]);
+
+      // Recent errors (last 10)
+      const recentErrors = await PaymentLogModel.find({ tenantId, status: 'failed' })
+        .sort({ createdAt: -1 }).limit(10).select('provider event errorMessage orderId createdAt amount').lean();
+
+      res.json({
+        websocket: wsStats,
+        visitors: visitorStats,
+        payments: { weekTotal: weekPayments, weekSuccess, weekFailed, weekSuccessRate: weekPayments ? Math.round(weekSuccess / weekPayments * 100) : 0 },
+        recentErrors,
+        serverTime: new Date().toISOString(),
+        uptime: Math.round(process.uptime()),
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // GET /api/mapkit/token — signs a fresh MapKit JS JWT (valid 1 hour, no origin restriction)
+  // Uses APNS_P8_KEY with kid=APNS_KEY_ID (key has Maps + APNs services in Apple Developer).
+  // No "origin" claim → works on any domain (dev + production).
+  // Falls back to VITE_MAPKIT_TOKEN if the APNS secrets are not set.
+  app.get("/api/mapkit/token", (_req, res) => {
+    try {
+      // Priority 1: static pre-signed token — most reliable
+      const staticToken = process.env.MAPKIT_TOKEN_STATIC || process.env.VITE_MAPKIT_TOKEN;
+      if (staticToken) {
+        res.set("Cache-Control", "public, max-age=3600");
+        return res.json({ token: staticToken });
+      }
+
+      // Priority 2: dynamic signing using MapKit private key
+      const keyId  = process.env.MAPKIT_KEY_ID  || process.env.APNS_KEY_ID;
+      const teamId = process.env.MAPKIT_TEAM_ID || process.env.APNS_TEAM_ID;
+      const rawKey = process.env.MAPKIT_PRIVATE_KEY || process.env.APNS_P8_KEY;
+
+      if (keyId && teamId && rawKey) {
+        let p8Key = rawKey
+          .replace(/\\\\n/g, "\n")
+          .replace(/\\n/g, "\n");
+        if (!p8Key.includes("\n")) {
+          p8Key = p8Key
+            .replace("-----BEGIN PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----\n")
+            .replace("-----END PRIVATE KEY-----", "\n-----END PRIVATE KEY-----")
+            .replace(/([A-Za-z0-9+/=]{64}) /g, "$1\n")
+            .trim();
+        }
+        const now = Math.floor(Date.now() / 1000);
+        const exp = now + 60 * 60 * 24 * 7;
+        const header  = Buffer.from(JSON.stringify({ kid: keyId, typ: "JWT", alg: "ES256" })).toString("base64url");
+        const payload = Buffer.from(JSON.stringify({ iss: teamId, iat: now, scope: "embed_api", exp })).toString("base64url");
+        const sigInput = `${header}.${payload}`;
+        const privateKey = crypto.createPrivateKey(p8Key);
+        const sign = crypto.createSign("SHA256");
+        sign.update(sigInput);
+        const sig = sign.sign({ key: privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
+        res.set("Cache-Control", "private, max-age=86400");
+        return res.json({ token: `${sigInput}.${sig}` });
+      }
+
+      res.status(503).json({ error: "MapKit token not configured" });
+    } catch (e: any) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // GET /api/v1 — discovery endpoint (no auth)
+  app.get("/api/v1", (_req, res) => {
+    res.json({
+      name: "CLUNY Open API",
+      version: "1.0",
+      authentication: "Bearer qrx_live_... or qrx_test_...",
+      docs: "/manager/ecosystem",
+      endpoints: [
+        "GET /api/v1/menu", "GET /api/v1/menu/:id",
+        "GET /api/v1/orders", "GET /api/v1/orders/:id", "POST /api/v1/orders",
+        "GET /api/v1/customers",
+        "GET /api/v1/loyalty/cards/:phone", "POST /api/v1/loyalty/cards/:phone/points",
+        "GET /api/v1/inventory", "PATCH /api/v1/inventory/:id",
+      ],
+    });
   });
 
   const httpServer = createServer(app);
