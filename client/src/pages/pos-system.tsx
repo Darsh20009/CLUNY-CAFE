@@ -2373,7 +2373,7 @@ export default function PosSystem() {
                       <CardContent className="p-2 sm:p-3">
                         <h3 className="font-bold text-xs sm:text-base mb-1 line-clamp-1">{getItemDisplayName(item)}</h3>
                         <div className="flex justify-between items-center">
-                          <p className="text-primary font-black text-xs sm:text-base">{Number(item.price).toFixed(2)} {t('pos.currency')}{showVatLabel && <span className="text-muted-foreground font-medium text-[9px] sm:text-[10px] mr-1">{t('pos.vat_included')}</span>}</p>
+                          <p className="text-primary font-black text-xs sm:text-base flex items-center gap-1">{Number(item.price).toFixed(2)} <SarIcon size={12} />{showVatLabel && <span className="text-muted-foreground font-medium text-[9px] sm:text-[10px] mr-1">{t('pos.vat_included')}</span>}</p>
                           <div className="bg-primary/10 text-primary rounded-full p-1">
                             <Plus className="w-3.5 h-3.5" />
                           </div>
@@ -2513,8 +2513,8 @@ export default function PosSystem() {
                           </p>
                         )}
                         <div className="flex items-center gap-1 flex-wrap mt-0.5">
-                          <p className="text-primary font-black text-xs">
-                            {(getPosItemUnitPrice(item) * item.quantity).toFixed(2)} {t('pos.currency')}
+                          <p className="text-primary font-black text-xs flex items-center gap-1">
+                            {(getPosItemUnitPrice(item) * item.quantity).toFixed(2)} <SarIcon size={11} />
                           </p>
                           {/* Per-item discount badge */}
                           {itemDiscounts[item.lineItemId] ? (
@@ -3162,33 +3162,33 @@ export default function PosSystem() {
               <div className="space-y-1.5 sm:space-y-2">
                 <div className="flex justify-between text-[10px] sm:text-sm">
                   <span className="text-muted-foreground">{t('pos.subtotal')}</span>
-                  <span className="font-bold">{calculateSubtotal.toFixed(2)} {t('pos.currency')}</span>
+                  <span className="font-bold flex items-center gap-1">{calculateSubtotal.toFixed(2)} <SarIcon size={11} /></span>
                 </div>
                 <div className="flex justify-between text-[10px] sm:text-sm">
                   <span className="text-muted-foreground">{t('pos.tax')}</span>
-                  <span className="font-bold">{(calculateTotal - calculateSubtotal).toFixed(2)} {t('pos.currency')}</span>
+                  <span className="font-bold flex items-center gap-1">{(calculateTotal - calculateSubtotal).toFixed(2)} <SarIcon size={11} /></span>
                 </div>
                 <Separator />
                 <div className="flex justify-between items-center pt-1">
                   <span className="font-black text-sm sm:text-base">{t('pos.total')}</span>
-                  <span className={`font-black text-base sm:text-xl ${(usePoints && pointsDiscount > 0) || appliedDiscount ? 'line-through text-muted-foreground text-sm sm:text-base' : 'text-primary'}`}>{calculateTotal.toFixed(2)} {t('pos.currency')}</span>
+                  <span className={`font-black text-base sm:text-xl flex items-center gap-1 ${(usePoints && pointsDiscount > 0) || appliedDiscount ? 'line-through text-muted-foreground text-sm sm:text-base' : 'text-primary'}`}>{calculateTotal.toFixed(2)} <SarIcon size={13} /></span>
                 </div>
                 {usePoints && pointsDiscount > 0 && (
                   <div className="flex justify-between text-[10px] sm:text-sm text-amber-600">
                     <span className="font-bold">{i18n.language === 'ar' ? 'خصم بطاقة كلوني' : 'بطاقة كلوني'}</span>
-                    <span className="font-bold">- {pointsDiscount.toFixed(2)} {t('pos.currency')}</span>
+                    <span className="font-bold flex items-center gap-1">- {pointsDiscount.toFixed(2)} <SarIcon size={11} /></span>
                   </div>
                 )}
                 {appliedDiscount && couponDiscountAmount > 0 && (
                   <div className="flex justify-between text-[10px] sm:text-sm text-green-600" data-testid="text-coupon-discount-line">
                     <span className="font-bold">{tc('كوبون', 'Coupon')} {appliedDiscount.code} ({appliedDiscount.percentage}%)</span>
-                    <span className="font-bold">- {couponDiscountAmount.toFixed(2)} {t('pos.currency')}</span>
+                    <span className="font-bold flex items-center gap-1">- {couponDiscountAmount.toFixed(2)} <SarIcon size={11} /></span>
                   </div>
                 )}
                 {((usePoints && pointsDiscount > 0) || appliedDiscount) && (
                   <div className="flex justify-between items-center">
                     <span className="font-black text-sm sm:text-base">{i18n.language === 'ar' ? 'الإجمالي بعد الخصم' : 'Total After Discount'}</span>
-                    <span className={`font-black text-base sm:text-xl ${(itemDiscountTotal > 0 || manualDiscountAmount > 0 || serviceChargeAmount > 0) ? 'line-through text-muted-foreground text-sm' : 'text-primary'}`} data-testid="text-grand-total">{calculateGrandTotal.toFixed(2)} {t('pos.currency')}</span>
+                    <span className={`font-black text-base sm:text-xl flex items-center gap-1 ${(itemDiscountTotal > 0 || manualDiscountAmount > 0 || serviceChargeAmount > 0) ? 'line-through text-muted-foreground text-sm' : 'text-primary'}`} data-testid="text-grand-total">{calculateGrandTotal.toFixed(2)} <SarIcon size={13} /></span>
                   </div>
                 )}
 
@@ -3196,7 +3196,7 @@ export default function PosSystem() {
                 {itemDiscountTotal > 0 && (
                   <div className="flex justify-between text-[10px] sm:text-sm text-green-600">
                     <span className="font-bold flex items-center gap-1"><Tag className="w-3 h-3" />{tc('خصم العناصر','Item Discounts')}</span>
-                    <span className="font-bold">- {itemDiscountTotal.toFixed(2)} {t('pos.currency')}</span>
+                    <span className="font-bold flex items-center gap-1">- {itemDiscountTotal.toFixed(2)} <SarIcon size={11} /></span>
                   </div>
                 )}
                 {manualDiscountAmount > 0 && (
@@ -3204,19 +3204,19 @@ export default function PosSystem() {
                     <div className="flex items-center gap-1">
                       <button onClick={() => setShowManualDiscount(true)} className="font-bold flex items-center gap-1 hover:underline">
                         <DollarSign className="w-3 h-3" />{tc('خصم يدوي','Manual Discount')}
-                        {manualDiscount && <span className="text-[9px] text-muted-foreground">({manualDiscount.type === 'percent' ? `${manualDiscount.value}%` : `${manualDiscount.value} ${tc('ر.س','SAR')}`})</span>}
+                        {manualDiscount && <span className="text-[9px] text-muted-foreground">({manualDiscount.type === 'percent' ? `${manualDiscount.value}%` : `${manualDiscount.value} ر.س`})</span>}
                       </button>
                       <button onClick={() => setManualDiscount(undefined)} className="text-destructive hover:opacity-70 ml-1"><X className="w-3 h-3" /></button>
                     </div>
-                    <span className="font-bold">- {manualDiscountAmount.toFixed(2)} {t('pos.currency')}</span>
+                    <span className="font-bold flex items-center gap-1">- {manualDiscountAmount.toFixed(2)} <SarIcon size={11} /></span>
                   </div>
                 )}
                 {serviceCharge.enabled && serviceChargeAmount > 0 && (
                   <div className="flex justify-between text-[10px] sm:text-sm text-orange-600">
                     <button onClick={() => setServiceCharge(prev => ({...prev, enabled: false}))} className="font-bold flex items-center gap-1 hover:underline">
-                      <Hash className="w-3 h-3" />{tc('رسوم الخدمة','Service Charge')} ({serviceCharge.value}{serviceCharge.type === 'percent' ? '%' : ` ${tc('ر.س','SAR')}`})
+                      <Hash className="w-3 h-3" />{tc('رسوم الخدمة','Service Charge')} ({serviceCharge.value}{serviceCharge.type === 'percent' ? '%' : ' ر.س'})
                     </button>
-                    <span className="font-bold">+ {serviceChargeAmount.toFixed(2)} {t('pos.currency')}</span>
+                    <span className="font-bold flex items-center gap-1">+ {serviceChargeAmount.toFixed(2)} <SarIcon size={11} /></span>
                   </div>
                 )}
 
@@ -3248,7 +3248,7 @@ export default function PosSystem() {
                     <Separator />
                     <div className="flex justify-between items-center pt-1">
                       <span className="font-black text-sm sm:text-base">{tc('الإجمالي النهائي','Final Total')}</span>
-                      <span className="font-black text-base sm:text-xl text-primary" data-testid="text-final-grand-total">{finalGrandTotal.toFixed(2)} {t('pos.currency')}</span>
+                      <span className="font-black text-base sm:text-xl text-primary flex items-center gap-1" data-testid="text-final-grand-total">{finalGrandTotal.toFixed(2)} <SarIcon size={13} /></span>
                     </div>
                   </>
                 )}
