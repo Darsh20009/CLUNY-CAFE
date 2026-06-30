@@ -38,7 +38,6 @@ const PAGE_ID_TO_PATH: Record<PageId, { path: string; label: string; labelEn: st
   promotions: { path: '/manager/promotions', label: 'العروض الترويجية', labelEn: 'Promotions', icon: Tag, section: 'manager' },
   kiosk: { path: '/kiosk', label: 'الكشك (كيوسك)', labelEn: 'Kiosk', icon: Monitor, section: 'manager' },
   payment_tracking: { path: '/manager/payment-tracking', label: 'متابعة الدفع الأونلاين', labelEn: 'Payment Tracking', icon: CreditCard, section: 'manager' },
-  product_reports: { path: '/manager/product-reports', label: 'تقارير المنتجات التفصيلية', labelEn: 'Product Reports', icon: BarChart3, section: 'manager' },
 };
 
 const ADMIN_ROLES = ['manager', 'owner', 'admin', 'branch_manager'];
@@ -63,8 +62,8 @@ function getAccessiblePages(employee: Employee | null): PageId[] {
     cook: ['brand_ai', 'dashboard', 'orders', 'kitchen', 'shifts', 'kiosk_qr', 'notifications'],
     waiter: ['brand_ai', 'dashboard', 'cashier', 'orders', 'tables', 'shifts', 'kiosk_qr', 'notifications'],
     supervisor: ['brand_ai', 'dashboard', 'cashier', 'pos', 'shifts', 'kiosk_qr', 'orders', 'kitchen', 'tables', 'menu_management', 'reports', 'notifications'],
-    manager: ['brand_ai', 'dashboard', 'cashier', 'pos', 'shifts', 'orders', 'kitchen', 'tables', 'menu_management', 'inventory', 'reports', 'accounting', 'erp_accounting', 'employees', 'settings', 'delivery', 'unified_reports', 'bi_analytics', 'promotions', 'kiosk', 'payment_tracking', 'product_reports', 'notifications'],
-    branch_manager: ['brand_ai', 'dashboard', 'cashier', 'pos', 'shifts', 'orders', 'kitchen', 'tables', 'menu_management', 'inventory', 'reports', 'accounting', 'erp_accounting', 'employees', 'settings', 'delivery', 'unified_reports', 'bi_analytics', 'promotions', 'kiosk', 'payment_tracking', 'product_reports', 'notifications'],
+    manager: ['brand_ai', 'dashboard', 'cashier', 'pos', 'shifts', 'orders', 'kitchen', 'tables', 'menu_management', 'inventory', 'reports', 'accounting', 'erp_accounting', 'employees', 'settings', 'delivery', 'unified_reports', 'bi_analytics', 'promotions', 'kiosk', 'payment_tracking', 'notifications'],
+    branch_manager: ['brand_ai', 'dashboard', 'cashier', 'pos', 'shifts', 'orders', 'kitchen', 'tables', 'menu_management', 'inventory', 'reports', 'accounting', 'erp_accounting', 'employees', 'settings', 'delivery', 'unified_reports', 'bi_analytics', 'promotions', 'kiosk', 'payment_tracking', 'notifications'],
   };
 
   return roleDefaults[role] || ['dashboard', 'cashier', 'orders', 'notifications'];

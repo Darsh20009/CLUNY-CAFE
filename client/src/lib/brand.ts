@@ -11,14 +11,14 @@ export const brand = {
   descriptionAr: "استمتع بأرقى تجربة قهوة مميزة محضرة بعناية استثنائية من كلوني كافيه - اطلب الآن واستمتع بلحظات استثنائية",
   keywords: "قهوة مميزة, CLUNY CAFE, كلوني, coffee, cafe, كافيه, اسبريسو, لاتيه, كابتشينو, موكا, قهوة سعودية, طلب قهوة, توصيل قهوة, كافيه مميز",
 
-  logoCustomer: "/cluny-logo.png",
-  logoStaff: "/cluny-logo.png",
-  favicon: "/cluny-logo.png",
-  appleTouchIcon: "/cluny-logo.png",
+  logoCustomer: "/logo.png",
+  logoStaff: "/employee-logo.png",
+  favicon: "/logo.png",
+  appleTouchIcon: "/apple-touch-icon.png",
   logoAssetCustomer: "cluny-logo-customer.png",
   logoAssetStaff: "cluny-logo-staff.png",
-  logoEmailUrl: "https://cluny.cafe/cluny-logo.png",
-  ogImageUrl: "/cluny-logo.png",
+  logoEmailUrl: "https://cluny.cafe/logo.png",
+  ogImageUrl: "/logo.png",
 
   colors: {
     primary: { h: 155, s: 55, l: 39, hex: "#2D9B6E" },
