@@ -46,7 +46,7 @@ export const brand = {
   commercialRegister: "",
   taxNumber: "",
   registrationNumber: "",
-  saudiBusinessUrl: "",
+  saudiBusinessUrl: "https://qr.saudibusiness.gov.sa/viewcr?nCrNumber=9AhyCS491ZPTmJxSxD96YA==",
 
   pointsBrandEn: "CLUNY Points",
   pointsBrandAr: "نقاط كلوني",

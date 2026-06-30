@@ -63,7 +63,7 @@ export function CustomerFooter() {
               />
             </div>
             <a 
-              href="https://qr.saudibusiness.gov.sa/viewcr?nCrNumber=opQsRLgqEFrL8PpAgImEew==" 
+              href={brand.saudiBusinessUrl} 
               target="_blank" 
               rel="noreferrer" 
               className="text-xs text-muted-foreground hover:text-primary transition-colors font-ibm-arabic"
