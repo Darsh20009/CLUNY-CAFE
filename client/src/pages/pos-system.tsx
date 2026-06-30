@@ -790,6 +790,8 @@ export default function PosSystem() {
           date: order.createdAt || new Date().toISOString(),
           crNumber: businessConfig?.commercialRegistration,
           vatNumber: businessConfig?.vatNumber,
+          branchName: currentBranch?.nameAr || (currentBranch as any)?.name || undefined,
+          branchAddress: currentBranch?.address || undefined,
         });
       }
       setSelectedTableForBill(null);
@@ -1512,6 +1514,8 @@ export default function PosSystem() {
             date: new Date().toISOString(),
             crNumber: businessConfig?.commercialRegistration,
             vatNumber: businessConfig?.vatNumber,
+            branchName: currentBranch?.nameAr || (currentBranch as any)?.name || undefined,
+            branchAddress: currentBranch?.address || undefined,
             notes: orderNote || undefined,
           };
           try { printTaxInvoice(printSnapshot, { autoPrint: true }); } catch (e) {

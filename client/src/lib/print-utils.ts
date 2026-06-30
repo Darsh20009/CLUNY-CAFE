@@ -592,8 +592,8 @@ const COMPANY_NAME = "CLUNY CAFE";
 const COMPANY_NAME_EN = "CLUNY CAFE";
 const COMPANY_CR = "7025559423";
 const COMPANY_WEBSITE = "cluny.cafe";
-const DEFAULT_BRANCH = "فرع المروج، ينبع";
-const DEFAULT_ADDRESS = "ينبع، المملكة العربية السعودية";
+const DEFAULT_BRANCH = "";
+const DEFAULT_ADDRESS = "";
 
 function generateZATCAQRCode(data: {
   sellerName: string;
@@ -722,7 +722,7 @@ async function _buildFastCustomerEscPos(
   return buildReceiptBitmapEscPos({
     shopName: COMPANY_NAME,
     vatNumber: data.vatNumber || VAT_NUMBER,
-    branchName: data.branchName || DEFAULT_BRANCH,
+    branchName: data.branchName || undefined,
     orderNumber: data.orderNumber,
     orderDate: `${fmtDate} · ${fmtTime}`,
     cashierName: data.employeeName || '—',
@@ -1112,7 +1112,8 @@ body{font-family:Tahoma,Arial,'Segoe UI',sans-serif;direction:rtl;background:#e0
   <!-- ③ اسم المنشأة + بيانات -->
   <div style="text-align:center;font-size:12px;line-height:1.9;padding:4px 10px 6px;">
     <div style="font-weight:900;font-size:16px;letter-spacing:1px;">${COMPANY_NAME}</div>
-    <div style="font-size:11px;color:#555;">ينبع، المملكة العربية السعودية</div>
+    ${data.branchName ? `<div style="font-size:11px;font-weight:700;color:#333;">${data.branchName}</div>` : ''}
+    ${data.branchAddress ? `<div style="font-size:11px;color:#555;">${data.branchAddress}</div>` : ''}
     <div style="direction:ltr;font-size:11px;color:#555;">${data.vatNumber || VAT_NUMBER}</div>
     <div style="direction:ltr;font-size:11px;">${fmtDate} · ${fmtTime}</div>
   </div>
