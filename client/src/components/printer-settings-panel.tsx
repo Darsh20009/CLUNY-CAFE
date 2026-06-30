@@ -385,7 +385,7 @@ export default function PrinterSettingsPanel() {
       const escData = await buildReceiptBitmapEscPos({
         shopName: 'CLUNY CAFE',
         vatNumber: '---',
-        branchName: 'مرحبا في نظام CLUNY CAFE',
+        branchName: 'مرحبا في نظام Qirox Studio',
         orderNumber: 'TEST',
         orderDate: dateStr,
         cashierName: 'النظام',

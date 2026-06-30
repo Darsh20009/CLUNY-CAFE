@@ -858,8 +858,8 @@ export async function buildReceiptCanvas(opts: ReceiptBitmapOpts): Promise<HTMLC
   // ── RECEIPT LAYOUT — 2 blank lines at the top of every invoice ────────────
   addGap(Math.round(FS * 3.2));
 
-  // Logo — enlarged, centred. Logo image already contains the shop name.
-  addImg(logoImg, Math.round(DW * 0.55));
+  // Logo — small, centred. Fixed size so it doesn't dominate the receipt.
+  addImg(logoImg, Math.round(DW * 0.25));
   addGap(8);
 
   // Branch / tagline / VAT — no repeated shop name (it's in the logo)
