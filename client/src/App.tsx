@@ -129,6 +129,7 @@ const BIAnalytics = lazy(() => import("@/pages/bi-analytics"));
 const ManagerAI = lazy(() => import("@/pages/manager-ai"));
 const ManagerAuditLogs = lazy(() => import("@/pages/manager-audit-logs"));
 const ManagerSmartReports = lazy(() => import("@/pages/manager-smart-reports"));
+const ProductAnalytics = lazy(() => import("@/pages/product-analytics"));
 const GiftCardsManagement = lazy(() => import("@/pages/gift-cards-management"));
 const PromotionsManagement = lazy(() => import("@/pages/promotions-management"));
 const ApiManagement = lazy(() => import("@/pages/api-management"));
@@ -404,6 +405,7 @@ function AppRouter() {
       <Route path="/manager/tahalyli"><AuthGuard userType="manager"><TahalyliPage /></AuthGuard></Route>
       <Route path="/manager/audit-logs"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><ManagerAuditLogs /></AuthGuard></Route>
       <Route path="/manager/smart-reports"><AuthGuard userType="manager"><ManagerSmartReports /></AuthGuard></Route>
+      <Route path="/manager/product-analytics"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><ManagerLayout><ProductAnalytics /></ManagerLayout></AuthGuard></Route>
       {/* Owner protected routes */}
       <Route path="/owner/dashboard"><AuthGuard userType="manager" allowedRoles={["owner", "admin"]}><OwnerDashboard /></AuthGuard></Route>
       <Route path="/executive"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><ExecutiveDashboard /></AuthGuard></Route>

@@ -263,7 +263,7 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
         {/* ── 2. Logo ── */}
         <div style={{ padding: "6px 0 10px", marginBottom: "4px" }}>
           <img
-            src="/black-rose-logo.png"
+            src="/logo.png"
             alt="CLUNY CAFE"
             crossOrigin="anonymous"
             style={{ width: "200px", height: "auto", display: "block", margin: "0 auto" }}

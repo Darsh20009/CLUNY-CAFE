@@ -20788,6 +20788,155 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================
+  // PRODUCT ANALYTICS — per-product detailed report
+  // ============================================================
+  app.get("/api/analytics/products", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { OrderModel, CoffeeItemModel } = await import("@shared/schema");
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const { branchId, from, to } = req.query as Record<string, string>;
+
+      const startDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
+      const endDate = to ? new Date(to) : new Date();
+
+      const matchQ: any = { tenantId, createdAt: { $gte: startDate, $lte: endDate }, status: { $nin: ['cancelled'] } };
+      if (branchId) matchQ.branchId = branchId;
+
+      const [orders, allItems] = await Promise.all([
+        OrderModel.find(matchQ, { items: 1, createdAt: 1, orderType: 1, branchId: 1, paymentMethod: 1 }).lean(),
+        CoffeeItemModel.find({ tenantId }, { id: 1, nameAr: 1, nameEn: 1, price: 1, category: 1, imageUrl: 1, availabilityStatus: 1 }).lean(),
+      ]);
+
+      const statsMap: Record<string, { id: string; nameAr: string; nameEn: string; price: number; category: string; imageUrl: string; totalQty: number; totalRevenue: number; orderCount: number; available: boolean }> = {};
+      for (const item of allItems) {
+        statsMap[item.id] = { id: item.id, nameAr: item.nameAr, nameEn: item.nameEn || '', price: Number(item.price) || 0, category: item.category || '', imageUrl: (item as any).imageUrl || '', totalQty: 0, totalRevenue: 0, orderCount: 0, available: item.availabilityStatus !== 'out_of_stock' };
+      }
+
+      for (const order of orders) {
+        for (const oi of (order.items as any[] || [])) {
+          const iid = oi.coffeeItemId || oi.id;
+          if (iid && statsMap[iid]) {
+            statsMap[iid].totalQty += Number(oi.quantity) || 1;
+            statsMap[iid].totalRevenue += (Number(oi.price) || 0) * (Number(oi.quantity) || 1);
+            statsMap[iid].orderCount++;
+          }
+        }
+      }
+
+      const products = Object.values(statsMap)
+        .map(p => ({ ...p, totalRevenue: Math.round(p.totalRevenue * 100) / 100 }))
+        .sort((a, b) => b.totalQty - a.totalQty);
+
+      res.json({ products, period: { from: startDate, to: endDate }, totalOrders: orders.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/analytics/products/:itemId", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { OrderModel, CoffeeItemModel } = await import("@shared/schema");
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const { itemId } = req.params;
+      const { branchId, year } = req.query as Record<string, string>;
+      const targetYear = Number(year) || new Date().getFullYear();
+
+      const [item, orders] = await Promise.all([
+        CoffeeItemModel.findOne({ id: itemId, tenantId }).lean(),
+        OrderModel.find({
+          tenantId,
+          'items.coffeeItemId': itemId,
+          createdAt: { $gte: new Date(targetYear - 1, 0, 1), $lte: new Date(targetYear + 1, 0, 1) },
+          status: { $nin: ['cancelled'] },
+          ...(branchId ? { branchId } : {})
+        }, { items: 1, createdAt: 1, orderType: 1, branchId: 1, paymentMethod: 1, employeeId: 1, employeeName: 1, customerInfo: 1 }).lean()
+      ]);
+
+      if (!item) return res.status(404).json({ error: 'المنتج غير موجود' });
+
+      // Filter orders that actually contain this item
+      const relevantOrders = orders.filter((o: any) =>
+        (o.items as any[] || []).some((i: any) => (i.coffeeItemId || i.id) === itemId)
+      );
+
+      // Monthly breakdown (current + previous year)
+      const monthlyMap: Record<string, { month: number; year: number; qty: number; revenue: number; orders: number }> = {};
+      for (let yr = targetYear - 1; yr <= targetYear; yr++) {
+        for (let m = 1; m <= 12; m++) {
+          monthlyMap[`${yr}-${m}`] = { month: m, year: yr, qty: 0, revenue: 0, orders: 0 };
+        }
+      }
+
+      // Hourly, channel, payment breakdown
+      const hourlyMap: Record<number, number> = {};
+      for (let h = 0; h < 24; h++) hourlyMap[h] = 0;
+      const channelMap: Record<string, number> = { pos: 0, online: 0, delivery: 0, takeaway: 0, dine_in: 0 };
+      const paymentMap: Record<string, number> = {};
+      const dayOfWeekMap: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+
+      for (const order of relevantOrders) {
+        const orderDate = new Date(order.createdAt);
+        const yr = orderDate.getFullYear();
+        const m = orderDate.getMonth() + 1;
+        const key = `${yr}-${m}`;
+        const oi = (order.items as any[] || []).find((i: any) => (i.coffeeItemId || i.id) === itemId);
+        if (!oi) continue;
+        const qty = Number(oi.quantity) || 1;
+        const rev = (Number(oi.price) || 0) * qty;
+
+        if (monthlyMap[key]) {
+          monthlyMap[key].qty += qty;
+          monthlyMap[key].revenue += rev;
+          monthlyMap[key].orders++;
+        }
+
+        const h = orderDate.getHours();
+        hourlyMap[h] = (hourlyMap[h] || 0) + qty;
+        dayOfWeekMap[orderDate.getDay()] = (dayOfWeekMap[orderDate.getDay()] || 0) + qty;
+
+        const ot = (order as any).orderType || 'pos';
+        if (ot === 'pos' || ot === 'cashier') channelMap.pos += qty;
+        else if (ot === 'delivery') channelMap.delivery += qty;
+        else if (ot === 'online' || ot === 'pickup') channelMap.online += qty;
+        else if (ot === 'takeaway') channelMap.takeaway += qty;
+        else if (ot === 'dine_in') channelMap.dine_in += qty;
+        else channelMap.online += qty;
+
+        const pm = (order as any).paymentMethod || 'cash';
+        paymentMap[pm] = (paymentMap[pm] || 0) + qty;
+      }
+
+      const currentYearMonths = Array.from({ length: 12 }, (_, i) => monthlyMap[`${targetYear}-${i + 1}`] || { month: i + 1, year: targetYear, qty: 0, revenue: 0, orders: 0 });
+      const prevYearMonths = Array.from({ length: 12 }, (_, i) => monthlyMap[`${targetYear - 1}-${i + 1}`] || { month: i + 1, year: targetYear - 1, qty: 0, revenue: 0, orders: 0 });
+
+      const currentYearTotal = currentYearMonths.reduce((s, m) => ({ qty: s.qty + m.qty, revenue: s.revenue + m.revenue }), { qty: 0, revenue: 0 });
+      const prevYearTotal = prevYearMonths.reduce((s, m) => ({ qty: s.qty + m.qty, revenue: s.revenue + m.revenue }), { qty: 0, revenue: 0 });
+
+      const peakHour = Object.entries(hourlyMap).sort((a, b) => b[1] - a[1])[0];
+      const peakDay = Object.entries(dayOfWeekMap).sort((a, b) => b[1] - a[1])[0];
+      const dayNames = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+
+      res.json({
+        item: { id: (item as any).id, nameAr: (item as any).nameAr, nameEn: (item as any).nameEn, price: (item as any).price, category: (item as any).category, imageUrl: (item as any).imageUrl, availabilityStatus: (item as any).availabilityStatus },
+        targetYear,
+        currentYearMonths: currentYearMonths.map(m => ({ ...m, revenue: Math.round(m.revenue * 100) / 100 })),
+        prevYearMonths: prevYearMonths.map(m => ({ ...m, revenue: Math.round(m.revenue * 100) / 100 })),
+        currentYearTotal: { qty: currentYearTotal.qty, revenue: Math.round(currentYearTotal.revenue * 100) / 100 },
+        prevYearTotal: { qty: prevYearTotal.qty, revenue: Math.round(prevYearTotal.revenue * 100) / 100 },
+        hourlyDistribution: Object.entries(hourlyMap).map(([h, qty]) => ({ hour: Number(h), qty })),
+        dayOfWeekDistribution: Object.entries(dayOfWeekMap).map(([d, qty]) => ({ day: Number(d), dayName: dayNames[Number(d)], qty })),
+        channelBreakdown: Object.entries(channelMap).filter(([, v]) => v > 0).map(([k, v]) => ({ channel: k, qty: v })),
+        paymentBreakdown: Object.entries(paymentMap).map(([k, v]) => ({ method: k, qty: v })),
+        peakHour: peakHour ? { hour: Number(peakHour[0]), qty: Number(peakHour[1]) } : null,
+        peakDay: peakDay ? { day: Number(peakDay[0]), dayName: dayNames[Number(peakDay[0])], qty: Number(peakDay[1]) } : null,
+        totalOrders: relevantOrders.length,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/reports/employee-sales", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { OrderModel, EmployeeModel } = await import("@shared/schema");
