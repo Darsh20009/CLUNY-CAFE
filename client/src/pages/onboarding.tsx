@@ -21,7 +21,7 @@ const slides = [
   {
     icon: null,
     emoji: "☕",
-    titleAr: "مرحباً بك في BlackRose",
+    titleAr: "مرحباً بك في CLUNY CAFE",
     subtitleAr: "اكتشف أفضل العروض والمكافآت الحصرية لعملائنا المميزين",
     bg: "from-[#0d0306] via-[#1a0510] to-[#0d0306]",
     accent: "#2D9B6E",
@@ -46,7 +46,7 @@ const slides = [
     icon: Gift,
     emoji: null,
     titleAr: "جاهز للبدء؟",
-    subtitleAr: "سجّل الدخول أو تصفح القائمة الآن واستمتع بتجربة BlackRose الكاملة",
+    subtitleAr: "سجّل الدخول أو تصفح القائمة الآن واستمتع بتجربة CLUNY CAFE الكاملة",
     bg: "from-[#0d0306] via-[#1a0510] to-[#0d0306]",
     accent: "#2D9B6E",
     isFinal: true,

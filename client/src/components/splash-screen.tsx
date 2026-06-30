@@ -63,7 +63,7 @@ export function SplashScreen({ onDone }: SplashScreenProps) {
       >
         <img
           src={clunyLogo}
-          alt="BlackRose Cafe"
+          alt="CLUNY CAFE"
           style={{
             width: 120,
             height: 120,
@@ -94,7 +94,7 @@ export function SplashScreen({ onDone }: SplashScreenProps) {
             lineHeight: 1.1,
           }}
         >
-          BlackRose
+          CLUNY CAFE
         </p>
         <p
           style={{

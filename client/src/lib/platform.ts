@@ -12,8 +12,8 @@ export function isCapacitorNative(): boolean {
     if (!!(window as any).Capacitor?.isNative) return true;
     if (window.location.protocol === "capacitor:") return true;
     if (window.location.hostname === "localhost" && !!(window as any).Capacitor) return true;
-    // 2. Custom user-agent injected by the BlackRose native app
-    if (navigator.userAgent.includes("BlackRoseApp")) return true;
+    // 2. Custom user-agent injected by the CLUNY native app
+    if (navigator.userAgent.includes("ClunyApp") || navigator.userAgent.includes("BlackRoseApp")) return true;
     return false;
   } catch {
     return false;

@@ -129,7 +129,7 @@ export function AppDownloadBanner() {
         />
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ color: "#fff", fontWeight: 800, fontSize: 13, margin: 0, lineHeight: 1.3 }}>
-            📱 احصل على تجربة أسرع مع تطبيق BlackRose
+            📱 احصل على تجربة أسرع مع تطبيق CLUNY CAFE
           </p>
           <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 11, margin: "2px 0 0" }}>
             حمّل التطبيق الآن واستمتع بمزايا إضافية
@@ -182,7 +182,7 @@ export function AppDownloadBanner() {
           />
           <div style={{ flex: 1, minWidth: 0 }}>
             <p style={{ color: "#fff", fontWeight: 800, fontSize: 13, margin: 0, lineHeight: 1.3 }}>
-              📱 احصل على تجربة أسرع مع تطبيق BlackRose
+              📱 احصل على تجربة أسرع مع تطبيق CLUNY CAFE
             </p>
             <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 11, margin: "2px 0 0" }}>
               {hasPlayStore
@@ -307,7 +307,7 @@ export function AppDownloadBanner() {
                 {[
                   { n: "١", title: "اضغط القائمة", desc: "اضغط أيقونة النقاط الثلاث (⋮) في أعلى المتصفح" },
                   { n: "٢", title: 'اختر "Add to Home Screen"', desc: "أو «إضافة إلى الشاشة الرئيسية» بالعربي" },
-                  { n: "٣", title: "اضغط «إضافة»", desc: "ستظهر أيقونة BlackRose على شاشتك فوراً ✨" },
+                  { n: "٣", title: "اضغط «إضافة»", desc: "ستظهر أيقونة CLUNY CAFE على شاشتك فوراً ✨" },
                 ].map((step) => (
                   <div key={step.n} style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
                     <div style={{

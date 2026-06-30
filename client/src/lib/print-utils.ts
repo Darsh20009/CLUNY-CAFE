@@ -746,7 +746,7 @@ async function _buildFastCustomerEscPos(
     splitPayment: data.splitPayment,
     paymentMethod: payLabel,
     ...(data.cashReceived ? { cashReceived: data.cashReceived } : {}),
-    logoDataUrl: '/black-rose-logo.png',
+    logoDataUrl: '/cluny-logo.png',
     trackingQrDataUrl: trackingQr || undefined,
     zatcaQrDataUrl: zatcaQr || undefined,
     paperWidth,

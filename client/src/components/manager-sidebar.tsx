@@ -105,6 +105,7 @@ const NAV_GROUPS: { label: string; labelEn: string; color: string; items: NavIte
     label: "التحليلات والتقارير", labelEn: "Analytics", color: "#14b8a6",
     items: [
       { label: "تحاليلي اليومي", labelEn: "My Daily Analytics", icon: TrendingUp, path: "/manager/tahalyli", color: "#f59e0b", badge: "✨" },
+      { label: "تقارير المنتجات التفصيلية", labelEn: "Product Reports", icon: BarChart2, path: "/manager/product-reports", color: "#2D9B6E", badge: "جديد" },
       { label: "التقارير", labelEn: "Reports", icon: FileText, path: "/admin/reports", color: "#14b8a6" },
       { label: "التقارير الموحدة", labelEn: "Unified Reports", icon: Building2, path: "/manager/unified-reports", color: "#2dd4bf" },
       { label: "تحليلات BI", labelEn: "BI Analytics", icon: Brain, path: "/manager/bi-analytics", color: "#99f6e4" },
