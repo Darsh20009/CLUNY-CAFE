@@ -23625,6 +23625,131 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
     } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
   });
 
+  // ═══════════════════════════════════════════════════════════════════
+  // PAYMENT TERMINAL INTEGRATION LAYER
+  // ═══════════════════════════════════════════════════════════════════
+  const { paymentTerminalService } = await import("./payment-terminal-service");
+
+  // In-memory config store per tenant (production: use MongoDB)
+  const terminalConfigs: Record<string, any> = {};
+
+  function getTerminalConfig(tenantId: string) {
+    return terminalConfigs[tenantId] || { activeDriverId: "manual", drivers: {} };
+  }
+
+  // GET /api/payment-terminal/terminals — list all drivers + status
+  app.get("/api/payment-terminal/terminals", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const cfg = getTerminalConfig(req.tenantId || "demo-tenant");
+      paymentTerminalService.configure(cfg);
+      const infos = await paymentTerminalService.getTerminalInfos();
+      res.json(infos);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/payment-terminal/config — get current terminal config
+  app.get("/api/payment-terminal/config", requireAuth, async (req: AuthRequest, res) => {
+    const cfg = getTerminalConfig(req.tenantId || "demo-tenant");
+    const safe = { ...cfg, drivers: Object.fromEntries(Object.entries(cfg.drivers || {}).map(([k, v]: any) => [k, { ...v, apiKey: v?.apiKey ? "***" : undefined, secretKey: v?.secretKey ? "***" : undefined, apiPassword: v?.apiPassword ? "***" : undefined }])) };
+    res.json(safe);
+  });
+
+  // POST /api/payment-terminal/configure — save terminal config
+  app.post("/api/payment-terminal/configure", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { drivers, activeDriverId } = req.body;
+      const tenantId = req.tenantId || "demo-tenant";
+      const existing = getTerminalConfig(tenantId);
+      // Merge — don't overwrite "***" masked secrets with the mask
+      const mergedDrivers: any = { ...(existing.drivers || {}) };
+      for (const [did, dcfg] of Object.entries(drivers || {})) {
+        const existingDriver = existing.drivers?.[did] || {};
+        const newDriver: any = { ...existingDriver };
+        for (const [k, v] of Object.entries(dcfg as any)) {
+          if (v !== "***" && v !== "") newDriver[k] = v;
+        }
+        mergedDrivers[did] = newDriver;
+      }
+      terminalConfigs[tenantId] = { activeDriverId: activeDriverId || existing.activeDriverId || "manual", drivers: mergedDrivers };
+      paymentTerminalService.configure(terminalConfigs[tenantId]);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/payment-terminal/set-active — switch active driver
+  app.post("/api/payment-terminal/set-active", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { driverId } = req.body;
+      if (!driverId) return res.status(400).json({ error: "driverId required" });
+      const tenantId = req.tenantId || "demo-tenant";
+      const cfg = getTerminalConfig(tenantId);
+      cfg.activeDriverId = driverId;
+      terminalConfigs[tenantId] = cfg;
+      paymentTerminalService.configure(cfg);
+      res.json({ success: true, activeDriverId: driverId });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/payment-terminal/pay — initiate payment
+  app.post("/api/payment-terminal/pay", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { amount, currency, orderId, description, callbackUrl } = req.body;
+      if (!amount || Number(amount) <= 0) return res.status(400).json({ error: "مبلغ غير صالح" });
+      const tenantId = req.tenantId || "demo-tenant";
+      const cfg = getTerminalConfig(tenantId);
+      paymentTerminalService.configure(cfg);
+      const result = await paymentTerminalService.pay({
+        amount: Number(amount),
+        currency: currency || "SAR",
+        orderId,
+        description,
+        callbackUrl,
+        cashierId: (req as any).employee?.id,
+        branchId: (req as any).employee?.branchId,
+      });
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/payment-terminal/refund — refund via terminal
+  app.post("/api/payment-terminal/refund", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { transactionId, amount, reason, driverId } = req.body;
+      if (!transactionId || !amount) return res.status(400).json({ error: "transactionId و amount مطلوبان" });
+      const tenantId = req.tenantId || "demo-tenant";
+      paymentTerminalService.configure(getTerminalConfig(tenantId));
+      const result = await paymentTerminalService.refund({ transactionId, amount: Number(amount), reason }, driverId);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/payment-terminal/cancel — cancel current terminal operation
+  app.post("/api/payment-terminal/cancel", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      await paymentTerminalService.cancel(req.body?.transactionId);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/payment-terminal/transactions — recent transactions
+  app.get("/api/payment-terminal/transactions", requireAuth, async (req: AuthRequest, res) => {
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    res.json(paymentTerminalService.getTransactions(limit));
+  });
+  // ═══════════════════════════════════════════════════════════════════
+
   // GET /api/v1/orders/:id
   app.get("/api/v1/orders/:id", requireApiKey("orders:read"), async (req: any, res) => {
     try {

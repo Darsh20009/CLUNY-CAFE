@@ -130,6 +130,19 @@ const NAV_GROUPS: { label: string; labelEn: string; color: string; items: NavIte
     ]
   },
   {
+    label: "أجهزة الدفع", labelEn: "Payment Terminals", color: "#059669",
+    items: [
+      { label: "طبقة دمج أجهزة الدفع", labelEn: "Terminal Layer", icon: CreditCard, path: "/manager/payment-terminal", color: "#059669", badge: "جديد" },
+      { label: "تتبع المدفوعات", labelEn: "Payment Tracking", icon: BarChart2, path: "/manager/payment-tracking", color: "#10b981" },
+    ]
+  },
+  {
+    label: "جودة النظام", labelEn: "System Quality", color: "#dc2626",
+    items: [
+      { label: "اختبارات النظام الشاملة", labelEn: "System Diagnostics", icon: ShieldCheck, path: "/manager/system-diagnostics", color: "#dc2626", badge: "جديد" },
+    ]
+  },
+  {
     label: "المتقدمة", labelEn: "Advanced", color: "#7c3aed",
     items: [
       { label: "سوق B2B", labelEn: "B2B Market", icon: Store, path: "/manager/b2b", color: "#7c3aed", roles: ["admin", "owner"] },

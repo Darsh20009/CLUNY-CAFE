@@ -173,6 +173,8 @@ const TahalyliPage = lazy(() => import("@/pages/tahalyli"));
 const CurbsidePage = lazy(() => import("@/pages/curbside"));
 const GeneralCheckin = lazy(() => import("@/pages/general-checkin"));
 const OnboardingPage = lazy(() => import("@/pages/onboarding"));
+const PaymentTerminalControl = lazy(() => import("@/pages/payment-terminal-control"));
+const SystemDiagnostics = lazy(() => import("@/pages/system-diagnostics"));
 import clunyLogo from "@assets/cluny-logo-customer.png";
 import clunyLogoStaff from "@assets/cluny-logo-staff.png";
 import { brand } from "@/lib/brand";
@@ -408,6 +410,8 @@ function AppRouter() {
       <Route path="/manager/smart-reports"><AuthGuard userType="manager"><ManagerSmartReports /></AuthGuard></Route>
       <Route path="/manager/product-analytics"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><ManagerLayout><ProductAnalytics /></ManagerLayout></AuthGuard></Route>
       <Route path="/manager/product-reports"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><ManagerLayout><ProductReports /></ManagerLayout></AuthGuard></Route>
+      <Route path="/manager/payment-terminal"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner", "cashier", "branch_manager"]}><PaymentTerminalControl /></AuthGuard></Route>
+      <Route path="/manager/system-diagnostics"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><SystemDiagnostics /></AuthGuard></Route>
       {/* Owner protected routes */}
       <Route path="/owner/dashboard"><AuthGuard userType="manager" allowedRoles={["owner", "admin"]}><OwnerDashboard /></AuthGuard></Route>
       <Route path="/executive"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><ExecutiveDashboard /></AuthGuard></Route>
