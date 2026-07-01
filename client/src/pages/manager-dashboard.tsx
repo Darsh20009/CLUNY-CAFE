@@ -103,8 +103,8 @@ export default function ManagerDashboard() {
  city: "",
  managerName: "",
  mapsUrl: "",
- latitude: 24.0887,
- longitude: 38.0697,
+ latitude: 24.7136,
+ longitude: 46.6753,
  });
  const [branchSearchQuery, setBranchSearchQuery] = useState<string>("");
  const [branchSearchResults, setBranchSearchResults] = useState<Array<{ name: string; lat: string; lon: string }>>([]);
@@ -331,8 +331,8 @@ export default function ManagerDashboard() {
  city: "",
  managerName: "",
  mapsUrl: "",
- latitude: 24.0887,
- longitude: 38.0697,
+ latitude: 24.7136,
+ longitude: 46.6753,
  });
  setManagerAssignmentType("existing");
  setSelectedManagerId("");
@@ -419,8 +419,8 @@ export default function ManagerDashboard() {
  city: "",
  managerName: "",
  mapsUrl: "",
- latitude: 24.0887,
- longitude: 38.0697,
+ latitude: 24.7136,
+ longitude: 46.6753,
  });
  toast({
  title: tc("تم تحديث الفرع بنجاح", "Branch updated successfully"),
