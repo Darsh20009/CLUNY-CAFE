@@ -3,6 +3,10 @@ import { useTranslation } from "react-i18next";
 import SarIcon from "@/components/sar-icon";
 import { useTranslate } from "@/lib/useTranslate";
 import { useLocation } from "wouter";
+import { useRealtimeEvent } from "@/hooks/useRealtimeEngine";
+import { getRealtimeEngine } from "@/lib/realtime-engine";
+import { playNotificationSound, initAudioUnlock, getSoundEnabled, setSoundEnabled as saveSoundEnabled } from "@/lib/notification-sounds";
+import { AudioUnlockBanner } from "@/components/audio-unlock-banner";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, getErrorMessage } from "@/lib/queryClient";
 import { cacheMenuItems, getCachedMenuItems, savePendingOrder, getPendingOrdersCount, getPendingOrders, updatePendingOrderReceiptData, syncPendingOrders, type PendingOrder } from "@/lib/offline-cashier";
@@ -116,6 +120,8 @@ export default function EmployeeCashier() {
   const [pendingOrdersCount, setPendingOrdersCount] = useState(getPendingOrdersCount);
   const [showPendingPanel, setShowPendingPanel] = useState(false);
   const [pendingOrdersList, setPendingOrdersList] = useState<PendingOrder[]>([]);
+  const [newOnlineOrdersCount, setNewOnlineOrdersCount] = useState(0);
+  const [soundEnabled, setSoundEnabled] = useState(() => getSoundEnabled('cashier'));
 
  const { toast } = useToast();
  const { i18n } = useTranslation();
@@ -185,6 +191,45 @@ export default function EmployeeCashier() {
      window.removeEventListener('offline', handleOffline);
    };
  }, [toast]);
+
+ // ── Realtime engine init (for sound alerts) ─────────────────────────────────
+ useEffect(() => {
+   const emp = JSON.parse(localStorage.getItem("currentEmployee") || "null");
+   if (!emp) return;
+   const payload = {
+     type: "cashier" as const,
+     employeeId: emp.id || emp._id,
+     branchId: emp.branchId,
+     tenantId: emp.tenantId || "demo-tenant",
+   };
+   getRealtimeEngine(payload);
+ }, []);
+
+ // ── Loud sound alert when a new online/web order arrives ─────────────────────
+ useRealtimeEvent("new_order", (order: any) => {
+   queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+   const isOnline = order?.channel === 'online' || order?.channel === 'web';
+   const isTable  = order?.orderType === 'dine_in' || order?.orderType === 'dine-in';
+   const isCar    = order?.orderType === 'car_pickup' || order?.orderType === 'car-pickup' || order?.carPickup === true;
+
+   if (isOnline || isTable || isCar) {
+     setNewOnlineOrdersCount(prev => prev + 1);
+
+     if (soundEnabled) {
+       // Play loud alert 3 times in quick succession
+       playNotificationSound('newOrder', 1.0);
+       setTimeout(() => playNotificationSound('newOrder', 1.0), 700);
+       setTimeout(() => playNotificationSound('newOrder', 1.0), 1400);
+     }
+
+     const orderTypeName = isTable ? 'طاولة' : isCar ? 'سيارة' : 'أونلاين';
+     toast({
+       title: `🔔 طلب ${orderTypeName} جديد!`,
+       description: `${order?.customerName || 'عميل'} — ${Number(order?.totalAmount || 0).toFixed(2)} ر.س`,
+       duration: 8000,
+     });
+   }
+ });
 
  // 🚀 Professional keyboard shortcuts (F1=New, F2=Submit, F4=Print Last, Esc=Clear)
  useEffect(() => {
@@ -1012,6 +1057,27 @@ export default function EmployeeCashier() {
  <div className="min-h-screen bg-gray-50 p-4 pb-20 sm:pb-4">
  <div className="max-w-7xl mx-auto">
  <ShiftSummaryWidget />
+
+ {/* 🔔 Audio unlock banner — must interact once for browser to allow sounds */}
+ <AudioUnlockBanner
+   pageKey="cashier"
+   soundEnabled={soundEnabled}
+   onToggleSound={(v) => { setSoundEnabled(v); saveSoundEnabled('cashier', v); }}
+   compact
+ />
+
+ {/* 🆕 New online orders alert banner */}
+ {newOnlineOrdersCount > 0 && (
+   <div
+     className="flex items-center justify-between gap-3 mb-3 bg-green-600 text-white rounded-xl px-4 py-3 cursor-pointer animate-pulse"
+     onClick={() => setNewOnlineOrdersCount(0)}
+     data-testid="banner-new-online-orders"
+   >
+     <span className="font-bold text-lg">🔔 {newOnlineOrdersCount} طلب{newOnlineOrdersCount > 1 ? ' جديدة' : ' جديد'} وارد!</span>
+     <button className="text-white/70 hover:text-white text-sm underline">تم الاطلاع</button>
+   </div>
+ )}
+
  <div className="flex items-center justify-between mb-6">
  <div className="flex items-center gap-3">
  <div className="w-12 h-12 flex-shrink-0">
