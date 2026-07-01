@@ -10,6 +10,7 @@ import mongoose from "mongoose";
 import { PushSubscriptionModel, sendPushBySubscriptions, PushPayload } from "./push-service";
 import { fireNotifyAdmins } from "./notification-engine";
 import { wsManager } from "./websocket";
+import { sendDailyReportEmail, sendWeeklyReportEmail } from "./mail-service";
 
 // ───────────────────────────────────────────────
 // Helpers: Saudi time & Hijri calendar
@@ -238,7 +239,6 @@ async function sendAdminDailySummary() {
     const startOfDay = new Date(now);
     startOfDay.setHours(0, 0, 0, 0);
 
-    // 1. Daily orders stats
     const orders = await OrderCollection.find({
       createdAt: { $gte: startOfDay },
       status: { $nin: ["cancelled"] },
@@ -247,7 +247,6 @@ async function sendAdminDailySummary() {
     const totalRevenue = orders.reduce((sum: number, o: any) => sum + (o.totalAmount || 0), 0);
     const orderCount = orders.length;
 
-    // 2. Best selling item today
     const itemCounts: Record<string, number> = {};
     for (const order of orders) {
       if (order.items && Array.isArray(order.items)) {
@@ -257,43 +256,96 @@ async function sendAdminDailySummary() {
         }
       }
     }
-    const bestSeller = Object.entries(itemCounts).sort((a, b) => b[1] - a[1])[0];
+    const bestSellerEntry = Object.entries(itemCounts).sort((a, b) => b[1] - a[1])[0] || null;
 
-    // 3. Low stock items
     const lowStockItems = await RawItemCollection.find({
       $expr: { $lte: ["$currentQuantity", "$minimumQuantity"] },
     }).toArray();
+    const lowStockNames = lowStockItems.slice(0, 6).map((i: any) => i.nameAr || i.name || "صنف");
 
-    // Build summary message
+    // Push notification to admins
     let summaryBody = `📦 الطلبات: ${orderCount} طلب\n💰 الإيرادات: ${totalRevenue.toFixed(2)} ر.س`;
-    if (bestSeller) {
-      summaryBody += `\n🏆 الأكثر طلباً: ${bestSeller[0]} (${bestSeller[1]} مرة)`;
-    }
-    if (lowStockItems.length > 0) {
-      summaryBody += `\n⚠️ مخزون منخفض: ${lowStockItems.length} صنف`;
-    }
+    if (bestSellerEntry) summaryBody += `\n🏆 الأكثر طلباً: ${bestSellerEntry[0]} (${bestSellerEntry[1]} مرة)`;
+    if (lowStockItems.length > 0) summaryBody += `\n⚠️ مخزون منخفض: ${lowStockItems.length} صنف`;
 
     await fireNotifyAdmins("📊 تقرير اليوم — كلوني", summaryBody, {
-      type: "info",
-      icon: "📊",
-      link: "/employee/admin/reports",
-      tenantId: "demo-tenant",
+      type: "info", icon: "📊", link: "/employee/admin/reports", tenantId: "demo-tenant",
     });
 
-    // 4. Low stock alert (separate notification if urgent)
     if (lowStockItems.length > 0) {
-      const itemNames = lowStockItems.slice(0, 5).map((i: any) => i.nameAr || i.name).join("، ");
+      const itemNames = lowStockNames.join("، ");
       await fireNotifyAdmins("⚠️ تنبيه مخزون منخفض", `الأصناف التالية تحتاج تجديد: ${itemNames}`, {
-        type: "warning",
-        icon: "⚠️",
-        link: "/employee/admin/inventory",
-        tenantId: "demo-tenant",
+        type: "warning", icon: "⚠️", link: "/employee/admin/inventory", tenantId: "demo-tenant",
       });
     }
+
+    // Email daily report to admin
+    const saudiDate = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Riyadh" }));
+    const dateLabel = saudiDate.toLocaleDateString("ar-SA", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+    await sendDailyReportEmail({
+      orderCount,
+      totalRevenue,
+      bestSeller: bestSellerEntry as [string, number] | null,
+      lowStockCount: lowStockItems.length,
+      lowStockItems: lowStockNames,
+      date: dateLabel,
+    });
 
     console.log(`[SCHEDULER] 📊 Admin daily summary sent — ${orderCount} orders, ${totalRevenue.toFixed(2)} SAR`);
   } catch (err) {
     console.error("[SCHEDULER] sendAdminDailySummary error:", err);
+  }
+}
+
+// ─── Admin Weekly Summary (sent every Friday at 11 PM) ───────────────────────
+async function sendAdminWeeklySummary() {
+  try {
+    const OrderCollection = mongoose.connection.collection("orders");
+    const RawItemCollection = mongoose.connection.collection("rawitems");
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const orders = await OrderCollection.find({
+      createdAt: { $gte: sevenDaysAgo },
+      status: { $nin: ["cancelled"] },
+    }).toArray();
+
+    const totalRevenue = orders.reduce((sum: number, o: any) => sum + (o.totalAmount || 0), 0);
+    const orderCount = orders.length;
+    const avgDaily = totalRevenue / 7;
+
+    const itemCounts: Record<string, number> = {};
+    for (const order of orders) {
+      if (order.items && Array.isArray(order.items)) {
+        for (const item of order.items) {
+          const name = item.nameAr || item.name || "غير معروف";
+          itemCounts[name] = (itemCounts[name] || 0) + (item.quantity || 1);
+        }
+      }
+    }
+    const bestSellerEntry = Object.entries(itemCounts).sort((a, b) => b[1] - a[1])[0] || null;
+
+    const lowStockItems = await RawItemCollection.find({
+      $expr: { $lte: ["$currentQuantity", "$minimumQuantity"] },
+    }).toArray();
+
+    const saudiNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Riyadh" }));
+    const weekEnd = saudiNow.toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" });
+    const weekStart = new Date(sevenDaysAgo.toLocaleString("en-US", { timeZone: "Asia/Riyadh" }))
+      .toLocaleDateString("ar-SA", { year: "numeric", month: "long", day: "numeric" });
+
+    await sendWeeklyReportEmail({
+      orderCount,
+      totalRevenue,
+      avgDaily,
+      bestSeller: bestSellerEntry as [string, number] | null,
+      lowStockCount: lowStockItems.length,
+      weekLabel: `${weekStart} — ${weekEnd}`,
+    });
+
+    console.log(`[SCHEDULER] 📈 Admin weekly summary sent — ${orderCount} orders, ${totalRevenue.toFixed(2)} SAR (7 days)`);
+  } catch (err) {
+    console.error("[SCHEDULER] sendAdminWeeklySummary error:", err);
   }
 }
 
@@ -458,6 +510,12 @@ export function startSmartScheduler() {
       else if (hour === 23 && minute === 0 && !alreadySent("admin-summary")) {
         markSent("admin-summary");
         await sendAdminDailySummary();
+      }
+
+      // ─── ADMIN WEEKLY SUMMARY (Friday 11:00 PM) ───
+      if (dayOfWeek === 5 && hour === 23 && minute === 0 && !alreadySent("admin-weekly")) {
+        markSent("admin-weekly");
+        await sendAdminWeeklySummary();
       }
 
       // ─── CRITICAL STOCK CHECK (every 4 hours: 8 AM, 12 PM, 4 PM, 8 PM) ───

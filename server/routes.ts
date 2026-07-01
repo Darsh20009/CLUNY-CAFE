@@ -6157,6 +6157,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Employee login via username/password
+  // ─── Employee Email OTP for Forgot Password ───────────────────────────────
+  // In-memory OTP store: { key: "username", value: {otp, expiry} }
+  const employeeOtpStore = new Map<string, { otp: string; expiry: number; username: string }>();
+
+  app.post("/api/employees/send-reset-otp", async (req, res) => {
+    try {
+      const { username } = req.body;
+      if (!username) return res.status(400).json({ error: "الرجاء إدخال اسم المستخدم" });
+
+      const employee = await EmployeeModel.findOne(
+        username.includes("@")
+          ? { email: username.toLowerCase().trim() }
+          : { username: username.trim().toLowerCase() }
+      );
+
+      if (!employee || !employee.email) {
+        return res.status(404).json({ error: "لم يتم العثور على حساب مرتبط بهذا المستخدم أو لا يوجد بريد إلكتروني مسجل" });
+      }
+
+      // Generate 6-digit OTP
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiry = Date.now() + 10 * 60 * 1000; // 10 minutes
+      const key = employee.username;
+      employeeOtpStore.set(key, { otp, expiry, username: employee.username });
+
+      // Send OTP email
+      const { sendEmployeePasswordResetOTP } = await import("./mail-service");
+      await sendEmployeePasswordResetOTP(
+        employee.email,
+        employee.fullName || employee.username,
+        otp
+      );
+
+      // Return masked email so frontend can show it
+      const masked = employee.email.replace(/(.{2})(.*)(@.*)/, (_, a, b, c) => a + "*".repeat(Math.max(b.length, 3)) + c);
+      return res.json({ sent: true, maskedEmail: masked, username: employee.username });
+    } catch (err: any) {
+      console.error("[AUTH] send-reset-otp error:", err);
+      return res.status(500).json({ error: "فشل إرسال رمز التحقق" });
+    }
+  });
+
+  app.post("/api/employees/verify-reset-otp", async (req, res) => {
+    try {
+      const { username, otp, newPassword } = req.body;
+      if (!username || !otp || !newPassword) {
+        return res.status(400).json({ error: "بيانات ناقصة" });
+      }
+
+      const stored = employeeOtpStore.get(username);
+      if (!stored) return res.status(400).json({ error: "لا يوجد رمز تحقق نشط، أعد الطلب" });
+      if (Date.now() > stored.expiry) {
+        employeeOtpStore.delete(username);
+        return res.status(400).json({ error: "انتهت صلاحية الرمز، أعد الطلب" });
+      }
+      if (stored.otp !== otp.toString().trim()) {
+        return res.status(400).json({ error: "رمز التحقق غير صحيح" });
+      }
+
+      // OTP valid — reset password
+      const bcrypt = await import("bcryptjs");
+      const hashed = await bcrypt.hash(newPassword, 10);
+      await EmployeeModel.updateOne({ username }, { $set: { password: hashed } });
+      employeeOtpStore.delete(username);
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error("[AUTH] verify-reset-otp error:", err);
+      return res.status(500).json({ error: "فشل إعادة تعيين كلمة المرور" });
+    }
+  });
+
   app.post("/api/employees/verify-phone", async (req, res) => {
     try {
       const { username, phone } = req.body;
@@ -6736,6 +6808,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Don't send password back
       const { password: _, ...employeeData } = employee;
       res.status(201).json(employeeData);
+
+      // Send welcome email if employee has email
+      if (bodyData.email && bodyData.password) {
+        const { sendEmployeeWelcomeEmail } = await import("./mail-service");
+        sendEmployeeWelcomeEmail(
+          bodyData.email,
+          bodyData.fullName || bodyData.username,
+          bodyData.username,
+          bodyData.password, // plain password before hashing
+          bodyData.role || "employee"
+        ).catch((err: any) => console.warn("[MAIL] Welcome email failed:", err?.message));
+      }
     } catch (error: any) {
       console.error("Error creating employee:", error);
       if (error?.code === 11000 || error?.name === 'MongoServerError') {

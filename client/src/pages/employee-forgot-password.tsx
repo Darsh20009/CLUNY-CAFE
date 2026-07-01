@@ -4,12 +4,12 @@ import { useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { AtSign, Lock, Phone, Eye, EyeOff, Loader2, ArrowRight, CheckCircle2 } from "lucide-react";
+import { AtSign, Lock, Mail, Eye, EyeOff, Loader2, ArrowRight, CheckCircle2, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslate } from "@/lib/useTranslate";
 import clunyLogoStaff from "@assets/cluny-logo-customer.png";
 
-type Step = "username" | "phone" | "password";
+type Step = "username" | "otp" | "password";
 
 export default function EmployeeForgotPassword() {
   const [, navigate] = useLocation();
@@ -18,7 +18,9 @@ export default function EmployeeForgotPassword() {
 
   const [step, setStep] = useState<Step>("username");
   const [username, setUsername] = useState("");
-  const [phone, setPhone] = useState("");
+  const [resolvedUsername, setResolvedUsername] = useState("");
+  const [maskedEmail, setMaskedEmail] = useState("");
+  const [otp, setOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -27,38 +29,48 @@ export default function EmployeeForgotPassword() {
 
   const stepConfig = {
     username: { num: 1, label: tc("اسم المستخدم", "Username") },
-    phone:    { num: 2, label: tc("رقم الجوال", "Phone") },
+    otp:      { num: 2, label: tc("رمز التحقق", "Verification Code") },
     password: { num: 3, label: tc("كلمة المرور الجديدة", "New Password") },
   };
 
-  const verifyPhoneMutation = useMutation({
-    mutationFn: async ({ username, phone }: { username: string; phone: string }) => {
-      const res = await fetch("/api/employees/verify-phone", {
+  // Step 1 → Send OTP
+  const sendOtpMutation = useMutation({
+    mutationFn: async (uname: string) => {
+      const res = await fetch("/api/employees/send-reset-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, phone }),
+        body: JSON.stringify({ username: uname }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || tc("رقم الجوال غير صحيح", "Incorrect phone number"));
+      if (!res.ok) throw new Error(data?.error || tc("فشل إرسال الرمز", "Failed to send code"));
       return data;
     },
-    onSuccess: () => { setError(""); setStep("password"); },
-    onError: (err: any) => setError(err?.message || tc("اسم المستخدم أو رقم الجوال غير صحيح", "Incorrect username or phone")),
+    onSuccess: (data) => {
+      setMaskedEmail(data.maskedEmail || "");
+      setResolvedUsername(data.username || username);
+      setError("");
+      setStep("otp");
+    },
+    onError: (err: any) => setError(err?.message || tc("حدث خطأ", "An error occurred")),
   });
 
+  // Step 3 → Verify OTP + reset password
   const resetMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch("/api/employees/reset-password-by-username", {
+      const res = await fetch("/api/employees/verify-reset-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, newPassword }),
+        body: JSON.stringify({ username: resolvedUsername, otp: otp.trim(), newPassword }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || tc("فشل تغيير كلمة المرور", "Failed to change password"));
       return data;
     },
     onSuccess: () => {
-      toast({ title: tc("تم بنجاح!", "Success!"), description: tc("تم تغيير كلمة المرور. سيتم تحويلك لتسجيل الدخول", "Password changed. Redirecting to login...") });
+      toast({
+        title: tc("تم بنجاح!", "Success!"),
+        description: tc("تم تغيير كلمة المرور. سيتم تحويلك لتسجيل الدخول", "Password changed. Redirecting..."),
+      });
       setTimeout(() => navigate("/employee/login"), 2000);
     },
     onError: (err: any) => setError(err?.message || tc("حدث خطأ", "An error occurred")),
@@ -68,14 +80,17 @@ export default function EmployeeForgotPassword() {
     e.preventDefault();
     setError("");
     if (!username.trim()) { setError(tc("الرجاء إدخال اسم المستخدم", "Please enter your username")); return; }
-    setStep("phone");
+    sendOtpMutation.mutate(username.trim());
   };
 
-  const handlePhoneNext = (e: React.FormEvent) => {
+  const handleOtpNext = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    if (!phone.trim()) { setError(tc("الرجاء إدخال رقم الجوال", "Please enter your phone number")); return; }
-    verifyPhoneMutation.mutate({ username: username.trim().toLowerCase(), phone: phone.trim() });
+    if (!otp.trim() || otp.trim().length < 6) {
+      setError(tc("الرجاء إدخال رمز التحقق المكون من 6 أرقام", "Please enter the 6-digit code"));
+      return;
+    }
+    setStep("password");
   };
 
   const handlePasswordSubmit = (e: React.FormEvent) => {
@@ -94,8 +109,8 @@ export default function EmployeeForgotPassword() {
 
   const goBack = () => {
     setError("");
-    if (step === "phone") setStep("username");
-    else if (step === "password") setStep("phone");
+    if (step === "otp") setStep("username");
+    else if (step === "password") setStep("otp");
     else navigate("/employee/login");
   };
 
@@ -118,7 +133,7 @@ export default function EmployeeForgotPassword() {
 
             {/* Step indicator */}
             <div className="flex items-center justify-center gap-2 pt-2" dir="ltr">
-              {(["username", "phone", "password"] as Step[]).map((s, i) => {
+              {(["username", "otp", "password"] as Step[]).map((s, i) => {
                 const isDone = stepConfig[step].num > i + 1;
                 const isActive = step === s;
                 return (
@@ -153,12 +168,18 @@ export default function EmployeeForgotPassword() {
                     data-testid="input-username"
                     autoFocus
                     autoComplete="username"
+                    disabled={sendOtpMutation.isPending}
                   />
                 </div>
+                <p className="text-xs text-muted-foreground text-right">
+                  {tc("سيتم إرسال رمز التحقق إلى بريدك الإلكتروني المسجل", "A verification code will be sent to your registered email")}
+                </p>
                 {error && <p className="text-destructive text-sm text-right">{error}</p>}
-                <Button type="submit" className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-bold" data-testid="button-next">
-                  <ArrowRight className="w-4 h-4 mr-2" />
-                  {tc("التالي", "Next")}
+                <Button type="submit" disabled={sendOtpMutation.isPending} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-bold" data-testid="button-next">
+                  {sendOtpMutation.isPending
+                    ? <><Loader2 className="ml-2 h-4 w-4 animate-spin" />{tc("جاري الإرسال...", "Sending...")}</>
+                    : <><ArrowRight className="w-4 h-4 mr-2" />{tc("إرسال رمز التحقق", "Send Verification Code")}</>
+                  }
                 </Button>
                 <Button type="button" variant="ghost" onClick={goBack} className="w-full text-muted-foreground">
                   {tc("العودة لتسجيل الدخول", "Back to Login")}
@@ -166,34 +187,63 @@ export default function EmployeeForgotPassword() {
               </form>
             )}
 
-            {/* Step 2: Phone verification */}
-            {step === "phone" && (
-              <form onSubmit={handlePhoneNext} className="space-y-4">
-                <div className="bg-muted/50 rounded-lg px-4 py-3 text-sm flex items-center gap-2 border border-border">
-                  <AtSign className="w-4 h-4 text-primary shrink-0" />
-                  <span className="font-medium text-foreground">{username}</span>
+            {/* Step 2: Email OTP */}
+            {step === "otp" && (
+              <form onSubmit={handleOtpNext} className="space-y-4">
+                <div className="bg-primary/5 rounded-lg px-4 py-3 text-sm flex items-start gap-3 border border-primary/20">
+                  <Mail className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-foreground font-medium">{tc("تم الإرسال!", "Sent!")}</p>
+                    <p className="text-muted-foreground text-xs mt-0.5">
+                      {tc("أُرسل رمز التحقق إلى", "Code sent to")}: <span className="font-medium text-primary">{maskedEmail}</span>
+                    </p>
+                  </div>
                 </div>
+
                 <div className="relative">
-                  <Phone className="absolute right-3 top-3 h-5 w-5 text-primary" />
                   <Input
-                    type="tel"
-                    placeholder={tc("رقم الجوال المسجل (مثال: 0501234567)", "Registered phone (e.g. 0501234567)")}
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="pr-10 bg-background border-border"
-                    data-testid="input-phone"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder={tc("أدخل الرمز المكون من 6 أرقام", "Enter 6-digit code")}
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    className="text-center tracking-[0.5em] text-2xl font-bold bg-background border-border h-14"
+                    data-testid="input-otp"
                     autoFocus
-                    autoComplete="tel"
-                    disabled={verifyPhoneMutation.isPending}
+                    maxLength={6}
                   />
                 </div>
+
+                <p className="text-xs text-muted-foreground text-center">
+                  {tc("الرمز صالح لمدة 10 دقائق", "Code valid for 10 minutes")}
+                </p>
+
                 {error && <p className="text-destructive text-sm text-right">{error}</p>}
-                <Button type="submit" disabled={verifyPhoneMutation.isPending} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-bold" data-testid="button-verify">
-                  {verifyPhoneMutation.isPending
-                    ? <><Loader2 className="ml-2 h-4 w-4 animate-spin" />{tc("جاري التحقق...", "Verifying...")}</>
-                    : <><ArrowRight className="w-4 h-4 mr-2" />{tc("التالي", "Next")}</>
+
+                <Button
+                  type="submit"
+                  disabled={otp.length < 6}
+                  className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
+                  data-testid="button-verify-otp"
+                >
+                  <ArrowRight className="w-4 h-4 mr-2" />
+                  {tc("التحقق والمتابعة", "Verify & Continue")}
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => sendOtpMutation.mutate(username.trim())}
+                  disabled={sendOtpMutation.isPending}
+                  className="w-full text-muted-foreground text-sm"
+                  data-testid="button-resend"
+                >
+                  {sendOtpMutation.isPending
+                    ? <><Loader2 className="ml-2 h-3 w-3 animate-spin" />{tc("جاري الإعادة...", "Resending...")}</>
+                    : <><RefreshCw className="w-3 h-3 mr-2" />{tc("إعادة إرسال الرمز", "Resend Code")}</>
                   }
                 </Button>
+
                 <Button type="button" variant="ghost" onClick={goBack} className="w-full text-muted-foreground">
                   {tc("رجوع", "Back")}
                 </Button>
@@ -206,7 +256,7 @@ export default function EmployeeForgotPassword() {
                 <div className="bg-muted/50 rounded-lg px-4 py-3 text-sm flex items-center gap-2 border border-border">
                   <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
                   <span className="text-muted-foreground">{tc("تم التحقق من الهوية", "Identity verified")}</span>
-                  <span className="font-medium text-foreground mr-auto">{username}</span>
+                  <span className="font-medium text-foreground mr-auto">{resolvedUsername}</span>
                 </div>
 
                 <div className="relative">
@@ -250,7 +300,12 @@ export default function EmployeeForgotPassword() {
 
                 {error && <p className="text-destructive text-sm text-right">{error}</p>}
 
-                <Button type="submit" disabled={resetMutation.isPending} className="w-full bg-gradient-to-r from-primary to-primary/90 hover:from-primary/95 hover:to-primary/85 text-primary-foreground font-bold" data-testid="button-reset">
+                <Button
+                  type="submit"
+                  disabled={resetMutation.isPending}
+                  className="w-full bg-gradient-to-r from-primary to-primary/90 hover:from-primary/95 hover:to-primary/85 text-primary-foreground font-bold"
+                  data-testid="button-reset"
+                >
                   {resetMutation.isPending
                     ? <><Loader2 className="ml-2 h-4 w-4 animate-spin" />{tc("جاري الحفظ...", "Saving...")}</>
                     : tc("حفظ كلمة المرور الجديدة", "Save New Password")

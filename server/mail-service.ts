@@ -527,6 +527,270 @@ export async function sendDbStorageAlertEmail(
   });
 }
 
+// ─── Employee Welcome Email ───────────────────────────────────────────────────
+export async function sendEmployeeWelcomeEmail(
+  employeeEmail: string,
+  employeeName: string,
+  username: string,
+  plainPassword: string,
+  role: string
+) {
+  const roleAr =
+    role === "owner" ? "مالك" :
+    role === "admin" ? "مدير عام" :
+    role === "manager" ? "مدير فرع" :
+    role === "cashier" ? "كاشير" :
+    role === "barista" ? "باريستا" :
+    role === "kitchen" ? "مطبخ" :
+    role === "delivery" ? "توصيل" : role;
+
+  return sendMail({
+    to: employeeEmail,
+    subject: "مرحباً بك في فريق CLUNY CAFE ☕",
+    html: `
+      <html dir="rtl" lang="ar">
+      <head><meta charset="UTF-8"></head>
+      <body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,sans-serif;">
+        <div style="max-width:560px;margin:30px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.1);">
+          <div style="background:linear-gradient(135deg,#2D9B6E,#1a7a54);padding:32px;text-align:center;">
+            <h1 style="color:#fff;margin:0;font-size:26px;font-weight:bold;">CLUNY CAFE</h1>
+            <p style="color:rgba(255,255,255,.85);margin:8px 0 0;font-size:14px;">نظام إدارة كلوني</p>
+          </div>
+          <div style="padding:32px;">
+            <h2 style="color:#2D9B6E;margin-top:0;">مرحباً ${employeeName}! 👋</h2>
+            <p style="color:#444;line-height:1.7;">تم إنشاء حسابك في نظام CLUNY SYSTEMS. يمكنك الآن تسجيل الدخول باستخدام البيانات التالية:</p>
+            <div style="background:#f8fdf9;border:2px solid #2D9B6E;border-radius:10px;padding:20px;margin:20px 0;">
+              <table style="width:100%;border-collapse:collapse;">
+                <tr>
+                  <td style="padding:8px 0;color:#666;font-size:13px;width:40%;">الوظيفة</td>
+                  <td style="padding:8px 0;color:#333;font-weight:bold;">${roleAr}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 0;color:#666;font-size:13px;">اسم المستخدم</td>
+                  <td style="padding:8px 0;color:#2D9B6E;font-weight:bold;font-size:18px;letter-spacing:1px;">${username}</td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 0;color:#666;font-size:13px;">كلمة المرور</td>
+                  <td style="padding:8px 0;color:#333;font-weight:bold;font-size:18px;letter-spacing:2px;">${plainPassword}</td>
+                </tr>
+              </table>
+            </div>
+            <div style="background:#fff8e1;border-right:4px solid #f59e0b;border-radius:4px;padding:12px 16px;margin:16px 0;">
+              <p style="margin:0;color:#92400e;font-size:13px;">⚠️ يُنصح بتغيير كلمة المرور فور تسجيل الدخول لأول مرة.</p>
+            </div>
+            <div style="text-align:center;margin:24px 0;">
+              <a href="${process.env.APP_URL || 'https://cluny.cafe'}/employee/login"
+                style="background:#2D9B6E;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;font-size:15px;">
+                تسجيل الدخول الآن
+              </a>
+            </div>
+          </div>
+          <div style="background:#f8f8f8;padding:16px;text-align:center;border-top:1px solid #eee;">
+            <p style="margin:0;color:#999;font-size:12px;">© ${new Date().getFullYear()} CLUNY CAFE — هذا البريد مرسل تلقائياً</p>
+          </div>
+        </div>
+      </body></html>
+    `,
+  });
+}
+
+// ─── Employee Password Reset OTP ──────────────────────────────────────────────
+export async function sendEmployeePasswordResetOTP(
+  employeeEmail: string,
+  employeeName: string,
+  otp: string
+) {
+  return sendMail({
+    to: employeeEmail,
+    subject: "رمز إعادة تعيين كلمة المرور — CLUNY SYSTEMS",
+    html: `
+      <html dir="rtl" lang="ar">
+      <head><meta charset="UTF-8"></head>
+      <body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,sans-serif;">
+        <div style="max-width:480px;margin:30px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.1);">
+          <div style="background:linear-gradient(135deg,#2D9B6E,#1a7a54);padding:28px;text-align:center;">
+            <h1 style="color:#fff;margin:0;font-size:22px;">🔐 CLUNY SYSTEMS</h1>
+          </div>
+          <div style="padding:32px;text-align:center;">
+            <h2 style="color:#333;margin-top:0;">مرحباً ${employeeName}</h2>
+            <p style="color:#666;font-size:14px;">تم طلب إعادة تعيين كلمة المرور. استخدم الرمز التالي:</p>
+            <div style="background:linear-gradient(135deg,#2D9B6E,#1a7a54);border-radius:12px;padding:24px;margin:20px 0;display:inline-block;width:100%;box-sizing:border-box;">
+              <p style="margin:0;color:rgba(255,255,255,.7);font-size:12px;">رمز التحقق</p>
+              <p style="margin:8px 0 4px;font-size:42px;font-weight:bold;letter-spacing:10px;color:#fff;">${otp}</p>
+              <p style="margin:0;color:rgba(255,255,255,.6);font-size:12px;">صالح لمدة 10 دقائق فقط</p>
+            </div>
+            <p style="color:#999;font-size:12px;margin-top:20px;">إذا لم تطلب هذا الرمز، تجاهل هذا البريد.</p>
+          </div>
+          <div style="background:#f8f8f8;padding:16px;text-align:center;border-top:1px solid #eee;">
+            <p style="margin:0;color:#999;font-size:12px;">© ${new Date().getFullYear()} CLUNY CAFE</p>
+          </div>
+        </div>
+      </body></html>
+    `,
+  });
+}
+
+// ─── Admin Daily Report Email ─────────────────────────────────────────────────
+export async function sendDailyReportEmail(data: {
+  orderCount: number;
+  totalRevenue: number;
+  bestSeller?: [string, number] | null;
+  lowStockCount: number;
+  lowStockItems?: string[];
+  date: string;
+}) {
+  const adminEmail = process.env.ADMIN_REPORT_EMAIL;
+  if (!adminEmail) return false;
+
+  const { orderCount, totalRevenue, bestSeller, lowStockCount, lowStockItems, date } = data;
+
+  return sendMail({
+    to: adminEmail,
+    subject: `📊 تقرير يومي — ${date} | CLUNY CAFE`,
+    html: `
+      <html dir="rtl" lang="ar">
+      <head><meta charset="UTF-8"></head>
+      <body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,sans-serif;">
+        <div style="max-width:600px;margin:30px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.1);">
+          <div style="background:linear-gradient(135deg,#2D9B6E,#1a7a54);padding:28px;text-align:center;">
+            <h1 style="color:#fff;margin:0;font-size:24px;">📊 التقرير اليومي</h1>
+            <p style="color:rgba(255,255,255,.8);margin:6px 0 0;font-size:14px;">${date}</p>
+          </div>
+          <div style="padding:28px;">
+            <div style="display:grid;gap:12px;">
+              <div style="background:#f0fdf4;border-radius:10px;padding:20px;display:flex;align-items:center;gap:16px;">
+                <div style="font-size:32px;">📦</div>
+                <div>
+                  <div style="color:#666;font-size:12px;">إجمالي الطلبات</div>
+                  <div style="color:#2D9B6E;font-size:28px;font-weight:bold;">${orderCount}</div>
+                </div>
+              </div>
+              <div style="background:#f0fdf4;border-radius:10px;padding:20px;display:flex;align-items:center;gap:16px;">
+                <div style="font-size:32px;">💰</div>
+                <div>
+                  <div style="color:#666;font-size:12px;">إجمالي الإيرادات</div>
+                  <div style="color:#2D9B6E;font-size:28px;font-weight:bold;">${totalRevenue.toFixed(2)} <span style="font-size:14px;">ر.س</span></div>
+                </div>
+              </div>
+              ${bestSeller ? `
+              <div style="background:#f0fdf4;border-radius:10px;padding:20px;display:flex;align-items:center;gap:16px;">
+                <div style="font-size:32px;">🏆</div>
+                <div>
+                  <div style="color:#666;font-size:12px;">الأكثر مبيعاً</div>
+                  <div style="color:#333;font-size:18px;font-weight:bold;">${bestSeller[0]}</div>
+                  <div style="color:#2D9B6E;font-size:13px;">${bestSeller[1]} طلب</div>
+                </div>
+              </div>` : ''}
+              ${lowStockCount > 0 ? `
+              <div style="background:#fff8f0;border:1px solid #f59e0b;border-radius:10px;padding:20px;">
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+                  <div style="font-size:28px;">⚠️</div>
+                  <div>
+                    <div style="color:#92400e;font-weight:bold;">مخزون منخفض</div>
+                    <div style="color:#666;font-size:13px;">${lowStockCount} صنف يحتاج تجديد</div>
+                  </div>
+                </div>
+                ${lowStockItems?.length ? `<div style="color:#666;font-size:13px;border-top:1px solid #fde68a;padding-top:10px;">${lowStockItems.join(' ، ')}</div>` : ''}
+              </div>` : `
+              <div style="background:#f0fdf4;border-radius:10px;padding:16px;text-align:center;color:#2D9B6E;font-size:14px;">
+                ✅ المخزون في المستوى الجيد
+              </div>`}
+            </div>
+            <div style="text-align:center;margin-top:24px;">
+              <a href="${process.env.APP_URL || 'https://cluny.cafe'}/manager/dashboard"
+                style="background:#2D9B6E;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">
+                عرض التقارير التفصيلية
+              </a>
+            </div>
+          </div>
+          <div style="background:#f8f8f8;padding:16px;text-align:center;border-top:1px solid #eee;">
+            <p style="margin:0;color:#999;font-size:12px;">© ${new Date().getFullYear()} CLUNY CAFE — تقرير تلقائي يومي</p>
+          </div>
+        </div>
+      </body></html>
+    `,
+  });
+}
+
+// ─── Admin Weekly Report Email ────────────────────────────────────────────────
+export async function sendWeeklyReportEmail(data: {
+  orderCount: number;
+  totalRevenue: number;
+  avgDaily: number;
+  bestSeller?: [string, number] | null;
+  lowStockCount: number;
+  weekLabel: string;
+}) {
+  const adminEmail = process.env.ADMIN_REPORT_EMAIL;
+  if (!adminEmail) return false;
+
+  const { orderCount, totalRevenue, avgDaily, bestSeller, lowStockCount, weekLabel } = data;
+
+  return sendMail({
+    to: adminEmail,
+    subject: `📈 التقرير الأسبوعي — ${weekLabel} | CLUNY CAFE`,
+    html: `
+      <html dir="rtl" lang="ar">
+      <head><meta charset="UTF-8"></head>
+      <body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,sans-serif;">
+        <div style="max-width:600px;margin:30px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.1);">
+          <div style="background:linear-gradient(135deg,#1a5c8e,#2196F3);padding:28px;text-align:center;">
+            <h1 style="color:#fff;margin:0;font-size:24px;">📈 التقرير الأسبوعي</h1>
+            <p style="color:rgba(255,255,255,.8);margin:6px 0 0;font-size:14px;">${weekLabel}</p>
+          </div>
+          <div style="padding:28px;">
+            <div style="display:grid;gap:12px;">
+              <div style="background:#e8f4fd;border-radius:10px;padding:20px;display:flex;align-items:center;gap:16px;">
+                <div style="font-size:32px;">📦</div>
+                <div>
+                  <div style="color:#666;font-size:12px;">إجمالي الطلبات (7 أيام)</div>
+                  <div style="color:#2196F3;font-size:28px;font-weight:bold;">${orderCount}</div>
+                </div>
+              </div>
+              <div style="background:#e8f4fd;border-radius:10px;padding:20px;display:flex;align-items:center;gap:16px;">
+                <div style="font-size:32px;">💰</div>
+                <div>
+                  <div style="color:#666;font-size:12px;">إجمالي الإيرادات (7 أيام)</div>
+                  <div style="color:#2196F3;font-size:28px;font-weight:bold;">${totalRevenue.toFixed(2)} <span style="font-size:14px;">ر.س</span></div>
+                </div>
+              </div>
+              <div style="background:#e8f4fd;border-radius:10px;padding:20px;display:flex;align-items:center;gap:16px;">
+                <div style="font-size:32px;">📅</div>
+                <div>
+                  <div style="color:#666;font-size:12px;">المتوسط اليومي</div>
+                  <div style="color:#2196F3;font-size:24px;font-weight:bold;">${avgDaily.toFixed(2)} <span style="font-size:14px;">ر.س</span></div>
+                </div>
+              </div>
+              ${bestSeller ? `
+              <div style="background:#e8f4fd;border-radius:10px;padding:20px;display:flex;align-items:center;gap:16px;">
+                <div style="font-size:32px;">🏆</div>
+                <div>
+                  <div style="color:#666;font-size:12px;">الأكثر مبيعاً هذا الأسبوع</div>
+                  <div style="color:#333;font-size:18px;font-weight:bold;">${bestSeller[0]}</div>
+                  <div style="color:#2196F3;font-size:13px;">${bestSeller[1]} طلب</div>
+                </div>
+              </div>` : ''}
+              ${lowStockCount > 0 ? `
+              <div style="background:#fff8f0;border:1px solid #f59e0b;border-radius:10px;padding:16px;text-align:center;color:#92400e;">
+                ⚠️ يوجد ${lowStockCount} صنف في المخزون يحتاج إعادة طلب
+              </div>` : ''}
+            </div>
+            <div style="text-align:center;margin-top:24px;">
+              <a href="${process.env.APP_URL || 'https://cluny.cafe'}/manager/dashboard"
+                style="background:#2196F3;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">
+                عرض التقارير التفصيلية
+              </a>
+            </div>
+          </div>
+          <div style="background:#f8f8f8;padding:16px;text-align:center;border-top:1px solid #eee;">
+            <p style="margin:0;color:#999;font-size:12px;">© ${new Date().getFullYear()} CLUNY CAFE — تقرير تلقائي أسبوعي (كل جمعة)</p>
+          </div>
+        </div>
+      </body></html>
+    `,
+  });
+}
+
 // Abandoned cart checker
 setInterval(async () => {
   try {
