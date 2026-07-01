@@ -1,9 +1,9 @@
 #!/bin/sh
 set -e
 
-# If npm ci failed and node_modules is missing/empty, install packages manually
+# If npm ci failed and node_modules is missing — install packages as fallback
 if [ ! -f "node_modules/.bin/vite" ]; then
-  echo ">>> vite not found after npm ci — running npm install as fallback..."
+  echo ">>> vite not found — running npm install as fallback..."
   npm install --ignore-scripts
 fi
 
