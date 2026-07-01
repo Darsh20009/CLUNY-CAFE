@@ -41,11 +41,62 @@ export default function PaymentReturnPage() {
     const geideaCurrency      = params.get("geideaCurrency")      || params.get("currency");
     const geideaSignature     = params.get("geideaSignature")     || params.get("signature");
 
-    // ── Geidea path (unchanged) ──────────────────────────────────────────────
+    // ── Geidea path ──────────────────────────────────────────────────────────
+    // Case A: Geidea redirected back with its own status params
     const hasGeideaParams = !!(geideaResponseCode || geideaOrderId || geideaStatus);
-    if (hasGeideaParams) {
+    // Case B: We initiated Geidea redirect with a payment token (provider=geidea)
+    const isGeideaProvider = provider === "geidea";
+
+    if (hasGeideaParams || isGeideaProvider) {
       (async () => {
         try {
+          // ── If we have a session token, use atomic confirm (same as Paymob) ──
+          if (paymentToken) {
+            const isPaid = geideaResponseCode === "000" || geideaStatus === "Success" || geideaStatus === "succeeded" || (!geideaResponseCode && !geideaStatus);
+            if (!isPaid && hasGeideaParams) {
+              // Geidea returned with a non-success code
+              setStatus("failed");
+              setMessage(tc("لم تتم عملية الدفع. يرجى المحاولة مرة أخرى.", "Payment was not completed. Please try again."));
+              return;
+            }
+            const confirmRes = await fetch("/api/payments/confirm-payment-order", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                token: paymentToken,
+                paymobTxId: geideaOrderId,
+                paymobSuccess: "true",
+                session: geideaOrderId || session,
+              }),
+              credentials: "include",
+            });
+            const confirmData = await confirmRes.json();
+            if (confirmRes.ok && confirmData.success) {
+              const orderNum = confirmData.orderNumber ?? null;
+              if (orderNum) localStorage.setItem("br-active-order", orderNum);
+              if (confirmData.customer) {
+                setCustomer(confirmData.customer);
+                try { localStorage.setItem("customer", JSON.stringify(confirmData.customer)); } catch {}
+              }
+              sessionStorage.removeItem("pendingOrderData");
+              sessionStorage.removeItem("paymentProvider");
+              sessionStorage.removeItem("paymentSessionToken");
+              setDisplayOrderNumber(orderNum);
+              setStatus("success");
+              setMessage(tc("تمت عملية الدفع بنجاح! شكراً لك.", "Payment successful! Thank you."));
+              if (!isInIframe()) setTimeout(() => navigate("/my-orders"), 3000);
+              return;
+            }
+            if (confirmData.alreadyUsed) {
+              setStatus("success");
+              setMessage(tc("تمت عملية الدفع بنجاح! طلبك تم تأكيده.", "Payment successful! Your order is confirmed."));
+              if (!isInIframe()) setTimeout(() => navigate("/my-orders"), 3000);
+              return;
+            }
+            // Fall through to legacy path
+          }
+
+          // ── Legacy: verify + sessionStorage fallback ──────────────────────
           const body: any = {
             provider,
             sessionId: geideaOrderId || geideaMerchantRefId || session,
@@ -79,12 +130,10 @@ export default function PaymentReturnPage() {
             }
             setStatus("success");
             setMessage(tc("تمت عملية الدفع بنجاح! شكراً لك.", "Payment successful! Thank you."));
-            try { window.parent.postMessage({ type: "PAYMOB_SUCCESS", status: "success", session }, "*"); } catch {}
             if (!isInIframe()) setTimeout(() => navigate("/my-orders"), 2500);
           } else {
             setStatus("failed");
             setMessage(tc("لم تتم عملية الدفع. يرجى المحاولة مرة أخرى.", "Payment was not completed. Please try again."));
-            try { window.parent.postMessage({ type: "PAYMOB_ERROR", status: "failed" }, "*"); } catch {}
           }
         } catch {
           setStatus("failed");

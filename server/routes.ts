@@ -4461,7 +4461,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // atomic operation so session propagation issues are completely eliminated.
   app.post("/api/payments/confirm-payment-order", async (req, res) => {
     try {
-      const { token, paymobTxId, paymobSuccess, session: internalSession } = req.body;
+      const { token, paymobTxId, paymobSuccess, session: internalSession, provider: payProvider } = req.body;
       if (!token) return res.status(400).json({ error: "token is required" });
 
       const record = await PaymentSessionTokenModel.findOne({ token }) as any;
@@ -4508,7 +4508,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(402).json({ error: "لم تتم عملية الدفع", paymentFailed: true });
       }
 
-      if (!paymobSuccess || paymobSuccess !== "true") {
+      // Geidea payments: when provider=geidea and paymobSuccess=true, skip PayMob API check
+      const isGeideaPayment = payProvider === "geidea" ||
+        record.orderData?.paymentMethod === "geidea" ||
+        record.orderData?.paymentMethod === "apple_pay";
+
+      if (isGeideaPayment && paymobSuccess === "true") {
+        // Trust the Geidea redirect — fall through to order creation
+      } else if (!paymobSuccess || paymobSuccess !== "true") {
         // Query PayMob SA API to check the actual payment status
         try {
           const tenantId = record.orderData?.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId();

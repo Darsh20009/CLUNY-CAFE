@@ -12,7 +12,6 @@ import { useCartStore } from "@/lib/cart-store";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import PaymentMethods from "@/components/payment-methods";
-import GeideaCheckoutWidget from "@/components/geidea-checkout";
 import SimulatedCardPayment from "@/components/simulated-card-payment";
 import PaymobCheckoutWidget from "@/components/paymob-checkout";
 import { isCapacitorNative } from "@/lib/platform";
@@ -214,7 +213,7 @@ export default function CheckoutPage() {
   const [cashDistanceError, setCashDistanceError] = useState<string | null>(null);
   const [cashDistanceChecking, setCashDistanceChecking] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
-  const [showInlineGeidea, setShowInlineGeidea] = useState(false);
+
   const [showSimulatedCard, setShowSimulatedCard] = useState(false);
   const [showPaymobCheckout, setShowPaymobCheckout] = useState(false);
   const [paymobCheckoutUrl, setPaymobCheckoutUrl] = useState("");
@@ -928,6 +927,59 @@ export default function CheckoutPage() {
     return { orderData, activeCustomerId };
   };
 
+  const initiateGeideaDirect = async () => {
+    setIsVerifyingPayment(true);
+    try {
+      const { orderData, activeCustomerId } = await buildOrderData();
+
+      const tokenRes = await fetch("/api/payments/create-session-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          customerPhone: customerPhone || orderData.customerPhone,
+          customerId: customer?.id || activeCustomerId || null,
+          customerName: customerName || orderData.customerName,
+          orderData,
+        }),
+      });
+      const tokenData = await tokenRes.json();
+      if (!tokenData.token) throw new Error("فشل إنشاء رمز الدفع الآمن");
+
+      const paymentToken = tokenData.token;
+      const returnUrl = `${window.location.origin}/payment-return?pt=${paymentToken}&provider=geidea`;
+
+      sessionStorage.setItem('pendingOrderData', JSON.stringify(orderData));
+      sessionStorage.setItem('paymentProvider', 'geidea');
+      sessionStorage.setItem('paymentSessionToken', paymentToken);
+
+      const tempRef = `CLN-${Date.now()}`;
+      const payRes = await apiRequest("POST", "/api/payments/init", {
+        orderId: tempRef,
+        amount: orderData.totalAmount,
+        currency: "SAR",
+        paymentMethod: selectedPaymentMethod,
+        customerName,
+        customerPhone,
+        customerEmail,
+        returnUrl,
+      });
+      const payData = await payRes.json();
+
+      if (payData.success && payData.redirectUrl) {
+        window.location.href = payData.redirectUrl;
+      } else {
+        throw new Error(payData.error || payData.details || 'فشل تهيئة بوابة جيديا');
+      }
+    } catch (err: any) {
+      sessionStorage.removeItem('pendingOrderData');
+      sessionStorage.removeItem('paymentProvider');
+      sessionStorage.removeItem('paymentSessionToken');
+      setIsVerifyingPayment(false);
+      toast({ variant: "destructive", title: "خطأ في الدفع", description: err.message || "حدث خطأ أثناء تهيئة الدفع" });
+    }
+  };
+
   const initiatePaymobDirect = async () => {
     setIsVerifyingPayment(true);
     try {
@@ -1095,10 +1147,8 @@ export default function CheckoutPage() {
     }
 
     if (isOnlinePaymentMethod(selectedPaymentMethod)) {
-      pendingGeideaOrderData.current = orderData;
-      geideaOrderNum.current = `CLN-${Date.now()}`;
       setShowConfirmation(false);
-      setShowInlineGeidea(true);
+      await initiateGeideaDirect();
       return;
     }
 
@@ -2050,46 +2100,7 @@ export default function CheckoutPage() {
                   </div>
                 )}
 
-                {/* Inline Geidea payment widget — same page, no separate screen */}
-                {!showSimulatedCard && showInlineGeidea ? (
-                  <div className="space-y-3" data-testid="section-geidea-inline">
-                    <div className="bg-primary rounded-xl px-4 py-3 text-white text-center">
-                      <p className="text-xs opacity-75">{tc("إجمالي الطلب", "Order Total")}</p>
-                      <p className="text-2xl font-black" data-testid="text-geidea-amount">
-                        {pendingGeideaOrderData.current?.totalAmount?.toFixed(2)} <SarIcon size={16} />
-                      </p>
-                      <p className="text-[10px] opacity-60 mt-0.5">🔒 دفع آمن مشفّر بواسطة Geidea</p>
-                    </div>
-                    <GeideaCheckoutWidget
-                      orderNumber={geideaOrderNum.current}
-                      amount={pendingGeideaOrderData.current?.totalAmount || 0}
-                      customerPhone={pendingGeideaOrderData.current?.customerPhone}
-                      customerEmail={pendingGeideaOrderData.current?.customerEmail}
-                      onSuccess={() => {
-                        const od = pendingGeideaOrderData.current;
-                        const confirmedOrder = { ...od, status: 'payment_confirmed', paymentReference: geideaOrderNum.current };
-                        createOrderMutation.mutate(confirmedOrder);
-                        setShowInlineGeidea(false);
-                      }}
-                      onError={(msg) => {
-                        toast({ variant: "destructive", title: t("checkout.payment_error"), description: msg });
-                      }}
-                      onCancel={() => {
-                        setShowInlineGeidea(false);
-                        toast({ title: "تم إلغاء الدفع", description: "يمكنك المحاولة مرة أخرى" });
-                      }}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="w-full text-muted-foreground text-xs"
-                      onClick={() => setShowInlineGeidea(false)}
-                      data-testid="button-cancel-geidea"
-                    >
-                      ← العودة للطلب
-                    </Button>
-                  </div>
-                ) : !showSimulatedCard && !showPaymobCheckout ? (
+                {!showSimulatedCard && !showPaymobCheckout ? (
                   (() => {
                     const isApplePaySelected = (selectedPaymentMethod as string) === 'paymob-apple-pay' || (selectedPaymentMethod as string) === 'apple_pay' || (selectedPaymentMethod as string) === 'neoleap-apple-pay';
                     if (isApplePaySelected) {
