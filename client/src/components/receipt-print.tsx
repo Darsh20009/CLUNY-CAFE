@@ -62,8 +62,8 @@ const COMPANY_NAME = brand.shortNameAr;
 const COMPANY_NAME_EN = brand.nameEn;
 const COMPANY_CR = "1163184110";
 const COMPANY_VAT_NAME = "شركة كلوني للخدمات الغذائية"; // Added for ZATCA compliance
-const DEFAULT_BRANCH = "الفرع الرئيسي - ينبع";
-const DEFAULT_ADDRESS = "ينبع، المملكة العربية السعودية";
+const DEFAULT_BRANCH = "";
+const DEFAULT_ADDRESS = "";
 
 function generateZATCAQRCode(data: {
   sellerName: string;

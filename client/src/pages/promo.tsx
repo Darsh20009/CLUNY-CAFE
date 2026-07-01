@@ -250,7 +250,7 @@ export default function PromoPage() {
 
             <div className="bg-[#3a1f10] text-white text-[11px] text-center py-2 flex items-center justify-center gap-1">
               <BadgePercent className="h-3.5 w-3.5" />
-              {tc("عرض حصري - كلية التقنية للبنات بينبع", "Exclusive offer - Girls College of Technology Yanbu")}
+              {tc("عرض حصري", "Exclusive Offer")}
             </div>
           </div>
         </motion.div>

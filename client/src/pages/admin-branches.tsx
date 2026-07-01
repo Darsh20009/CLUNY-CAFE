@@ -286,7 +286,7 @@ export default function AdminBranches() {
     }
     createMutation.mutate({
       ...prepareSubmitData(),
-      city: 'Yanbu',
+      city: 'Riyadh',
       cafeId: 'demo-tenant',
     });
   };

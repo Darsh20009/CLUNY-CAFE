@@ -3624,7 +3624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 email: customerEmail || 'guest@cluny.cafe',
                 phone_number: customerPhone || '0500000000',
                 street: 'N/A', building: 'N/A', floor: 'N/A',
-                apartment: 'N/A', city: 'Yanbu', country: 'SAU',
+                apartment: 'N/A', city: 'Riyadh', country: 'SAU',
                 state: 'N/A', postal_code: 'N/A',
               },
               customer: {

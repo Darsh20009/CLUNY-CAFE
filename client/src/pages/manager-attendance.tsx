@@ -759,7 +759,7 @@ export default function ManagerAttendance() {
                 ? [displayBranch!.location!.lat, displayBranch!.location!.lng]
                 : hasEmployeesWithLoc
                 ? [liveEmployees[0].lastLocation.lat, liveEmployees[0].lastLocation.lng]
-                : [24.0895, 38.0618]; // ينبع
+                : [24.7136, 46.6753]; // الرياض
 
               return (
                 <Card className="bg-[#1a1410] border-primary/20 overflow-hidden">
