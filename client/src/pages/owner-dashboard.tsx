@@ -106,6 +106,9 @@ export default function OwnerDashboard() {
     const v = parseInt(localStorage.getItem('qirox_day_start_hour') || '0', 10);
     return isNaN(v) ? 0 : Math.max(0, Math.min(23, v));
   });
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
+  const [activeShortcut, setActiveShortcut] = useState<string>('today');
 
   useEffect(() => {
     const storedEmployee = localStorage.getItem("currentEmployee");
@@ -127,7 +130,58 @@ export default function OwnerDashboard() {
     if (employee) {
       fetchStats(selectedBranchFilter);
     }
-  }, [employee, selectedDate, dayStartHour, selectedBranchFilter]);
+  }, [employee, selectedDate, dateFrom, dateTo, dayStartHour, selectedBranchFilter]);
+
+  const SHORTCUTS = [
+    { key: 'today',       label: 'اليوم' },
+    { key: 'yesterday',   label: 'أمس' },
+    { key: 'day_before',  label: 'قبل أمس' },
+    { key: 'this_week',   label: 'الأسبوع' },
+    { key: 'last_week',   label: 'الأسبوع الماضي' },
+    { key: 'this_month',  label: 'الشهر' },
+    { key: 'last_2m',     label: 'آخر شهرين' },
+    { key: 'this_quarter',label: 'الربع' },
+    { key: 'this_year',   label: 'السنة' },
+    { key: 'full_year',   label: 'السنة كاملة' },
+  ];
+
+  const applyShortcut = (key: string) => {
+    setActiveShortcut(key);
+    const now = new Date();
+    const saudiNow = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+    const today = saudiNow.toISOString().slice(0, 10);
+    const daysAgo = (n: number) => new Date(saudiNow.getTime() - n * 86400000).toISOString().slice(0, 10);
+
+    if (key === 'today')      { setSelectedDate(today); setDateFrom(''); setDateTo(''); return; }
+    if (key === 'yesterday')  { const y = daysAgo(1); setSelectedDate(y); setDateFrom(''); setDateTo(''); return; }
+    if (key === 'day_before') { const d = daysAgo(2); setSelectedDate(d); setDateFrom(''); setDateTo(''); return; }
+
+    let from = '';
+    let to = today;
+    if (key === 'this_week') {
+      const dow = saudiNow.getUTCDay();
+      from = daysAgo(dow === 0 ? 6 : dow - 1);
+    } else if (key === 'last_week') {
+      const dow = saudiNow.getUTCDay();
+      const toSun = dow === 0 ? 7 : dow;
+      from = daysAgo(toSun + 6);
+      to   = daysAgo(toSun);
+    } else if (key === 'this_month') {
+      from = `${today.slice(0, 7)}-01`;
+    } else if (key === 'last_2m') {
+      from = new Date(Date.UTC(saudiNow.getUTCFullYear(), saudiNow.getUTCMonth() - 2, 1)).toISOString().slice(0, 10);
+    } else if (key === 'this_quarter') {
+      const qStart = Math.floor(saudiNow.getUTCMonth() / 3) * 3;
+      from = new Date(Date.UTC(saudiNow.getUTCFullYear(), qStart, 1)).toISOString().slice(0, 10);
+    } else if (key === 'this_year') {
+      from = `${today.slice(0, 4)}-01-01`;
+    } else if (key === 'full_year') {
+      from = `${today.slice(0, 4)}-01-01`;
+      to   = `${today.slice(0, 4)}-12-31`;
+    }
+    setDateFrom(from);
+    setDateTo(to);
+  };
 
   useEffect(() => {
     localStorage.setItem('qirox_day_start_hour', String(dayStartHour));
@@ -143,7 +197,10 @@ export default function OwnerDashboard() {
     setIsLoading(true);
     try {
       const bid = branchId !== undefined ? branchId : selectedBranchFilter;
-      const url = `/api/owner/database-stats?date=${encodeURIComponent(selectedDate)}&dayStartHour=${dayStartHour}${bid ? `&branchId=${encodeURIComponent(bid)}` : ''}`;
+      const branchParam = bid ? `&branchId=${encodeURIComponent(bid)}` : '';
+      const url = (dateFrom && dateTo)
+        ? `/api/owner/database-stats?dateFrom=${encodeURIComponent(dateFrom)}&dateTo=${encodeURIComponent(dateTo)}&dayStartHour=${dayStartHour}${branchParam}`
+        : `/api/owner/database-stats?date=${encodeURIComponent(selectedDate)}&dayStartHour=${dayStartHour}${branchParam}`;
       const response = await fetch(url, { credentials: 'include' });
       if (response.ok) {
         const data = await response.json();
@@ -379,31 +436,56 @@ export default function OwnerDashboard() {
       <main className="flex-1 overflow-y-auto pb-20 lg:pb-6">
       <div className="p-4 lg:p-6 space-y-6 max-w-[1400px] mx-auto">
 
-        {/* Day-period + Branch selector */}
+        {/* Period shortcuts + Branch selector */}
         <Card className="bg-card border border-border mb-6">
-          <CardContent className="p-4">
+          <CardContent className="p-4 space-y-3">
+            {/* Shortcut buttons row */}
+            <div className="flex flex-wrap gap-1.5" data-testid="period-shortcuts">
+              {SHORTCUTS.map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => applyShortcut(s.key)}
+                  data-testid={`shortcut-${s.key}`}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                    activeShortcut === s.key
+                      ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                      : 'bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:text-foreground'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Bottom row: custom date + hour + branch */}
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5" /> {tc("اختر اليوم", "Select day")}
+                  <Calendar className="w-3.5 h-3.5" /> {tc("تاريخ مخصص", "Custom date")}
                 </label>
                 <Input
                   type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value || formatLocalDateISO(new Date()))}
+                  value={dateFrom && dateTo ? dateFrom : selectedDate}
+                  onChange={(e) => {
+                    const v = e.target.value || formatLocalDateISO(new Date());
+                    setSelectedDate(v);
+                    setDateFrom('');
+                    setDateTo('');
+                    setActiveShortcut('custom');
+                  }}
                   max={formatLocalDateISO(new Date())}
-                  className="h-9 w-44"
+                  className="h-9 w-40"
                   data-testid="input-stats-date"
                 />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5" /> {tc("اليوم يبدأ من الساعة", "Day starts at hour")}
+                  <Clock className="w-3.5 h-3.5" /> {tc("اليوم يبدأ من", "Day starts at")}
                 </label>
                 <select
                   value={dayStartHour}
                   onChange={(e) => setDayStartHour(parseInt(e.target.value, 10) || 0)}
-                  className="h-9 w-32 rounded-md border border-input bg-background px-2 text-sm"
+                  className="h-9 w-28 rounded-md border border-input bg-background px-2 text-sm"
                   data-testid="select-day-start-hour"
                 >
                   {Array.from({ length: 24 }, (_, h) => (
@@ -427,27 +509,18 @@ export default function OwnerDashboard() {
                   ))}
                 </select>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedDate(formatLocalDateISO(new Date()))}
-                disabled={isToday}
-                data-testid="button-stats-today"
-              >
-                {tc("اليوم", "Today")}
-              </Button>
               {selectedBranchFilter && (
                 <Button variant="ghost" size="sm" onClick={() => setSelectedBranchFilter('')} className="text-xs text-muted-foreground">
-                  × {tc("إلغاء فلتر الفرع", "Clear branch filter")}
+                  × {tc("كل الفروع", "All branches")}
                 </Button>
               )}
               {stats?.summary.dayStart && (
-                <div className="text-xs text-muted-foreground mr-auto hidden sm:block">
-                  {tc("الفترة:", "Window:")}{" "}
+                <div className="text-xs text-muted-foreground mr-auto hidden sm:flex items-center gap-1">
+                  <span className="opacity-60">{tc("الفترة:", "Window:")}</span>
                   <span className="font-mono" dir="ltr">
-                    {new Date(stats.summary.dayStart).toLocaleString('en-GB', { timeZone: 'Asia/Riyadh', hour12: false })}
+                    {new Date(stats.summary.dayStart).toLocaleDateString('en-GB', { timeZone: 'Asia/Riyadh' })}
                     {" → "}
-                    {new Date(stats.summary.dayEnd!).toLocaleString('en-GB', { timeZone: 'Asia/Riyadh', hour12: false })}
+                    {new Date(stats.summary.dayEnd!).toLocaleDateString('en-GB', { timeZone: 'Asia/Riyadh' })}
                   </span>
                 </div>
               )}

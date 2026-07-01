@@ -15434,11 +15434,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         AttendanceModel, IngredientModel, CategoryModel, DeliveryZoneModel
       } = await import("@shared/schema");
 
-      // Optional query params: date=YYYY-MM-DD (Saudi local date), dayStartHour=0..23
+      // Optional query params:
+      //   date=YYYY-MM-DD + dayStartHour → single business-day window
+      //   dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD → arbitrary multi-day range (midnight-to-midnight Saudi time)
       const dayStartHour = parseInt(String(req.query.dayStartHour ?? '0'), 10) || 0;
-      const dateParam = req.query.date ? String(req.query.date) : '';
-      const targetDate = dateParam ? new Date(dateParam + 'T00:00:00Z') : new Date();
-      const { start: dayStart, end: dayEnd } = getBusinessDayBoundaries(targetDate, dayStartHour);
+      const dateFromParam = req.query.dateFrom ? String(req.query.dateFrom) : '';
+      const dateToParam   = req.query.dateTo   ? String(req.query.dateTo)   : '';
+      let dayStart: Date, dayEnd: Date;
+      if (dateFromParam && dateToParam) {
+        dayStart = new Date(dateFromParam + 'T00:00:00.000+03:00');
+        dayEnd   = new Date(dateToParam   + 'T23:59:59.999+03:00');
+      } else {
+        const dateParam = req.query.date ? String(req.query.date) : '';
+        const targetDate = dateParam ? new Date(dateParam + 'T00:00:00Z') : new Date();
+        const bounds = getBusinessDayBoundaries(targetDate, dayStartHour);
+        dayStart = bounds.start;
+        dayEnd   = bounds.end;
+      }
 
       // Optional branchId filter for per-branch stats
       const branchIdFilter = req.query.branchId ? String(req.query.branchId) : '';
