@@ -16,7 +16,6 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { PWAUpdateNotifier } from "@/components/PWAUpdateNotifier";
 import { GlobalPrompts } from "@/components/global-prompts";
 import { PWAInstallBanner } from "@/components/pwa-install";
-import { AppDownloadBanner } from "@/components/app-download-banner";
 import { OfflineIndicator } from "@/components/offline-indicator";
 import { NativeBackButton } from "@/components/native-back-button";
 import { CustomerNotificationListener } from "@/components/customer-notification-listener";
@@ -636,7 +635,6 @@ function App() {
               <ErrorBoundary silent><PWAUpdateNotifier /></ErrorBoundary>
               <ErrorBoundary silent><PWAInstallBanner /></ErrorBoundary>
               <ErrorBoundary silent><OfflineIndicator /></ErrorBoundary>
-              {!isEmployee && <ErrorBoundary silent><AppDownloadBanner /></ErrorBoundary>}
             </CartProvider>
             </AuthModalProvider>
             </BranchProvider>
