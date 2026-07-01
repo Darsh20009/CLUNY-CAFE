@@ -15,6 +15,7 @@ export function SarIcon({ className = "", size = 16 }: SarIconProps) {
         width: "auto",
         verticalAlign: "middle",
         marginBottom: 1,
+        mixBlendMode: "multiply",
       }}
     />
   );
