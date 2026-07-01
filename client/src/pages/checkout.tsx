@@ -14,7 +14,6 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import PaymentMethods from "@/components/payment-methods";
 import SimulatedCardPayment from "@/components/simulated-card-payment";
 import PaymobCheckoutWidget from "@/components/paymob-checkout";
-import ApplePayNative from "@/components/apple-pay-native";
 import { isCapacitorNative } from "@/lib/platform";
 import { customerStorage } from "@/lib/customer-storage";
 import { useCustomer } from "@/contexts/CustomerContext";
@@ -217,7 +216,6 @@ export default function CheckoutPage() {
 
   const [showSimulatedCard, setShowSimulatedCard] = useState(false);
   const [showPaymobCheckout, setShowPaymobCheckout] = useState(false);
-  const [showApplePayNative, setShowApplePayNative] = useState(false);
   const [paymobCheckoutUrl, setPaymobCheckoutUrl] = useState("");
   const [paymobSessionId, setPaymobSessionId] = useState("");
   const isPaymobFlow = useRef(false);
@@ -822,10 +820,6 @@ export default function CheckoutPage() {
       initiatePaymobDirect();
       return;
     }
-    if (selectedPaymentMethod === 'apple_pay') {
-      setShowApplePayNative(true);
-      return;
-    }
     if (isCardPaymentMethod(selectedPaymentMethod) || isOnlinePaymentMethod(selectedPaymentMethod)) {
       confirmAndCreateOrder();
       return;
@@ -836,16 +830,16 @@ export default function CheckoutPage() {
   const isCardPaymentMethod = (method: string | null) => {
     if (!method) return false;
     // paymob-card and geidea are handled separately with real payment flows
-    const cardMethods = ['bank_card', 'credit_card', 'card', 'stc-pay', 'neoleap-apple-pay'];
+    const cardMethods = ['bank_card', 'credit_card', 'card', 'stc-pay'];
     return cardMethods.includes(method);
   };
 
   const isPaymobMethod = (method: string | null) => {
     if (!method) return false;
-    return ['paymob-card', 'paymob-wallet', 'paymob-apple-pay', 'neoleap'].includes(method);
+    return ['paymob-card', 'paymob-wallet', 'neoleap'].includes(method);
   };
 
-  // Geidea HPP payment methods (does NOT include apple_pay — that uses native ApplePaySession)
+  // Geidea HPP payment methods
   const isOnlinePaymentMethod = (method: string | null) => {
     if (!method) return false;
     return ['geidea'].includes(method);
@@ -2106,67 +2100,8 @@ export default function CheckoutPage() {
                   </div>
                 )}
 
-                {/* Apple Pay Native — shown inline when apple_pay is selected */}
-                {showApplePayNative && (
-                  <div className="rounded-2xl border border-black/10 bg-white dark:bg-zinc-900 p-4">
-                    <ApplePayNative
-                      amount={getFinalAmount()}
-                      orderId={`CLN-${Date.now()}`}
-                      customerPhone={customerPhone}
-                      customerEmail={customerEmail}
-                      onSuccess={async (transactionId) => {
-                        setShowApplePayNative(false);
-                        // Build and create the order after Apple Pay authorisation
-                        try {
-                          const { orderData } = await buildOrderData();
-                          orderData.paymentMethod = 'apple_pay';
-                          orderData.onlinePaymentTransactionId = transactionId;
-                          createOrderMutation.mutate(orderData);
-                        } catch (err: any) {
-                          toast({ variant: "destructive", title: "خطأ", description: err.message });
-                        }
-                      }}
-                      onError={(msg) => {
-                        setShowApplePayNative(false);
-                        toast({ variant: "destructive", title: "فشل الدفع عبر Apple Pay", description: msg });
-                      }}
-                      onCancel={() => setShowApplePayNative(false)}
-                    />
-                  </div>
-                )}
-
-                {!showSimulatedCard && !showPaymobCheckout && !showApplePayNative ? (
+                {!showSimulatedCard && !showPaymobCheckout ? (
                   (() => {
-                    const isNativeApplePay = (selectedPaymentMethod as string) === 'apple_pay';
-                    const isOtherApplePay = (selectedPaymentMethod as string) === 'paymob-apple-pay' || (selectedPaymentMethod as string) === 'neoleap-apple-pay';
-                    if (isNativeApplePay || isOtherApplePay) {
-                      return (
-                        <button
-                          onClick={handleProceedPayment}
-                          data-testid="button-proceed-payment"
-                          style={{
-                            width: "100%",
-                            height: "56px",
-                            borderRadius: "14px",
-                            background: "#000",
-                            border: "none",
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            gap: "8px",
-                            fontFamily: "-apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif",
-                          }}
-                        >
-                          <svg viewBox="0 0 170 170" style={{ height: "22px", width: "22px", fill: "#fff", flexShrink: 0 }}>
-                            <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.197-2.12-9.973-3.17-14.34-3.17-4.58 0-9.492 1.05-14.746 3.17-5.262 2.13-9.501 3.24-12.742 3.35-4.929 0.21-9.842-1.96-14.746-6.52-3.13-2.73-7.045-7.41-11.735-14.04-5.032-7.08-9.169-15.29-12.41-24.65-3.471-10.11-5.211-19.9-5.211-29.378 0-10.857 2.346-20.21 7.045-28.143 3.687-6.52 8.594-11.672 14.73-15.466 6.136-3.294 12.759-5.277 19.88-5.375 3.906 0 9.022 1.211 15.366 3.597 6.326 2.394 10.387 3.605 12.172 3.605 1.331 0 5.838-1.419 13.49-4.247 7.23-2.618 13.326-3.701 18.31-3.273 13.54 1.093 23.71 6.43 30.52 16.05-12.1 7.33-18.09 17.6-17.96 30.78 0.12 10.26 3.83 18.79 11.12 25.55 3.31 3.14 7.01 5.57 11.12 7.29-0.89 2.58-1.83 5.05-2.83 7.42zM119.11 7.24c0 8.042-2.94 15.551-8.81 22.507-7.079 8.273-15.644 13.05-24.92 12.294-0.119-0.965-0.18-1.98-0.18-3.047 0-7.72 3.361-15.994 9.336-22.752 2.984-3.43 6.772-6.288 11.185-8.577 4.401-2.255 8.566-3.502 12.488-3.711 0.12 1.033 0.17 2.065 0.17 3.088z"/>
-                          </svg>
-                          <span style={{ color: "#fff", fontSize: "20px", fontWeight: 600, letterSpacing: "-0.3px", lineHeight: 1 }}>
-                            Pay
-                          </span>
-                        </button>
-                      );
-                    }
                     return (
                       <Button
                         onClick={handleProceedPayment}

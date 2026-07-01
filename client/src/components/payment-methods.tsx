@@ -13,20 +13,6 @@ import { useTranslate } from "@/lib/useTranslate";
 // Payment methods temporarily disabled — coming soon
 const COMING_SOON_METHODS = ['neoleap', 'neoleap-apple-pay'];
 
-// Detect Apple Pay support — only available in Safari on Apple devices with a card in Wallet.
-// window.ApplePaySession exists ONLY in WebKit/Safari; Chrome/Firefox don't have it at all.
-const isAppleDevice = (): boolean => {
-  try {
-    return (
-      typeof window !== 'undefined' &&
-      'ApplePaySession' in window &&
-      typeof (window as any).ApplePaySession?.canMakePayments === 'function' &&
-      (window as any).ApplePaySession.canMakePayments()
-    );
-  } catch {
-    return false;
-  }
-};
 
 interface PaymentMethodsProps {
  paymentMethods: PaymentMethodInfo[];
@@ -172,7 +158,6 @@ export default function PaymentMethods({
      {paymentMethods.map((method) => {
     const isQahwaCard = (method.id as string) === 'qahwa-card';
     const isNeoLeap = (method.id as string) === 'neoleap';
-    const isApplePay = (method.id as string) === 'apple_pay' || (method.id as string) === 'neoleap-apple-pay';
     const isStcPay = (method.id as string) === 'stc-pay';
     const isLoyaltyCard = (method.id as string) === 'loyalty-card';
     const isSelected = selectedMethod === method.id;
@@ -193,9 +178,8 @@ export default function PaymentMethods({
     // Hide mobile wallet (paymob-wallet) — not used in SA flow
     if ((method.id as string) === 'paymob-wallet') return null;
 
-    const isPaymobApplePay = (method.id as string) === 'paymob-apple-pay';
-    // Hide ALL Apple Pay variants on non-Apple devices
-    if ((isApplePay || isPaymobApplePay) && !isAppleDevice()) return null;
+    // Hide Apple Pay and paymob-apple-pay entirely (no Apple developer account)
+    if (['apple_pay', 'paymob-apple-pay', 'neoleap-apple-pay'].includes(method.id as string)) return null;
 
     // Coming Soon: show disabled card with badge
     if (isComingSoon) {
@@ -205,10 +189,7 @@ export default function PaymentMethods({
             <CardContent className="p-5">
               <div className="flex items-center gap-4">
                 <div className="p-3 rounded-xl bg-muted text-muted-foreground">
-                  {isApplePay
-                    ? <Smartphone className="w-6 h-6" />
-                    : <CreditCard className="w-6 h-6" />
-                  }
+                  <CreditCard className="w-6 h-6" />
                 </div>
                 <div className="flex-1">
                   <div className="flex items-center justify-between">
@@ -219,65 +200,12 @@ export default function PaymentMethods({
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {isApplePay ? tc("سيتوفر Apple Pay قريباً", "Apple Pay coming soon") : tc("الدفع بالبطاقة سيكون متاحاً قريباً", "Card payment coming soon")}
+                    {tc("الدفع بالبطاقة سيكون متاحاً قريباً", "Card payment coming soon")}
                   </p>
                 </div>
               </div>
             </CardContent>
           </Card>
-        </div>
-      );
-    }
-
-    // PayMob Apple Pay — official Apple Pay button design, visible on all devices
-    if (isPaymobApplePay) {
-      return (
-        <div key={method.id}>
-          <div
-            onClick={() => onSelectMethod(method.id)}
-            data-testid={`payment-method-${method.id}`}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "8px",
-              width: "100%",
-              height: "54px",
-              borderRadius: "12px",
-              background: "#000",
-              cursor: "pointer",
-              boxShadow: isSelected
-                ? "0 0 0 3px #fff, 0 0 0 5px #000"
-                : "0 2px 8px rgba(0,0,0,0.18)",
-              transform: isSelected ? "scale(1.01)" : "scale(1)",
-              transition: "all 0.15s ease",
-              userSelect: "none",
-            }}
-          >
-            {/* Official Apple logo SVG */}
-            <svg
-              viewBox="0 0 170 170"
-              style={{ height: "22px", width: "22px", fill: "#fff", flexShrink: 0 }}
-            >
-              <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.197-2.12-9.973-3.17-14.34-3.17-4.58 0-9.492 1.05-14.746 3.17-5.262 2.13-9.501 3.24-12.742 3.35-4.929 0.21-9.842-1.96-14.746-6.52-3.13-2.73-7.045-7.41-11.735-14.04-5.032-7.08-9.169-15.29-12.41-24.65-3.471-10.11-5.211-19.9-5.211-29.378 0-10.857 2.346-20.else21 7.045-28.143 3.687-6.52 8.594-11.672 14.73-15.466 6.136-3.294 12.759-5.277 19.88-5.375 3.906 0 9.022 1.211 15.366 3.597 6.326 2.394 10.387 3.605 12.172 3.605 1.331 0 5.838-1.419 13.49-4.247 7.23-2.618 13.326-3.701 18.31-3.273 13.54 1.093 23.71 6.43 30.52 16.05-12.1 7.33-18.09 17.6-17.96 30.78 0.12 10.26 3.83 18.79 11.12 25.55 3.31 3.14 7.01 5.57 11.12 7.29-0.89 2.58-1.83 5.05-2.83 7.42zM119.11 7.24c0 8.042-2.94 15.551-8.81 22.507-7.079 8.273-15.644 13.05-24.92 12.294-0.119-0.965-0.18-1.98-0.18-3.047 0-7.72 3.361-15.994 9.336-22.752 2.984-3.43 6.7718-6.2877 11.185-8.5773 4.4012-2.2554 8.5656-3.5023 12.4884-3.7113 0.12 1.0327 0.17 2.0654 0.17 3.0877z"/>
-            </svg>
-            {/* Official "Pay" text with Apple styling */}
-            <span style={{
-              color: "#fff",
-              fontSize: "24px",
-              fontWeight: 600,
-              fontFamily: "-apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif",
-              letterSpacing: "-0.3px",
-              lineHeight: 1,
-            }}>
-              Pay
-            </span>
-          </div>
-          {isSelected && (
-            <p style={{ textAlign: "center", fontSize: "11px", color: "#888", marginTop: "6px" }}>
-              {tc("سيتم تحويلك إلى بوابة الدفع الآمنة", "You will be redirected to the secure payment gateway")}
-            </p>
-          )}
         </div>
       );
     }

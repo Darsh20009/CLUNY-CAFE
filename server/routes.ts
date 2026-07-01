@@ -3073,7 +3073,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const hasCredentials = !!(pg.neoleap?.clientId && pg.neoleap?.clientSecret);
         if (hasCredentials) {
           allMethods.push({ id: 'neoleap', nameAr: 'بطاقة بنكية', nameEn: 'Card Payment', details: 'مدى، فيزا، ماستر كارد عبر NeoLeap', icon: 'fas fa-credit-card', gateway: 'neoleap' });
-          allMethods.push({ id: 'neoleap-apple-pay', nameAr: 'Apple Pay', nameEn: 'Apple Pay', details: 'الدفع السريع عبر Apple Pay', icon: 'fas fa-mobile-alt', gateway: 'neoleap' });
         }
       } else if (pg?.provider === 'geidea') {
         // Only show Geidea if it has real credentials
@@ -3081,14 +3080,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const geideaApiPassword = pg.geidea?.apiPassword;
         if (geideaPublicKey && geideaApiPassword) {
           allMethods.push({ id: 'geidea', nameAr: 'بطاقة بنكية', nameEn: 'Card Payment', details: 'مدى، فيزا، ماستر كارد', icon: 'fas fa-credit-card', gateway: 'geidea' });
-          allMethods.push({ id: 'apple_pay', nameAr: 'Apple Pay', nameEn: 'Apple Pay', details: 'الدفع السريع عبر Apple Pay', icon: 'fas fa-mobile-alt', gateway: 'geidea' });
         }
       } else if (pg?.provider === 'paymob') {
         const hasSACredentials = !!(pg.paymob?.secretKey && pg.paymob?.publicKey);
         const hasLegacyCredentials = !!(pg.paymob?.apiKey && pg.paymob?.integrationId);
         if (hasSACredentials || hasLegacyCredentials) {
           allMethods.push({ id: 'paymob-card', nameAr: 'بطاقة بنكية', nameEn: 'Card Payment', details: 'مدى، فيزا، ماستر كارد عبر Paymob', icon: 'fas fa-credit-card', gateway: 'paymob' });
-          allMethods.push({ id: 'paymob-apple-pay', nameAr: 'Apple Pay', nameEn: 'Apple Pay', details: 'الدفع السريع عبر Apple Pay', icon: 'fas fa-mobile-alt', gateway: 'paymob' });
           if (!hasSACredentials && pg.paymob?.walletIntegrationId) {
             allMethods.push({ id: 'paymob-wallet', nameAr: 'محفظة إلكترونية', nameEn: 'Mobile Wallet', details: 'الدفع عبر المحفظة الإلكترونية', icon: 'fas fa-mobile-alt', gateway: 'paymob' });
           }
