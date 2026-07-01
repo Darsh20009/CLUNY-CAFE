@@ -839,10 +839,10 @@ export default function CheckoutPage() {
     return ['paymob-card', 'paymob-wallet', 'neoleap'].includes(method);
   };
 
-  // Geidea HPP payment methods
+  // Geidea HPP payment methods (apple_pay routes through Geidea HPP)
   const isOnlinePaymentMethod = (method: string | null) => {
     if (!method) return false;
-    return ['geidea'].includes(method);
+    return ['geidea', 'apple_pay'].includes(method);
   };
 
   const buildOrderData = async (): Promise<{ orderData: any; activeCustomerId: string | undefined }> => {

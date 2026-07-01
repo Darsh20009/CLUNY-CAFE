@@ -179,8 +179,8 @@ export default function PaymentMethods({
     // Hide mobile wallet (paymob-wallet) — not used in SA flow
     if ((method.id as string) === 'paymob-wallet') return null;
 
-    // Hide Apple Pay and paymob-apple-pay entirely (no Apple developer account)
-    if (['apple_pay', 'paymob-apple-pay', 'neoleap-apple-pay'].includes(method.id as string)) return null;
+    // paymob-apple-pay and neoleap-apple-pay hidden — routes through Geidea for apple_pay
+    if (['paymob-apple-pay', 'neoleap-apple-pay'].includes(method.id as string)) return null;
 
     // Coming Soon: show disabled card with badge
     if (isComingSoon) {
