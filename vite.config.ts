@@ -49,6 +49,7 @@ export default defineConfig({
         '@capacitor/keyboard',
         '@capacitor/status-bar',
         '@capacitor/push-notifications',
+        '@vladmandic/face-api',
       ],
       output: {
         manualChunks: {

@@ -830,8 +830,8 @@ export default function CheckoutPage() {
 
   const isCardPaymentMethod = (method: string | null) => {
     if (!method) return false;
-    // paymob-card is handled separately with real PayMob flow
-    const cardMethods = ['geidea', 'bank_card', 'credit_card', 'card', 'stc-pay', 'apple_pay', 'neoleap-apple-pay'];
+    // paymob-card and geidea are handled separately with real payment flows
+    const cardMethods = ['bank_card', 'credit_card', 'card', 'stc-pay', 'neoleap-apple-pay'];
     return cardMethods.includes(method);
   };
 
@@ -840,7 +840,11 @@ export default function CheckoutPage() {
     return ['paymob-card', 'paymob-wallet', 'paymob-apple-pay', 'neoleap'].includes(method);
   };
 
-  const isOnlinePaymentMethod = (_method: string | null) => false;
+  // Geidea real payment methods (card + Apple Pay)
+  const isOnlinePaymentMethod = (method: string | null) => {
+    if (!method) return false;
+    return ['geidea', 'apple_pay'].includes(method);
+  };
 
   const buildOrderData = async (): Promise<{ orderData: any; activeCustomerId: string | undefined }> => {
     let activeCustomerId = customer?.id;

@@ -32,7 +32,7 @@ interface GeideaCheckoutProps {
 
 type SdkState = "loading" | "ready" | "processing" | "success" | "error";
 
-const SDK_URL = "https://js.geidea.net/GeideaCheckoutSDK.js";
+const SDK_URL = "https://www.ksamerchant.geidea.net/hpp/geideaCheckout.min.js";
 const SDK_TIMEOUT_MS = 20000;
 
 const loadGeideaSDK = (): Promise<void> =>
