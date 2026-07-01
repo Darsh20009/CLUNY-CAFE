@@ -1,4 +1,6 @@
 import nodemailer from "nodemailer";
+import fs from "fs";
+import path from "path";
 import { appendOrderToSheet } from "./google-sheets";
 
 let transporter: any = null;
@@ -83,6 +85,21 @@ async function getTransporter() {
   return transporter;
 }
 
+// ─── Logo CID attachment helper ───────────────────────────────────────────────
+function getLogoAttachment(): any | null {
+  const logoPath = path.resolve("./attached_assets/cluny-logo-customer.png");
+  if (fs.existsSync(logoPath)) {
+    return { filename: "logo.png", path: logoPath, cid: "cluny-logo@cafe" };
+  }
+  return null;
+}
+
+function logoImgTag(width = 64): string {
+  const logoPath = path.resolve("./attached_assets/cluny-logo-customer.png");
+  if (!fs.existsSync(logoPath)) return "";
+  return `<img src="cid:cluny-logo@cafe" alt="CLUNY" width="${width}" height="${width}" style="display:block;margin:0 auto 14px;border-radius:12px;object-fit:contain;" />`;
+}
+
 // Central send function — cPanel SMTP only
 async function sendMail(options: {
   from?: string;
@@ -90,6 +107,7 @@ async function sendMail(options: {
   subject: string;
   html?: string;
   text?: string;
+  attachments?: any[];
 }): Promise<boolean> {
   const { smtpFrom } = loadSmtpConfig();
   const from = options.from || smtpFrom;
@@ -100,12 +118,14 @@ async function sendMail(options: {
     return false;
   }
   try {
-    const info = await transport.sendMail({ from, ...options });
+    const { attachments, ...rest } = options;
+    const mailOptions: any = { from, ...rest };
+    if (attachments && attachments.length > 0) mailOptions.attachments = attachments;
+    const info = await transport.sendMail(mailOptions);
     console.log(`✅ [MAIL] Sent "${options.subject}" → ${options.to} (ID: ${info.messageId})`);
     return true;
   } catch (err: any) {
     console.error(`❌ [MAIL] Send failed → ${options.to}: ${err.message}`);
-    // Reset transporter on auth errors so next attempt retries fresh
     if (err.code === "EAUTH" || err.responseCode === 535) {
       resetMailTransporter();
     }
