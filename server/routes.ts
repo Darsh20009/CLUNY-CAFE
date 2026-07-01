@@ -3442,18 +3442,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
             : callbackBase;
 
           // Normalize phone: strip country code, keep 9 digits
-          let cleanPhone = (customerPhone || '').replace(/\D/g, '')
-            .replace(/^00966/, '').replace(/^\+?966/, '').replace(/^0/, '');
-          if (cleanPhone.length > 9) cleanPhone = cleanPhone.slice(-9);
+          const cleanPhone = (customerPhone || '').replace(/\D/g, '')
+            .replace(/^00966/, '').replace(/^\+?966/, '').replace(/^0/, '').slice(-9);
 
-          const geideaCustomer: any = {};
           // Geidea requires Name — use phone as fallback for guest checkouts
-          geideaCustomer.name = customerName || `Customer-${cleanPhone || 'Guest'}`;
+          // Note: phone fields omitted intentionally — Geidea's HPP collects them on their page
+          const geideaCustomer: any = {
+            name: customerName || (cleanPhone ? `Customer-${cleanPhone}` : 'Customer'),
+          };
           if (customerEmail) geideaCustomer.email = customerEmail;
-          if (cleanPhone) {
-            geideaCustomer.phoneNumber = cleanPhone;
-            geideaCustomer.phoneCountryCode = '+966';
-          }
 
           const geideaBody: any = {
             amount: Number(amount),
