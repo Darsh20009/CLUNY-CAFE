@@ -227,9 +227,14 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
   const filterItemsByRole = (items: NavItem[]) =>
     items.filter(item => !item.roles || item.roles.includes(userRole));
 
+  const isOwnerOrAdmin = ['owner', 'admin'].includes(userRole);
+  const dashboardPath = isOwnerOrAdmin ? '/owner/dashboard' : '/manager/dashboard';
+
   const visibleGroups = NAV_GROUPS.map(group => ({
     ...group,
-    items: filterItemsByRole(group.items),
+    items: filterItemsByRole(group.items).map(item =>
+      item.path === '/manager/dashboard' ? { ...item, path: dashboardPath } : item
+    ),
   })).filter(group => group.items.length > 0);
 
   const toggleGroup = (label: string) => {
@@ -340,9 +345,11 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
 /* Mobile bottom navigation bar */
 export function MobileBottomNav({ manager }: { manager: any }) {
   const [location, navigate] = useLocation();
+  const managerRole = manager?.role || "manager";
+  const homePath = ['owner', 'admin'].includes(managerRole) ? '/owner/dashboard' : '/manager/dashboard';
 
   const items = [
-    { label: "الرئيسية", icon: LayoutDashboard, path: "/manager/dashboard", color: "#2D9B6E" },
+    { label: "الرئيسية", icon: LayoutDashboard, path: homePath, color: "#2D9B6E" },
     { label: "الطلبات", icon: ClipboardList, path: "/employee/orders", color: "#3b82f6" },
     { label: "المخزون", icon: Warehouse, path: "/manager/inventory", color: "#f59e0b" },
     { label: "التقارير", icon: BarChart2, path: "/manager/unified-reports", color: "#14b8a6" },

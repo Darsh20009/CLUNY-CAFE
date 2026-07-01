@@ -2,15 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area
 } from "recharts";
 import {
-  TrendingUp, TrendingDown, Package, ShoppingCart, Wallet,
+  TrendingUp, Package, ShoppingCart, Wallet,
   BarChart3, ArrowUpRight, ArrowDownRight, Star, Percent
 } from "lucide-react";
 import SarIcon from "@/components/sar-icon";
 import { useTranslate } from "@/lib/useTranslate";
+import { getQueryFn } from "@/lib/queryClient";
 
 interface Props {
   branchId?: string;
@@ -32,19 +33,19 @@ function TrendBadge({ pct }: { pct: number }) {
 export default function DashboardAnalyticsPanel({ branchId }: Props) {
   const tc = useTranslate();
 
-  const weeklyUrl = branchId
+  const weeklyKey = branchId
     ? `/api/analytics/advanced?period=week&branchId=${branchId}`
     : `/api/analytics/advanced?period=week`;
 
   const { data: weekly, isLoading: weeklyLoading } = useQuery<any>({
-    queryKey: ['/api/analytics/advanced', 'week', branchId],
-    queryFn: () => fetch(weeklyUrl, { credentials: 'include' }).then(r => r.json()),
+    queryKey: [weeklyKey],
+    queryFn: getQueryFn({ on401: "returnNull" }),
     staleTime: 1000 * 60 * 5,
   });
 
   const { data: cogs, isLoading: cogsLoading } = useQuery<any>({
     queryKey: ['/api/analytics/cogs'],
-    queryFn: () => fetch('/api/analytics/cogs', { credentials: 'include' }).then(r => r.json()),
+    queryFn: getQueryFn({ on401: "returnNull" }),
     staleTime: 1000 * 60 * 10,
   });
 
