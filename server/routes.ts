@@ -3450,8 +3450,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (customerEmail) {
             geideaCustomer.email = customerEmail;
           } else if (cleanPhone) {
-            // Geidea expects full Saudi format: 05XXXXXXXX
+            // Geidea requires phoneNumber + phoneCountryCode together
             geideaCustomer.phoneNumber = cleanPhone.length === 9 ? `0${cleanPhone}` : cleanPhone;
+            geideaCustomer.phoneCountryCode = '966';
           } else {
             // Hard fallback so the request is never rejected
             geideaCustomer.email = 'guest@cluny.cafe';
