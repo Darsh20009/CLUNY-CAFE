@@ -1,36 +1,24 @@
 const PATTERN = /(ر\.\u200f?س|ريال(?:\s*سعودي)?|\bSAR\b|\bSR\b)/g;
 
 const SKIP_TAGS = new Set([
-  "SCRIPT",
-  "STYLE",
-  "NOSCRIPT",
-  "TEXTAREA",
-  "INPUT",
-  "CODE",
-  "PRE",
-  "SVG",
+  "SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT", "CODE", "PRE", "SVG",
 ]);
 
 const PROCESSED_NODES = new WeakSet<Node>();
 
-// Uses CSS mask so the symbol inherits the surrounding text color (currentColor).
-function makeSymbolElement(): HTMLSpanElement {
-  const span = document.createElement("span");
-  span.setAttribute("data-riyal-symbol", "true");
-  span.setAttribute("aria-label", "ريال سعودي");
-  span.setAttribute("role", "img");
-  span.style.cssText = [
-    "display:inline-block",
-    "width:0.95em",
-    "height:0.95em",
-    "vertical-align:-0.12em",
-    "margin:0 0.08em",
-    "background-color:currentColor",
-    "-webkit-mask:url('/riyal-symbol.png') no-repeat center/contain",
-    "mask:url('/riyal-symbol.png') no-repeat center/contain",
-    "flex-shrink:0",
+function makeSymbolElement(): HTMLImageElement {
+  const img = document.createElement("img");
+  img.src = "/riyal-symbol.png";
+  img.alt = "﷼";
+  img.setAttribute("aria-label", "ريال سعودي");
+  img.style.cssText = [
+    "display:inline",
+    "height:0.85em",
+    "width:auto",
+    "vertical-align:-0.1em",
+    "margin:0 0.05em",
   ].join(";");
-  return span;
+  return img;
 }
 
 function processTextNode(textNode: Text): void {
@@ -52,19 +40,16 @@ function processTextNode(textNode: Text): void {
   let match: RegExpExecArray | null;
   while ((match = PATTERN.exec(original)) !== null) {
     if (match.index > cursor) {
-      frag.appendChild(
-        document.createTextNode(original.slice(cursor, match.index)),
-      );
+      frag.appendChild(document.createTextNode(original.slice(cursor, match.index)));
     }
-    const sym = makeSymbolElement();
-    PROCESSED_NODES.add(sym);
-    frag.appendChild(sym);
+    frag.appendChild(makeSymbolElement());
     cursor = match.index + match[0].length;
   }
   if (cursor < original.length) {
     frag.appendChild(document.createTextNode(original.slice(cursor)));
   }
   PATTERN.lastIndex = 0;
+  PROCESSED_NODES.add(textNode);
   parent.replaceChild(frag, textNode);
 }
 
@@ -119,26 +104,13 @@ export function installRiyalSymbol(): void {
     for (const m of mutations) {
       if (m.type === "childList") {
         m.addedNodes.forEach((n) => processSubtree(n));
-      } else if (
-        m.type === "characterData" &&
-        m.target &&
-        m.target.nodeType === Node.TEXT_NODE
-      ) {
-        processTextNode(m.target as Text);
       }
     }
   });
 
   const start = () => {
-    if (!document.body) {
-      requestAnimationFrame(start);
-      return;
-    }
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
+    if (!document.body) { requestAnimationFrame(start); return; }
+    observer.observe(document.body, { childList: true, subtree: true });
   };
   start();
 }

@@ -5,13 +5,18 @@ interface SarIconProps {
 
 export function SarIcon({ className = "", size = 16 }: SarIconProps) {
   return (
-    <span
-      className={`inline-flex items-center justify-center font-bold select-none ${className}`}
-      style={{ fontSize: size, lineHeight: 1, fontFamily: "'Cairo', 'Arial', sans-serif" }}
+    <img
+      src="/riyal-symbol.png"
+      alt="﷼"
       aria-label="ريال سعودي"
-    >
-      ر.س
-    </span>
+      className={`inline-block select-none ${className}`}
+      style={{
+        height: size,
+        width: "auto",
+        verticalAlign: "middle",
+        marginBottom: 1,
+      }}
+    />
   );
 }
 
