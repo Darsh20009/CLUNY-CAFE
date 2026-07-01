@@ -13477,13 +13477,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (req.employee?.role !== 'admin' && req.employee?.role !== 'owner') {
         return res.status(403).json({ error: "Only admins can test email" });
       }
-      
-      const { testEmailConnection } = await import("./mail-service");
-      const success = await testEmailConnection();
-      
-      res.json({ success, message: success ? "Email connection successful" : "Email connection failed" });
-    } catch (error) {
-      res.status(500).json({ error: "Failed to test email connection" });
+      const { to } = req.body;
+      const nodemailer = await import("nodemailer");
+      const transporter = nodemailer.default.createTransport({
+        host: process.env.SMTP_HOST || "server222.web-hosting.com",
+        port: parseInt(process.env.SMTP_PORT || "465"),
+        secure: true,
+        auth: { user: process.env.SMTP_USER || "info@qirox.online", pass: process.env.SMTP_PASS },
+        tls: { rejectUnauthorized: false },
+      });
+      await transporter.verify();
+      const recipient = to || process.env.ADMIN_REPORT_EMAIL || process.env.SMTP_USER;
+      const sentAt = new Date().toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" });
+      await transporter.sendMail({
+        from: `"CLUNY CAFE" <${process.env.SMTP_USER || "info@qirox.online"}>`,
+        to: recipient,
+        subject: "✅ بريد تجريبي — CLUNY CAFE",
+        html: `<div dir="rtl" style="font-family:Cairo,Arial,sans-serif;max-width:580px;margin:0 auto;border-radius:12px;overflow:hidden;border:1px solid #e0e0e0">
+          <div style="background:#2D9B6E;padding:28px;text-align:center">
+            <h1 style="color:#fff;margin:0;font-size:26px">☕ CLUNY CAFE</h1>
+            <p style="color:#d4f5e9;margin:6px 0 0;font-size:14px">اختبار نظام البريد الإلكتروني</p>
+          </div>
+          <div style="padding:28px;background:#fff">
+            <h2 style="color:#2D9B6E;margin-top:0">✅ الاتصال يعمل بنجاح!</h2>
+            <p style="color:#555;line-height:1.8">هذا بريد تجريبي أُرسل من لوحة تحكم CLUNY CAFE للتحقق من صحة إعدادات SMTP.</p>
+            <table style="width:100%;border-collapse:collapse;margin-top:16px;font-size:14px">
+              <tr style="background:#f0faf5"><td style="padding:10px 12px;color:#333;font-weight:600">📡 الخادم</td><td style="padding:10px 12px;color:#555">${process.env.SMTP_HOST}:${process.env.SMTP_PORT}</td></tr>
+              <tr><td style="padding:10px 12px;color:#333;font-weight:600">📧 المرسِل</td><td style="padding:10px 12px;color:#555">${process.env.SMTP_USER}</td></tr>
+              <tr style="background:#f0faf5"><td style="padding:10px 12px;color:#333;font-weight:600">📬 المستلم</td><td style="padding:10px 12px;color:#555">${recipient}</td></tr>
+              <tr><td style="padding:10px 12px;color:#333;font-weight:600">🕐 الوقت</td><td style="padding:10px 12px;color:#555">${sentAt}</td></tr>
+            </table>
+          </div>
+          <div style="padding:14px;background:#f0faf5;text-align:center;color:#888;font-size:12px">CLUNY CAFE — Powered by Qirox Studio</div>
+        </div>`,
+      });
+      res.json({ success: true, message: `تم إرسال البريد التجريبي إلى ${recipient}` });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message || "فشل إرسال البريد التجريبي" });
     }
   });
 
