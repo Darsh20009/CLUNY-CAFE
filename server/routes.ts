@@ -208,6 +208,9 @@ import {
   sendAbandonedCartEmail,
   testEmailConnection,
   sendPointsVerificationEmail,
+  checkMailServiceHealth,
+  sendTestEmail,
+  resetMailTransporter,
 } from "./mail-service";
 import { appendOrderToSheet } from "./google-sheets";
 import { getVapidPublicKey, saveSubscription, removeSubscription, sendPushToEmployee, sendPushToCustomer } from "./push-service";
@@ -1040,7 +1043,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-    // --- ORDERS API ---
+  // ─── Email Service API ────────────────────────────────────────────────────
+  // Health check — returns SMTP connection status
+  app.get("/api/email/health", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const health = await checkMailServiceHealth();
+      res.json(health);
+    } catch (err: any) {
+      res.status(500).json({ healthy: false, message: err.message });
+    }
+  });
+
+  // Send a test email to verify cPanel SMTP is working
+  app.post("/api/email/test", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const { to } = req.body;
+      if (!to) return res.status(400).json({ error: "الرجاء إدخال البريد المستهدف" });
+      const result = await sendTestEmail(to);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ sent: false, message: err.message });
+    }
+  });
+
+  // Reset SMTP transporter (pick up new env vars without restart)
+  app.post("/api/email/reset-transporter", requireAuth, requireAdmin, async (_req, res) => {
+    resetMailTransporter();
+    const health = await checkMailServiceHealth();
+    res.json({ reset: true, ...health });
+  });
+
+  // Manually trigger today's admin daily summary email
+  app.post("/api/email/trigger-daily-report", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { sendAdminDailySummaryNow } = await import("./smart-scheduler");
+      await sendAdminDailySummaryNow();
+      res.json({ success: true, message: "تم إرسال التقرير اليومي بنجاح" });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // --- ORDERS API ---
   app.get("/api/orders/live", async (req: any, res) => {
     try {
       const { OrderModel } = await import("@shared/schema");

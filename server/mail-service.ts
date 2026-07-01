@@ -3,84 +3,56 @@ import { appendOrderToSheet } from "./google-sheets";
 
 let transporter: any = null;
 let transporterInitialized = false;
+let lastSmtpPass = "";
 
-async function loadSmtpSecrets() {
-  return {
-    smtpHost: process.env.SMTP_HOST || "mail.smtp2go.com",
-    smtpPort: parseInt(process.env.SMTP_PORT || "587"),
-    smtpUser: process.env.SMTP_USER,
-    smtpPass: process.env.SMTP_PASS,
-    smtp2goApiKey: process.env.SMTP2GO_API_KEY,
-    smtpFrom: process.env.SMTP_FROM || "noreply@cluny.cafe",
-  };
+// Reset transporter (called after env var changes)
+export function resetMailTransporter() {
+  transporter = null;
+  transporterInitialized = false;
+  lastSmtpPass = "";
+  console.log("📧 Mail transporter reset — will reinitialize on next send");
 }
 
-// SMTP2GO HTTP API — works on any host (port 443, never blocked)
-async function sendViaSMTP2GOApi(options: {
-  from: string;
-  to: string | string[];
-  subject: string;
-  html?: string;
-  text?: string;
-}): Promise<boolean> {
-  const apiKey = process.env.SMTP2GO_API_KEY;
-  if (!apiKey) return false;
-
-  const toList = Array.isArray(options.to) ? options.to : [options.to];
-  const payload = {
-    api_key: apiKey,
-    sender: options.from,
-    to: toList,
-    subject: options.subject,
-    html_body: options.html || "",
-    text_body: options.text || "",
-  };
-
-  try {
-    const res = await fetch("https://api.smtp2go.com/v3/email/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data: any = await res.json();
-    if (data?.data?.succeeded === 1) {
-      return true;
-    }
-    console.warn("⚠️ SMTP2GO API response:", JSON.stringify(data));
-    return false;
-  } catch (err: any) {
-    console.error("❌ SMTP2GO API error:", err.message);
-    return false;
-  }
+function loadSmtpConfig() {
+  const smtpHost = process.env.SMTP_HOST || "server222.web-hosting.com";
+  const smtpPort = parseInt(process.env.SMTP_PORT || "465");
+  const smtpUser = process.env.SMTP_USER || "info@qirox.online";
+  const smtpPass = process.env.SMTP_PASS || "";
+  const smtpFrom = process.env.SMTP_FROM || smtpUser || "info@qirox.online";
+  return { smtpHost, smtpPort, smtpUser, smtpPass, smtpFrom };
 }
 
 async function getTransporter() {
+  const { smtpPass } = loadSmtpConfig();
+  // Reset if password changed (env var reload)
+  if (transporterInitialized && smtpPass !== lastSmtpPass) {
+    transporter = null;
+    transporterInitialized = false;
+  }
   if (transporterInitialized) return transporter;
 
-  const { smtpHost, smtpPort, smtpUser, smtpPass, smtp2goApiKey } = await loadSmtpSecrets();
+  const { smtpHost, smtpPort, smtpUser, smtpFrom } = loadSmtpConfig();
 
-  const isProduction = process.env.NODE_ENV === "production";
-  console.log(`📧 Mail service initializing [${isProduction ? "PRODUCTION" : "DEVELOPMENT"}]:`);
-  console.log("   SMTP_HOST:", smtpHost ? `✅ ${smtpHost}` : "❌");
-  console.log("   SMTP_PORT:", smtpPort);
-  console.log("   SMTP_USER:", smtpUser ? "✅" : "❌");
-  console.log("   SMTP_PASS:", smtpPass ? "✅" : "❌");
-  console.log("   SMTP2GO_API_KEY:", smtp2goApiKey ? "✅ (will use HTTP API)" : "❌");
+  console.log(`📧 Mail service initializing — cPanel SMTP:`);
+  console.log(`   Host: ${smtpHost}:${smtpPort}`);
+  console.log(`   User: ${smtpUser ? "✅ " + smtpUser : "❌ not set"}`);
+  console.log(`   Pass: ${smtpPass ? "✅ set" : "❌ not set"}`);
+  console.log(`   From: ${smtpFrom}`);
 
   if (!smtpUser || !smtpPass) {
-    console.warn("⚠️ SMTP credentials not configured. Email via SMTP disabled.");
+    console.warn("⚠️ SMTP credentials not configured. Emails will not be sent.");
     transporterInitialized = true;
+    lastSmtpPass = smtpPass;
     return null;
   }
 
   try {
-    console.log(`📧 Creating SMTP transporter for ${smtpHost}:${smtpPort}`);
     const options: any = {
       host: smtpHost,
       port: smtpPort,
-      secure: smtpPort === 465,
+      secure: smtpPort === 465,        // SSL for port 465
       auth: { user: smtpUser, pass: smtpPass },
-      tls: { rejectUnauthorized: false, minVersion: "TLSv1.2" },
+      tls: { rejectUnauthorized: false },
       connectionTimeout: 30000,
       greetingTimeout: 30000,
       socketTimeout: 60000,
@@ -93,23 +65,25 @@ async function getTransporter() {
       options.secure = false;
     }
     transporter = nodemailer.createTransport(options);
+    lastSmtpPass = smtpPass;
     transporterInitialized = true;
-    console.log("✅ SMTP transporter created");
+    console.log("✅ cPanel SMTP transporter created");
 
     transporter.verify().then(() => {
-      console.log("✅ SMTP connection verified");
+      console.log("✅ cPanel SMTP connection verified successfully");
     }).catch((err: any) => {
-      console.warn("⚠️ SMTP verify failed (may still work for sending):", err.message);
+      console.warn("⚠️ SMTP verify failed (may still send):", err.message);
     });
   } catch (error: any) {
     console.error("❌ Error creating SMTP transporter:", error.message);
     transporterInitialized = true;
+    lastSmtpPass = smtpPass;
   }
 
   return transporter;
 }
 
-// Central send function: tries SMTP2GO API first, falls back to SMTP
+// Central send function — cPanel SMTP only
 async function sendMail(options: {
   from?: string;
   to: string;
@@ -117,43 +91,86 @@ async function sendMail(options: {
   html?: string;
   text?: string;
 }): Promise<boolean> {
-  const from = options.from || process.env.SMTP_FROM || "noreply@cluny.cafe";
+  const { smtpFrom } = loadSmtpConfig();
+  const from = options.from || smtpFrom;
 
-  // 1. Try HTTP API (works on Render, Vercel, etc.)
-  if (process.env.SMTP2GO_API_KEY) {
-    const sent = await sendViaSMTP2GOApi({ ...options, from });
-    if (sent) return true;
-    console.warn("⚠️ SMTP2GO API failed, falling back to SMTP...");
-  }
-
-  // 2. Fall back to SMTP
   const transport = await getTransporter();
   if (!transport) {
-    console.warn("⚠️ No email transport available. Email not sent.");
+    console.warn(`⚠️ [MAIL] No transport — email to ${options.to} NOT sent. Check SMTP_PASS env var.`);
     return false;
   }
   try {
     const info = await transport.sendMail({ from, ...options });
-    console.log(`✅ Mail sent via SMTP. MessageID: ${info.messageId}`);
+    console.log(`✅ [MAIL] Sent "${options.subject}" → ${options.to} (ID: ${info.messageId})`);
     return true;
   } catch (err: any) {
-    console.error("❌ SMTP send error:", err.message);
+    console.error(`❌ [MAIL] Send failed → ${options.to}: ${err.message}`);
+    // Reset transporter on auth errors so next attempt retries fresh
+    if (err.code === "EAUTH" || err.responseCode === 535) {
+      resetMailTransporter();
+    }
     return false;
   }
 }
 
-export async function checkMailServiceHealth(): Promise<{ healthy: boolean; message: string }> {
-  if (process.env.SMTP2GO_API_KEY) {
-    return { healthy: true, message: "SMTP2GO API key configured" };
+export async function checkMailServiceHealth(): Promise<{ healthy: boolean; message: string; host?: string; user?: string }> {
+  const { smtpHost, smtpPort, smtpUser, smtpPass } = loadSmtpConfig();
+  if (!smtpUser || !smtpPass) {
+    return { healthy: false, message: "SMTP_USER أو SMTP_PASS غير مضبوط", host: smtpHost };
   }
   try {
     const transport = await getTransporter();
-    if (!transport) return { healthy: false, message: "SMTP credentials not configured" };
+    if (!transport) return { healthy: false, message: "فشل إنشاء الاتصال", host: smtpHost, user: smtpUser };
     await transport.verify();
-    return { healthy: true, message: "SMTP connection verified" };
+    return { healthy: true, message: `الاتصال بـ ${smtpHost}:${smtpPort} ناجح ✅`, host: smtpHost, user: smtpUser };
   } catch (error: any) {
-    return { healthy: false, message: `SMTP error: ${error.message}` };
+    return { healthy: false, message: `SMTP error: ${error.message}`, host: smtpHost, user: smtpUser };
   }
+}
+
+export async function sendTestEmail(toEmail: string): Promise<{ sent: boolean; message: string }> {
+  const { smtpHost, smtpUser } = loadSmtpConfig();
+  const sent = await sendMail({
+    to: toEmail,
+    subject: "✅ اختبار بريد CLUNY CAFE — cPanel SMTP",
+    html: `
+      <html dir="rtl" lang="ar">
+      <head><meta charset="UTF-8"></head>
+      <body style="font-family:Arial,sans-serif;padding:30px;background:#f4f4f4;">
+        <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.1);">
+          <div style="background:linear-gradient(135deg,#2D9B6E,#1a7a54);padding:28px;text-align:center;">
+            <h1 style="color:#fff;margin:0;font-size:22px;">CLUNY CAFE ☕</h1>
+          </div>
+          <div style="padding:28px;text-align:center;">
+            <div style="font-size:48px;margin-bottom:12px;">✅</div>
+            <h2 style="color:#2D9B6E;margin:0 0 12px;">اختبار البريد الإلكتروني</h2>
+            <p style="color:#555;font-size:14px;line-height:1.7;">
+              تم ربط خادم البريد بنجاح عبر cPanel SMTP.<br/>
+              الخادم: <strong>${smtpHost}</strong><br/>
+              المرسل: <strong>${smtpUser}</strong>
+            </p>
+            <div style="background:#f0fdf4;border-radius:8px;padding:16px;margin-top:20px;">
+              <p style="color:#2D9B6E;margin:0;font-size:13px;">
+                ✓ إشعارات الطلبات للعملاء تعمل<br/>
+                ✓ التقارير اليومية/الأسبوعية للمدير تعمل<br/>
+                ✓ بريد ترحيب الموظفين يعمل<br/>
+                ✓ نسيت كلمة المرور (OTP) تعمل
+              </p>
+            </div>
+          </div>
+          <div style="background:#f8f8f8;padding:14px;text-align:center;border-top:1px solid #eee;">
+            <p style="margin:0;color:#999;font-size:12px;">© ${new Date().getFullYear()} CLUNY CAFE</p>
+          </div>
+        </div>
+      </body></html>
+    `,
+  });
+  return {
+    sent,
+    message: sent
+      ? `✅ تم إرسال بريد الاختبار إلى ${toEmail} بنجاح`
+      : `❌ فشل الإرسال — تحقق من SMTP_PASS في متغيرات البيئة`,
+  };
 }
 
 export async function sendOrderNotificationEmail(
