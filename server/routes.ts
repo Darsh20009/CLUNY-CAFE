@@ -20201,12 +20201,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================
   app.get("/api/analytics/advanced", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const { period = 'today', branchId: qBranch } = req.query;
+      const { period = 'today', branchId: qBranch, from: qFrom, to: qTo } = req.query;
       const finalBranchId = qBranch || req.employee?.branchId;
       const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
 
       // ── Cache check ──────────────────────────────────────────────────────────
-      const ck = cacheKey('analytics:advanced', tenantId, String(period), String(finalBranchId || 'all'));
+      const ckPart = qFrom ? `${qFrom}_${qTo}` : String(period);
+      const ck = cacheKey('analytics:advanced', tenantId, ckPart, String(finalBranchId || 'all'));
       const cached = cache.get<any>(ck);
       if (cached) return res.json(cached);
       // ────────────────────────────────────────────────────────────────────────
@@ -20214,37 +20215,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { OrderModel, CoffeeItemModel, EmployeeModel } = await import("@shared/schema");
 
       let startDate: Date;
+      let endDate: Date | null = null;
       let prevStartDate: Date;
       let prevEndDate: Date;
 
-      switch (period) {
-        case 'week':
-          startDate = new Date(getSaudiStartOfDay().getTime() - 6 * 24 * 60 * 60 * 1000);
-          prevStartDate = new Date(startDate.getTime() - 7 * 24 * 60 * 60 * 1000);
-          prevEndDate = new Date(startDate);
-          break;
-        case 'month': {
-          const s = getSaudiStartOfDay();
-          startDate = new Date(s.getFullYear(), s.getMonth(), 1);
-          prevStartDate = new Date(s.getFullYear(), s.getMonth() - 1, 1);
-          prevEndDate = new Date(startDate);
-          break;
+      // If explicit from/to date strings provided — use Saudi timezone correctly
+      if (qFrom && typeof qFrom === 'string') {
+        startDate = new Date(`${qFrom}T00:00:00+03:00`);
+        const toStr = (qTo && typeof qTo === 'string') ? qTo : qFrom;
+        endDate = new Date(`${toStr}T23:59:59.999+03:00`);
+        // prev period = same duration shifted back
+        const durationMs = endDate.getTime() - startDate.getTime() + 1;
+        prevStartDate = new Date(startDate.getTime() - durationMs);
+        prevEndDate = new Date(startDate.getTime() - 1);
+      } else {
+        switch (period) {
+          case 'week':
+            startDate = new Date(getSaudiStartOfDay().getTime() - 6 * 24 * 60 * 60 * 1000);
+            prevStartDate = new Date(startDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+            prevEndDate = new Date(startDate);
+            break;
+          case 'month': {
+            const s = getSaudiStartOfDay();
+            startDate = new Date(s.getFullYear(), s.getMonth(), 1);
+            prevStartDate = new Date(s.getFullYear(), s.getMonth() - 1, 1);
+            prevEndDate = new Date(startDate);
+            break;
+          }
+          case 'year': {
+            const s = getSaudiStartOfDay();
+            startDate = new Date(s.getFullYear(), 0, 1);
+            prevStartDate = new Date(s.getFullYear() - 1, 0, 1);
+            prevEndDate = new Date(startDate);
+            break;
+          }
+          default: // today
+            startDate = getSaudiStartOfDay();
+            prevStartDate = new Date(startDate.getTime() - 24 * 60 * 60 * 1000);
+            prevEndDate = new Date(startDate);
         }
-        case 'year': {
-          const s = getSaudiStartOfDay();
-          startDate = new Date(s.getFullYear(), 0, 1);
-          prevStartDate = new Date(s.getFullYear() - 1, 0, 1);
-          prevEndDate = new Date(startDate);
-          break;
-        }
-        default: // today
-          startDate = getSaudiStartOfDay();
-          prevStartDate = new Date(startDate.getTime() - 24 * 60 * 60 * 1000);
-          prevEndDate = new Date(startDate);
       }
 
       const baseMatch: any = {
-        createdAt: { $gte: startDate },
+        createdAt: endDate ? { $gte: startDate, $lte: endDate } : { $gte: startDate },
         status: { $ne: 'cancelled' }
       };
       if (finalBranchId) baseMatch.branchId = finalBranchId;
@@ -20309,8 +20322,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const topProducts = Object.entries(itemCountMap)
         .map(([id, d]) => ({ id, ...d, revenue: Math.round(d.revenue * 100) / 100 }))
-        .sort((a, b) => b.qty - a.qty)
-        .slice(0, 10);
+        .sort((a, b) => b.qty - a.qty);
 
       // ---- Employee performance ----
       const empMap: Record<string, { name: string; orders: number; revenue: number }> = {};
@@ -20332,19 +20344,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .sort((a, b) => b.orders - a.orders)
         .slice(0, 10);
 
-      // ---- Revenue comparison (daily trend last 7 days) ----
+      // ---- Revenue trend (one point per day covering the selected range) ----
       const revenueTrend: Array<{ date: string; current: number; orders: number }> = [];
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
-        d.setHours(0, 0, 0, 0);
-        const nextD = new Date(d); nextD.setDate(nextD.getDate() + 1);
+      const trendStart = new Date(startDate);
+      trendStart.setHours(0, 0, 0, 0);
+      const trendEnd = endDate ? new Date(endDate) : new Date();
+      trendEnd.setHours(23, 59, 59, 999);
+      // Max 31 days in trend to avoid overcrowding
+      const totalDays = Math.min(Math.ceil((trendEnd.getTime() - trendStart.getTime()) / (24 * 60 * 60 * 1000)), 31);
+      const step = Math.max(1, Math.ceil(totalDays / 31));
+      for (let i = 0; i < totalDays; i += step) {
+        const d = new Date(trendStart);
+        d.setDate(d.getDate() + i);
+        const nextD = new Date(d); nextD.setDate(nextD.getDate() + step);
         const dayOrders = orders.filter(o => {
           const t = new Date(o.createdAt);
           return t >= d && t < nextD;
         });
         revenueTrend.push({
-          date: d.toLocaleDateString('ar-SA', { weekday: 'short', month: 'short', day: 'numeric' }),
+          date: d.toLocaleDateString('ar-SA', { weekday: 'short', day: 'numeric', month: 'short' }),
           current: Math.round(dayOrders.reduce((s, o) => s + (Number(o.totalAmount) || 0), 0) * 100) / 100,
           orders: dayOrders.length
         });
@@ -21485,25 +21503,18 @@ ${topItems.map((item, i) => `  ${i + 1}. ${item[0]}: ${item[1].count} طلب (${
       }
 
       const systemPrompt = `أنت مساعد ذكاء اصطناعي متخصص لإدارة المقاهي والمطاعم، تعمل لصالح نظام CLUNY CAFE.
-أنت خبير في:
-- تحليل المبيعات والأرباح
-- تحسين قائمة الطعام والتسعير
-- إدارة الموظفين وجدولة الوردايات
-- استراتيجيات التسويق والعروض الترويجية
-- تحسين تجربة العملاء
-- إدارة المخزون والتكاليف
+أنت خبير في تحليل المبيعات والأرباح، تحسين قائمة الطعام والتسعير، إدارة الموظفين وجدولة الوردايات، استراتيجيات التسويق والعروض الترويجية، تحسين تجربة العملاء، وإدارة المخزون والتكاليف.
 
 ${businessContext}
 
-قواعد الإجابة (مهمة جداً — يجب الالتزام بها دائماً):
-- أجب دائماً بالعربية ما لم يسألك المستخدم بالإنجليزية
-- إذا سألك المستخدم بالإنجليزية، أجب بالإنجليزية
-- لا ترد أبداً بالصينية أو اليابانية أو الكورية أو أي لغة أخرى غير العربية والإنجليزية
-- CRITICAL: Only respond in Arabic or English. NEVER use Chinese, Japanese, Korean, or any other language.
-- كن موجزاً ومفيداً وعملياً
-- استخدم الأرقام والبيانات المتاحة في إجاباتك
-- قدم توصيات قابلة للتنفيذ
-- استخدم الإيموجي لتحسين القراءة`;
+قواعد صارمة يجب الالتزام بها في كل رد:
+- اكتب بالعربية الفصحى فقط. لا تستخدم الإنجليزية إلا للأسماء التجارية فقط.
+- ABSOLUTE RULE: You MUST respond in Arabic ONLY. Never use Chinese, Japanese, Korean, English sentences, or any non-Arabic language.
+- لا تستخدم أي رموز markdown مثل ** أو * أو # أو ## أو - في بداية الجمل.
+- لا تستخدم نقاط أو شرطات لعمل قوائم — اكتب بشكل سردي بفقرات واضحة.
+- اكتب الأرقام بالعربية والتواريخ بالتقويم الميلادي.
+- كن موجزاً ومباشراً وعملياً — لا حشو ولا مقدمات طويلة.
+- استخدم الأرقام والبيانات المتوفرة لدعم إجاباتك.`;
 
       const messages = [
         { role: "system", content: systemPrompt },
@@ -21511,10 +21522,10 @@ ${businessContext}
         { role: "user", content: message },
       ];
 
-      const kimiKey = process.env.KIMI_API_KEY;
-      if (!kimiKey) return res.status(200).json({ response: "مساعد الذكاء الاصطناعي غير مفعّل — يرجى ضبط مفتاح KIMI_API_KEY.", configured: false });
+      const kimiKey = process.env.MOONSHOT_API_KEY;
+      if (!kimiKey) return res.status(200).json({ response: "مساعد الذكاء الاصطناعي غير مفعّل — يرجى ضبط مفتاح MOONSHOT_API_KEY.", configured: false });
 
-      const response = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+      const response = await fetch("https://api.moonshot.cn/v1/chat/completions", {
         method: "POST",
         headers: { "Authorization": `Bearer ${kimiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({ model: "moonshot-v1-32k", messages, max_tokens: 1000, temperature: 0.7 }),
@@ -21580,20 +21591,22 @@ ${growthPct ? `- النمو مقارنة بالأسبوع الماضي: ${growth
 - أكثر المنتجات طلباً: ${topItems || "لا بيانات"}
 - وقت الذروة: ${peakHour ? `الساعة ${peakHour[0]}:00 (${peakHour[1]} طلب)` : "غير محدد"}
 
-أعطني 4 رؤى مختلفة بهذا الشكل (JSON array فقط):
+أعطني 4 رؤى مختلفة بالعربية فقط بهذا الشكل (JSON array فقط، لا تضف أي نص خارج الـ JSON):
 [
-  {"icon": "📈", "title": "عنوان قصير", "insight": "جملة واحدة مفيدة"},
-  ...
+  {"icon": "📈", "title": "عنوان قصير بالعربية", "insight": "جملة واحدة مفيدة بالعربية بدون رموز أو markdown"},
+  {"icon": "💡", "title": "عنوان آخر", "insight": "رؤية ثانية"},
+  {"icon": "⏰", "title": "عنوان ثالث", "insight": "رؤية ثالثة"},
+  {"icon": "🎯", "title": "عنوان رابع", "insight": "رؤية رابعة"}
 ]
-لا تضف أي نص خارج الـ JSON.`;
+قواعد صارمة: اكتب بالعربية فقط. لا تستخدم **bold** أو *italic* أو # أو أي رموز markdown. لا تكتب بالصينية أو الإنجليزية.`;
 
       const insightsMsgs = [{ role: "user", content: prompt }];
-      const kimiKey = process.env.KIMI_API_KEY;
+      const kimiKey = process.env.MOONSHOT_API_KEY;
       if (!kimiKey) {
         return res.json({ insights: [], stats: { todayRevenue, todayOrders: todayOrders.length, weekRevenue, weekOrders: weekOrders.length, growthPct }, configured: false });
       }
 
-      const response = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+      const response = await fetch("https://api.moonshot.cn/v1/chat/completions", {
         method: "POST",
         headers: { "Authorization": `Bearer ${kimiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({ model: "moonshot-v1-32k", messages: insightsMsgs, max_tokens: 500, temperature: 0.6 }),
@@ -21713,10 +21726,10 @@ ${contextData}
 - 3-4 مؤشرات KPI
 - JSON صحيح فقط`;
 
-      const kimiKey = process.env.KIMI_API_KEY;
+      const kimiKey = process.env.MOONSHOT_API_KEY;
       if (!kimiKey) return res.status(200).json({ report: null, configured: false, error: "مفتاح Kimi AI غير مضبوط" });
 
-      const response = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+      const response = await fetch("https://api.moonshot.cn/v1/chat/completions", {
         method: "POST",
         headers: { "Authorization": `Bearer ${kimiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -21858,10 +21871,10 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
         { role: "user", content: userPrompt },
       ];
 
-      const kimiKey = process.env.KIMI_API_KEY;
-      if (!kimiKey) return res.status(200).json({ message: "المساعد غير مفعّل حالياً. يرجى ضبط KIMI_API_KEY.", configured: false });
+      const kimiKey = process.env.MOONSHOT_API_KEY;
+      if (!kimiKey) return res.status(200).json({ message: "المساعد غير مفعّل حالياً. يرجى ضبط MOONSHOT_API_KEY.", configured: false });
 
-      const menuResponse = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+      const menuResponse = await fetch("https://api.moonshot.cn/v1/chat/completions", {
         method: "POST",
         headers: { "Authorization": `Bearer ${kimiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({ model: "moonshot-v1-32k", messages: menuMsgs, max_tokens: 600, temperature: 0.85 }),
@@ -22948,10 +22961,10 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
 
   // Helper: call Groq for natural-language generation
   async function callGroq(systemPrompt: string, userPrompt: string, maxTokens = 600): Promise<string | null> {
-    const kimiKey = process.env.KIMI_API_KEY;
+    const kimiKey = process.env.MOONSHOT_API_KEY;
     if (!kimiKey) return null;
     try {
-      const r = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+      const r = await fetch("https://api.moonshot.cn/v1/chat/completions", {
         method: "POST",
         headers: { "Authorization": `Bearer ${kimiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -24436,11 +24449,11 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
 3. توقع النفاد: أي المواد ستنفد خلال أسبوع؟
 4. توصيات الشراء: ماذا يجب شراؤه الآن؟`) + `\n\n📦 بيانات المخزون:\n${stockSummary}\n\n🔍 فروقات آخر جرد:\n${stocktakeDiffs || 'لا يوجد جرد حديث'}`;
 
-      const apiKey = process.env.KIMI_API_KEY;
-      if (!apiKey) return res.status(500).json({ error: "KIMI_API_KEY not configured" });
+      const apiKey = process.env.MOONSHOT_API_KEY;
+      if (!apiKey) return res.status(500).json({ error: "MOONSHOT_API_KEY not configured" });
 
       const history = req.body.history || [];
-      const response = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+      const response = await fetch("https://api.moonshot.cn/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
         body: JSON.stringify({
@@ -24502,10 +24515,10 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
       const question = req.body.question || "حلل وضع الأعمال الحالي";
       const fullMessage = `${contextData}\n\n❓ السؤال: ${question}`;
 
-      const apiKey = process.env.KIMI_API_KEY;
-      if (!apiKey) return res.status(500).json({ error: "KIMI_API_KEY not configured" });
+      const apiKey = process.env.MOONSHOT_API_KEY;
+      if (!apiKey) return res.status(500).json({ error: "MOONSHOT_API_KEY not configured" });
 
-      const response = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+      const response = await fetch("https://api.moonshot.cn/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
         body: JSON.stringify({
@@ -24726,7 +24739,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
   // POST /api/ai/brand-chat — employee brand AI assistant (Kimi AI)
   app.post("/api/ai/brand-chat", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const kimiKey = process.env.KIMI_API_KEY;
+      const kimiKey = process.env.MOONSHOT_API_KEY;
       if (!kimiKey) return res.status(503).json({ error: "AI not configured" });
 
       const { message, history = [] } = req.body;
@@ -24764,7 +24777,7 @@ ${items.map((i: any) => `• ${i.nameAr}${i.nameEn ? ` (${i.nameEn})` : ""}: ${i
         { role: "user", content: message },
       ];
 
-      const aiRes = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+      const aiRes = await fetch("https://api.moonshot.cn/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${kimiKey}` },
         body: JSON.stringify({ model: "moonshot-v1-8k", messages, max_tokens: 800, temperature: 0.7 }),
@@ -24788,7 +24801,7 @@ ${items.map((i: any) => `• ${i.nameAr}${i.nameEn ? ` (${i.nameEn})` : ""}: ${i
   // POST /api/ai/accounting-audit — manager accounting AI (Kimi AI)
   app.post("/api/ai/accounting-audit", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
-      const kimiKey = process.env.KIMI_API_KEY;
+      const kimiKey = process.env.MOONSHOT_API_KEY;
       if (!kimiKey) return res.status(503).json({ error: "AI not configured" });
 
       const { question, period = "month" } = req.body;
@@ -24847,7 +24860,7 @@ ${revenueLines}
 
       const userMsg = question || "راجع حساباتي وأعطني تقرير تدقيق شامل مع كشف أي تلاعب أو أخطاء أو مصروفات شاذة";
 
-      const aiRes = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+      const aiRes = await fetch("https://api.moonshot.cn/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${kimiKey}` },
         body: JSON.stringify({

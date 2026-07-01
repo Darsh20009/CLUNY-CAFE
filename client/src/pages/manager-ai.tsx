@@ -41,11 +41,11 @@ const QUICK_PROMPTS = [
 
 function formatContent(text: string) {
   return text
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    .replace(/^#{1,3}\s(.+)$/gm, '<div class="font-bold text-primary mt-3 mb-1 text-sm">$1</div>')
-    .replace(/^[-•]\s(.+)$/gm, '<div class="flex gap-2 items-start mt-1"><span class="text-primary mt-0.5 shrink-0">•</span><span>$1</span></div>')
-    .replace(/\n\n/g, '</p><p class="mt-2">')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/^#{1,6}\s*(.+)$/gm, '$1')
+    .replace(/^[-•*]\s+(.+)$/gm, '$1')
+    .replace(/\n\n+/g, '</p><p class="mt-2">')
     .replace(/\n/g, '<br/>');
 }
 
@@ -109,7 +109,7 @@ export default function ManagerAI() {
 
   const insights: Insight[] = (insightsData as any)?.insights || [];
   const stats = (insightsData as any)?.stats;
-  const hasApiError = (insightsData as any)?.error?.includes("KIMI_API_KEY") || (insightsData as any)?.configured === false;
+  const hasApiError = (insightsData as any)?.error?.includes("MOONSHOT_API_KEY") || (insightsData as any)?.configured === false;
 
   return (
     <div className="min-h-screen bg-background" dir={isAr ? 'rtl' : 'ltr'}>
@@ -147,7 +147,7 @@ export default function ManagerAI() {
                 <p className="font-medium text-amber-700 dark:text-amber-400 text-sm">{tc('مفتاح API غير مضبوط', 'API Key Not Configured')}</p>
                 <p className="text-amber-600 dark:text-amber-500 text-xs mt-1">
                   {tc('لتفعيل الذكاء الاصطناعي، تأكد من ضبط مفتاح', 'To activate AI, make sure the key')}{" "}
-                  <code className="bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 rounded text-amber-700 dark:text-amber-300 font-mono text-[11px]">KIMI_API_KEY</code>{" "}
+                  <code className="bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 rounded text-amber-700 dark:text-amber-300 font-mono text-[11px]">MOONSHOT_API_KEY</code>{" "}
                   {tc('في متغيرات البيئة', 'is set in environment variables')} — <a href="https://platform.moonshot.ai" target="_blank" className="text-amber-600 underline">platform.moonshot.ai</a>
                 </p>
               </div>
