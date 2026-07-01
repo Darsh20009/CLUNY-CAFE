@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v10';
+const CACHE_VERSION = 'v11';
 const CACHE_NAME = `cluny-cache-${CACHE_VERSION}`;
 
 // Essential shell files to pre-cache during install
