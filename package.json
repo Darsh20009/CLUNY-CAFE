@@ -6,6 +6,7 @@
   "license": "MIT",
   "engines": { "node": ">=20.0.0 <22.0.0" },
   "scripts": {
+    "preinstall": "node -e \"if(process.env.RENDER){const fs=require('fs');try{fs.rmSync('node_modules',{recursive:true,force:true});console.log('[preinstall] Cleared node_modules for clean Render install');}catch(e){}}\"",
     "dev": "NODE_ENV=development node_modules/.bin/tsx server/index.ts",
     "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --minify --outfile=dist/index.js",
     "start": "node dist/index.js",
