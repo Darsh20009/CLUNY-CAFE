@@ -219,6 +219,7 @@ export default function CheckoutPage() {
   const [paymobCheckoutUrl, setPaymobCheckoutUrl] = useState("");
   const [paymobSessionId, setPaymobSessionId] = useState("");
   const isPaymobFlow = useRef(false);
+  const pendingApplePaySessionId = useRef<string | null>(null);
   const [orderDetails, setOrderDetails] = useState<any>(null);
   const [showSuccessPage, setShowSuccessPage] = useState(false);
   const [wasReservationOrder, setWasReservationOrder] = useState(false);
@@ -820,6 +821,10 @@ export default function CheckoutPage() {
       initiatePaymobDirect();
       return;
     }
+    if (selectedPaymentMethod === 'apple_pay') {
+      initiateApplePayNative();
+      return;
+    }
     if (isCardPaymentMethod(selectedPaymentMethod) || isOnlinePaymentMethod(selectedPaymentMethod)) {
       confirmAndCreateOrder();
       return;
@@ -839,10 +844,105 @@ export default function CheckoutPage() {
     return ['paymob-card', 'paymob-wallet', 'neoleap'].includes(method);
   };
 
-  // Geidea HPP payment methods (apple_pay routes through Geidea HPP)
+  // Geidea HPP payment methods
   const isOnlinePaymentMethod = (method: string | null) => {
     if (!method) return false;
-    return ['geidea', 'apple_pay'].includes(method);
+    return ['geidea'].includes(method);
+  };
+
+  // Native Apple Pay via ApplePaySession Direct API
+  const initiateApplePayNative = async () => {
+    const ApplePay = (window as any).ApplePaySession;
+    if (!ApplePay) {
+      toast({ variant: "destructive", title: "Apple Pay غير متاح", description: "Apple Pay يعمل فقط على Safari في أجهزة Apple" });
+      return;
+    }
+    setIsVerifyingPayment(true);
+    try {
+      const { orderData } = await buildOrderData();
+      const totalAmount = Number(orderData.totalAmount || 0).toFixed(2);
+      const orderRef = `CLN${Date.now()}`;
+
+      const paymentRequest: any = {
+        countryCode: 'SA',
+        currencyCode: 'SAR',
+        merchantCapabilities: ['supports3DS'],
+        supportedNetworks: ['visa', 'masterCard', 'mada'],
+        total: { label: 'CLUNY CAFE', amount: totalAmount, type: 'final' },
+      };
+
+      const session = new ApplePay(3, paymentRequest);
+
+      session.onvalidatemerchant = async (event: any) => {
+        try {
+          const res = await fetch('/api/payments/apple-pay/validate-merchant', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              validationUrl: event.validationURL,
+              amount: totalAmount,
+              currency: 'SAR',
+              orderRef,
+              customerPhone,
+              customerName,
+            }),
+          });
+          const data = await res.json();
+          if (data.success && data.merchantSession) {
+            pendingApplePaySessionId.current = data.sessionId;
+            session.completeMerchantValidation(data.merchantSession);
+          } else {
+            toast({ variant: "destructive", title: "خطأ Apple Pay", description: data.error || "فشل التحقق من المتجر" });
+            session.abort();
+            setIsVerifyingPayment(false);
+          }
+        } catch (e: any) {
+          toast({ variant: "destructive", title: "خطأ Apple Pay", description: e.message });
+          session.abort();
+          setIsVerifyingPayment(false);
+        }
+      };
+
+      session.onpaymentauthorized = async (event: any) => {
+        try {
+          const processRes = await fetch('/api/payments/apple-pay/process', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              sessionId: pendingApplePaySessionId.current,
+              paymentToken: event.payment.token,
+              orderData,
+            }),
+          });
+          const processData = await processRes.json();
+          if (processData.success) {
+            session.completePayment({ status: ApplePay.STATUS_SUCCESS });
+            // Create the order now that payment is captured
+            const finalOrder = { ...orderData, paymentMethod: 'apple_pay', paymentStatus: 'paid', transactionId: processData.transactionId };
+            createOrderMutation.mutate(finalOrder);
+          } else {
+            session.completePayment({ status: ApplePay.STATUS_FAILURE });
+            toast({ variant: "destructive", title: "فشل الدفع", description: processData.error || "فشل معالجة Apple Pay" });
+            setIsVerifyingPayment(false);
+          }
+        } catch (e: any) {
+          session.completePayment({ status: ApplePay.STATUS_FAILURE });
+          toast({ variant: "destructive", title: "خطأ", description: e.message });
+          setIsVerifyingPayment(false);
+        }
+      };
+
+      session.oncancel = () => {
+        setIsVerifyingPayment(false);
+      };
+
+      session.begin();
+    } catch (err: any) {
+      setIsVerifyingPayment(false);
+      toast({ variant: "destructive", title: "خطأ في Apple Pay", description: err.message });
+    }
   };
 
   const buildOrderData = async (): Promise<{ orderData: any; activeCustomerId: string | undefined }> => {

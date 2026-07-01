@@ -182,6 +182,15 @@ export default function PaymentMethods({
     // paymob-apple-pay and neoleap-apple-pay hidden — routes through Geidea for apple_pay
     if (['paymob-apple-pay', 'neoleap-apple-pay'].includes(method.id as string)) return null;
 
+    // apple_pay only works on Safari (ApplePaySession available) — hide on other browsers
+    if ((method.id as string) === 'apple_pay') {
+      const applePayAvailable =
+        typeof window !== 'undefined' &&
+        typeof (window as any).ApplePaySession !== 'undefined' &&
+        (window as any).ApplePaySession.canMakePayments();
+      if (!applePayAvailable) return null;
+    }
+
     // Coming Soon: show disabled card with badge
     if (isComingSoon) {
       return (

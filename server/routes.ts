@@ -3877,6 +3877,137 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ─── Apple Pay Direct API (Geidea) ───────────────────────────────────────
+  // Step 1+2: Create Geidea session → validate merchant with Apple via Geidea
+  app.post("/api/payments/apple-pay/validate-merchant", async (req, res) => {
+    try {
+      const { validationUrl, amount = 1, currency = 'SAR', orderRef, customerPhone, customerName } = req.body;
+      if (!validationUrl) return res.status(400).json({ error: "validationUrl مطلوب" });
+
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const config = await BusinessConfigModel.findOne({ tenantId }).lean();
+      const pg = (config as any)?.paymentGateway;
+
+      if (!pg || pg.provider !== 'geidea') return res.status(400).json({ error: "جيديا غير مفعّلة" });
+
+      const publicKey = pg.geidea?.publicKey;
+      const apiPassword = pg.geidea?.apiPassword;
+      const baseUrl = (pg.geidea?.baseUrl || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
+      const merchantIdentifier = pg.geidea?.applePayMerchantId || 'merchant.cluny.cafe';
+      const domainName = pg.geidea?.applePayDomain || 'cluny.cafe';
+      const displayName = (pg.geidea?.displayName || 'CLUNY CAFE').slice(0, 64);
+
+      if (!publicKey || !apiPassword) return res.status(400).json({ error: "بيانات جيديا غير مكتملة" });
+
+      const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
+      const merchantReferenceId = (orderRef || nanoid()).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
+
+      // Build HMAC signature
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const timestamp = `${now.getFullYear()}/${pad(now.getMonth()+1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+      const { createHmac } = await import('crypto');
+      const amountStr = Number(Number(amount).toFixed(2)).toFixed(2);
+      const sigData = `${publicKey}${amountStr}${currency}${merchantReferenceId}${timestamp}`;
+      const signature = createHmac('sha256', apiPassword).update(sigData).digest('base64');
+
+      // Step 1: Create Geidea session
+      const sessionBody: any = { amount: amountStr, currency, merchantReferenceId, timestamp, signature, language: 'ar', paymentOperation: 'Pay' };
+      const sessionRes = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+        body: JSON.stringify(sessionBody),
+      });
+      const sessionData = await sessionRes.json() as any;
+      const sessionId = sessionData?.session?.id;
+
+      if (!sessionRes.ok || !sessionId) {
+        console.error('[Apple Pay] Session creation failed:', sessionData);
+        return res.status(400).json({ error: "فشل إنشاء جلسة الدفع", details: sessionData?.detailedResponseMessage || sessionData });
+      }
+      console.log('[Apple Pay] Session created:', sessionId);
+
+      // Step 2: Validate merchant with Apple via Geidea
+      const merchantBody = { sessionId, validationUrl, merchantIdentifier, domainName, displayName, initiative: 'web', initiativeContext: domainName };
+      console.log('[Apple Pay] Validating merchant:', merchantBody);
+      const merchantRes = await fetch(`${baseUrl}/payment/api/v1/direct/apple/merchant-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+        body: JSON.stringify(merchantBody),
+      });
+      const merchantData = await merchantRes.json() as any;
+
+      if (!merchantRes.ok) {
+        console.error('[Apple Pay] Merchant validation failed:', merchantRes.status, merchantData);
+        return res.status(merchantRes.status).json({
+          error: merchantRes.status === 401
+            ? "Apple Pay غير مفعّل على حساب جيديا — تواصل مع دعم جيديا لتفعيله"
+            : "فشل التحقق من المتجر مع Apple",
+          details: merchantData?.message || merchantData,
+          geidea_status: merchantRes.status,
+        });
+      }
+
+      return res.json({ success: true, sessionId, merchantSession: merchantData });
+    } catch (err: any) {
+      console.error('[Apple Pay] validate-merchant error:', err);
+      return res.status(500).json({ error: "خطأ في التحقق من المتجر", details: err.message });
+    }
+  });
+
+  // Step 3: Process Apple Pay payment token via Geidea Direct API
+  app.post("/api/payments/apple-pay/process", async (req, res) => {
+    try {
+      const { sessionId, paymentToken, orderData } = req.body;
+      if (!sessionId || !paymentToken) return res.status(400).json({ error: "sessionId و paymentToken مطلوبان" });
+
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const config = await BusinessConfigModel.findOne({ tenantId }).lean();
+      const pg = (config as any)?.paymentGateway;
+
+      const publicKey = pg?.geidea?.publicKey;
+      const apiPassword = pg?.geidea?.apiPassword;
+      const baseUrl = (pg?.geidea?.baseUrl || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
+
+      if (!publicKey || !apiPassword) return res.status(400).json({ error: "بيانات جيديا غير مكتملة" });
+
+      const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
+
+      // Call Geidea Direct API with Apple Pay token
+      const processBody = {
+        sessionId,
+        paymentMethod: {
+          type: 'applePay',
+          tokenizationData: paymentToken,
+        },
+      };
+      console.log('[Apple Pay] Processing payment, sessionId:', sessionId);
+      const processRes = await fetch(`${baseUrl}/payment-intent/api/v2/direct`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+        body: JSON.stringify(processBody),
+      });
+      const processData = await processRes.json() as any;
+      console.log('[Apple Pay] Process response:', JSON.stringify(processData));
+
+      const detailedCode = processData?.detailedResponseCode || processData?.responseCode;
+      const isSuccess = processRes.ok && (detailedCode === '000' || detailedCode === '00' || processData?.status === 'Success');
+
+      if (!isSuccess) {
+        return res.status(400).json({
+          error: processData?.detailedResponseMessage || processData?.responseMessage || "فشل معالجة دفع Apple Pay",
+          details: processData,
+        });
+      }
+
+      const transactionId = processData?.transaction?.transactionId || processData?.order?.orderId || sessionId;
+      return res.json({ success: true, transactionId, details: processData });
+    } catch (err: any) {
+      console.error('[Apple Pay] process error:', err);
+      return res.status(500).json({ error: "خطأ في معالجة دفع Apple Pay", details: err.message });
+    }
+  });
+
   app.post("/api/payments/verify", async (req, res) => {
     try {
       const {
