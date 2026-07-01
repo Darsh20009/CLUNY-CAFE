@@ -160,6 +160,7 @@ export default function PaymentMethods({
     const isNeoLeap = (method.id as string) === 'neoleap';
     const isStcPay = (method.id as string) === 'stc-pay';
     const isLoyaltyCard = (method.id as string) === 'loyalty-card';
+    const isApplePay = ['apple_pay', 'paymob-apple-pay', 'neoleap-apple-pay'].includes(method.id as string);
     const isSelected = selectedMethod === method.id;
     const isComingSoon = COMING_SOON_METHODS.includes(method.id as string);
 
