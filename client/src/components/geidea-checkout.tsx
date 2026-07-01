@@ -1,26 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, CreditCard, CheckCircle, XCircle, RefreshCw, FlaskConical } from "lucide-react";
+import { Loader2, CreditCard, CheckCircle, XCircle, RefreshCw, FlaskConical, X, GripHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslate } from "@/lib/useTranslate";
-
-const HPP_BASE = "https://www.ksamerchant.geidea.net/hpp/";
-
-interface GeideaSessionConfig {
-  merchantPublicKey: string;
-  orderAmount: string;
-  orderCurrency: string;
-  merchantReferenceId: string;
-  callbackUrl: string;
-  signature: string;
-  timestamp: string;
-}
 
 interface GeideaCheckoutProps {
   orderNumber: string;
   amount: number;
   customerPhone?: string;
   customerEmail?: string;
+  customerName?: string;
   onSuccess: () => void;
   onError: (message: string) => void;
   onCancel: () => void;
@@ -33,6 +22,7 @@ export default function GeideaCheckoutWidget({
   amount,
   customerPhone,
   customerEmail,
+  customerName,
   onSuccess,
   onError,
   onCancel,
@@ -50,7 +40,7 @@ export default function GeideaCheckoutWidget({
 
   const isTestMode = !!payCfg?.paymentTestMode;
 
-  const fetchConfig = async () => {
+  const fetchSession = async () => {
     if (!mountedRef.current) return;
     setStage("loading");
     setErrorMsg("");
@@ -61,49 +51,33 @@ export default function GeideaCheckoutWidget({
     }
 
     try {
-      const callbackUrl = `${window.location.origin}/api/payments/geidea/callback`;
-      const res = await fetch("/api/payments/geidea/session-config", {
+      const returnUrl = `${window.location.origin}/payment-return?provider=geidea&orderNumber=${encodeURIComponent(orderNumber)}`;
+      const res = await fetch("/api/payments/init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          orderId: orderNumber,
           amount,
           currency: "SAR",
-          merchantReferenceId: orderNumber,
-          callbackUrl,
+          customerName,
+          customerPhone,
+          customerEmail,
+          returnUrl,
         }),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "config_failed");
+
+      const data = await res.json();
+      if (!res.ok || !data.redirectUrl) {
+        throw new Error(data.details || data.error || "فشل إنشاء جلسة الدفع");
       }
-      const cfg: GeideaSessionConfig = await res.json();
-      const returnUrl = `${window.location.origin}/payment-return`;
-      const params = new URLSearchParams({
-        merchantPublicKey: cfg.merchantPublicKey,
-        orderAmount: cfg.orderAmount,
-        orderCurrency: cfg.orderCurrency,
-        merchantReferenceId: cfg.merchantReferenceId,
-        timestamp: cfg.timestamp,
-        signature: cfg.signature,
-        callbackUrl: cfg.callbackUrl || callbackUrl,
-        returnUrl,
-        language: "ar",
-        showEmail: "false",
-        showPhone: "false",
-      });
-      if (customerEmail) params.set("customerEmail", customerEmail);
-      if (customerPhone) {
-        const clean = customerPhone.replace(/^\+966/, "").replace(/^966/, "").replace(/^0/, "");
-        params.set("customerPhone", clean);
-        params.set("customerMobileCountryCode", "966");
-      }
+
       if (mountedRef.current) {
-        setHppUrl(`${HPP_BASE}?${params.toString()}`);
+        setHppUrl(data.redirectUrl);
         setStage("ready");
       }
     } catch (err: any) {
       if (!mountedRef.current) return;
-      const msg = tc("تعذّر الاتصال ببوابة الدفع. تحقق من إعدادات Geidea.", "Could not connect to payment gateway. Check Geidea settings.");
+      const msg = err.message || tc("تعذّر الاتصال ببوابة الدفع.", "Could not connect to payment gateway.");
       setErrorMsg(msg);
       setStage("error");
       onError(msg);
@@ -112,7 +86,7 @@ export default function GeideaCheckoutWidget({
 
   useEffect(() => {
     mountedRef.current = true;
-    if (payCfg !== undefined) fetchConfig();
+    if (payCfg !== undefined) fetchSession();
     return () => { mountedRef.current = false; };
   }, [payCfg]);
 
@@ -167,8 +141,7 @@ export default function GeideaCheckoutWidget({
           }
         }
       }
-    } catch {
-    }
+    } catch { }
   };
 
   if (stage === "success") {
@@ -192,7 +165,7 @@ export default function GeideaCheckoutWidget({
           <p className="font-bold text-lg text-red-700 dark:text-red-400">{tc("تعذّر إتمام الدفع", "Payment Failed")}</p>
           <p className="text-sm text-muted-foreground">{errorMsg}</p>
         </div>
-        <Button variant="outline" onClick={() => { setStage("loading"); fetchConfig(); }} className="mt-2 gap-2" data-testid="button-retry-geidea">
+        <Button variant="outline" onClick={() => { setStage("loading"); fetchSession(); }} className="mt-2 gap-2" data-testid="button-retry-geidea">
           <RefreshCw className="w-4 h-4" />
           {tc("حاول مرة أخرى", "Try Again")}
         </Button>
@@ -210,56 +183,100 @@ export default function GeideaCheckoutWidget({
     );
   }
 
-  if (stage === "iframe") {
-    return (
-      <div className="fixed inset-0 z-[9999] bg-white flex flex-col" data-testid="geidea-iframe-overlay">
-        <div className="flex items-center justify-between px-4 py-2 bg-primary text-white text-sm font-semibold shrink-0">
-          <span>🔒 {tc("الدفع الآمن — Geidea", "Secure Payment — Geidea")}</span>
-          <button
-            onClick={() => { setStage("ready"); onCancel(); }}
-            className="text-white/80 hover:text-white text-lg font-bold leading-none px-2"
-            data-testid="button-close-geidea-iframe"
-          >
-            ✕
-          </button>
-        </div>
-        <iframe
-          src={hppUrl}
-          className="flex-1 w-full border-none"
-          title="Geidea Payment"
-          allow="payment *"
-          sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-top-navigation"
-          onLoad={handleIframeLoad}
-          data-testid="iframe-geidea-hpp"
-        />
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col items-center justify-center gap-4 p-8 bg-primary/5 rounded-xl border border-primary/20">
-      <CreditCard className="w-10 h-10 text-primary" />
-      <div className="text-center space-y-2">
-        <p className="font-semibold text-foreground text-lg">{tc("بوابة الدفع جاهزة", "Payment Gateway Ready")}</p>
-        <p className="text-sm text-muted-foreground">{tc("اضغط الزر أدناه لفتح صفحة الدفع", "Press the button below to open the payment page")}</p>
+    <>
+      {/* Trigger card shown in the checkout dialog */}
+      <div className="flex flex-col items-center justify-center gap-4 p-8 bg-primary/5 rounded-xl border border-primary/20">
+        <CreditCard className="w-10 h-10 text-primary" />
+        <div className="text-center space-y-2">
+          <p className="font-semibold text-foreground text-lg">{tc("بوابة الدفع جاهزة", "Payment Gateway Ready")}</p>
+          <p className="text-sm text-muted-foreground">{tc("اضغط الزر أدناه لفتح صفحة الدفع", "Press the button below to open the payment page")}</p>
+        </div>
+        {isTestMode ? (
+          <Button size="lg" onClick={handleTestPay} className="gap-2 w-full max-w-xs" data-testid="button-open-geidea">
+            <FlaskConical className="w-4 h-4" />
+            {tc("محاكاة الدفع (وضع الاختبار)", "Simulate Payment (Test Mode)")}
+          </Button>
+        ) : (
+          <Button
+            size="lg"
+            onClick={() => setStage("iframe")}
+            className="gap-2 w-full max-w-xs"
+            data-testid="button-open-geidea"
+          >
+            <CreditCard className="w-4 h-4" />
+            {tc("ادفع الآن", "Pay Now")}
+          </Button>
+        )}
+        <p className="text-xs text-muted-foreground">🔒 {tc("دفع آمن ومشفّر بواسطة Geidea", "Secure encrypted payment by Geidea")}</p>
       </div>
-      {isTestMode ? (
-        <Button size="lg" onClick={handleTestPay} className="gap-2 w-full max-w-xs" data-testid="button-open-geidea">
-          <FlaskConical className="w-4 h-4" />
-          {tc("محاكاة الدفع (وضع الاختبار)", "Simulate Payment (Test Mode)")}
-        </Button>
-      ) : (
-        <Button
-          size="lg"
-          onClick={() => setStage("iframe")}
-          className="gap-2 w-full max-w-xs"
-          data-testid="button-open-geidea"
-        >
-          <CreditCard className="w-4 h-4" />
-          {tc("ادفع الآن", "Pay Now")}
-        </Button>
+
+      {/* Bottom Sheet */}
+      {stage === "iframe" && (
+        <div className="fixed inset-0 z-[9999] flex flex-col justify-end" data-testid="geidea-bottom-sheet">
+          {/* Dark overlay — click to cancel */}
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            style={{ animation: "fadeIn 0.2s ease" }}
+            onClick={() => { setStage("ready"); onCancel(); }}
+          />
+
+          {/* Sheet itself */}
+          <div
+            className="relative bg-white dark:bg-zinc-900 rounded-t-3xl shadow-2xl flex flex-col"
+            style={{
+              height: "90vh",
+              animation: "slideUp 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
+            }}
+          >
+            {/* Handle + header */}
+            <div className="flex flex-col items-center pt-3 pb-2 px-4 shrink-0 border-b border-gray-100 dark:border-zinc-800">
+              <div className="w-12 h-1.5 rounded-full bg-gray-300 dark:bg-zinc-600 mb-3" />
+              <div className="flex items-center justify-between w-full">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">🔒</span>
+                  <div>
+                    <p className="font-bold text-sm text-gray-900 dark:text-white leading-tight">
+                      {tc("الدفع الآمن", "Secure Payment")}
+                    </p>
+                    <p className="text-xs text-gray-400">{tc("مدعوم من Geidea", "Powered by Geidea")}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setStage("ready"); onCancel(); }}
+                  className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 dark:bg-zinc-800 text-gray-500 hover:bg-gray-200 dark:hover:bg-zinc-700 transition-colors"
+                  data-testid="button-close-geidea-sheet"
+                  aria-label="إغلاق"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* iframe */}
+            <iframe
+              src={hppUrl}
+              className="flex-1 w-full border-none"
+              title="Geidea Payment"
+              allow="payment *"
+              sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-top-navigation"
+              onLoad={handleIframeLoad}
+              data-testid="iframe-geidea-hpp"
+            />
+          </div>
+
+          <style>{`
+            @keyframes fadeIn {
+              from { opacity: 0; }
+              to   { opacity: 1; }
+            }
+            @keyframes slideUp {
+              from { transform: translateY(100%); }
+              to   { transform: translateY(0); }
+            }
+          `}</style>
+        </div>
       )}
-      <p className="text-xs text-muted-foreground">🔒 {tc("دفع آمن ومشفّر بواسطة Geidea", "Secure encrypted payment by Geidea")}</p>
-    </div>
+    </>
   );
 }

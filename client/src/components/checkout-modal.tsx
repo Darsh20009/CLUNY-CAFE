@@ -398,6 +398,7 @@ const CheckoutModal = memo(() => {
      <GeideaCheckoutWidget
        orderNumber={orderDetails.orderNumber}
        amount={getTotalPrice()}
+       customerName={customerName}
        customerPhone={customerPhone}
        customerEmail={customer?.email}
        onSuccess={() => {
