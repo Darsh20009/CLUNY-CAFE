@@ -15,6 +15,7 @@ import {
 } from "recharts";
 import SarIcon from "@/components/sar-icon";
 import DashboardAnalyticsPanel from "@/components/dashboard-analytics-panel";
+import TopProductsWidget from "@/components/top-products-widget";
 import { useTranslate } from "@/lib/useTranslate";
 import { ManagerSidebar, MobileBottomNav } from "@/components/manager-sidebar";
 import { apiRequest } from "@/lib/queryClient";
@@ -400,6 +401,11 @@ export default function AdminDashboard() {
 
           {/* Weekly Stats, Profits & Product Consumption */}
           <DashboardAnalyticsPanel />
+
+          {/* Top Products Widget */}
+          <div className="mb-4">
+            <TopProductsWidget />
+          </div>
 
           {/* Quick Links + Employee List */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

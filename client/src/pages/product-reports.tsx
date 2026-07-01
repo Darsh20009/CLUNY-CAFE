@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { getQueryFn } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -89,9 +90,8 @@ function BarMini({ value, max, color }: { value: number; max: number; color: str
 function ProductDetailView({ itemId, year, onBack }: { itemId: string; year: number; onBack: () => void }) {
   const printRef = useRef<HTMLDivElement>(null);
   const { data, isLoading } = useQuery<ProductDetail>({
-    queryKey: ["/api/analytics/products", itemId, year],
-    queryFn: () =>
-      fetch(`/api/analytics/products/${itemId}?year=${year}`, { credentials: "include" }).then(r => r.json()),
+    queryKey: [`/api/analytics/products/${itemId}?year=${year}`],
+    queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
   const handlePrint = () => {
@@ -455,20 +455,119 @@ function ProductDetailView({ itemId, year, onBack }: { itemId: string; year: num
   );
 }
 
+// ─── Saudi timezone helpers ───────────────────────────────────────────────────
+function saudiToday() {
+  const now = new Date();
+  const sa = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Riyadh" }));
+  const y = sa.getFullYear(), m = String(sa.getMonth() + 1).padStart(2, "0"), d = String(sa.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+function saudiOffset(days: number) {
+  const now = new Date();
+  const sa = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Riyadh" }));
+  sa.setDate(sa.getDate() + days);
+  const y = sa.getFullYear(), m = String(sa.getMonth() + 1).padStart(2, "0"), d = String(sa.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+const DATE_SHORTCUTS = [
+  {
+    label: "اليوم", key: "today",
+    get: () => { const t = saudiToday(); return { from: t, to: t }; },
+  },
+  {
+    label: "أمس", key: "yesterday",
+    get: () => { const t = saudiOffset(-1); return { from: t, to: t }; },
+  },
+  {
+    label: "قبل أمس", key: "2daysago",
+    get: () => { const t = saudiOffset(-2); return { from: t, to: t }; },
+  },
+  {
+    label: "هذا الأسبوع", key: "thisweek",
+    get: () => {
+      const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Riyadh" }));
+      const day = now.getDay(); // 0=Sun
+      const startOffset = -(day === 0 ? 6 : day - 1); // start on Monday
+      return { from: saudiOffset(startOffset), to: saudiToday() };
+    },
+  },
+  {
+    label: "الأسبوع الماضي", key: "lastweek",
+    get: () => {
+      const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Riyadh" }));
+      const day = now.getDay();
+      const endOffset = -(day === 0 ? 0 : day);
+      const startOffset = endOffset - 6;
+      return { from: saudiOffset(startOffset), to: saudiOffset(endOffset) };
+    },
+  },
+  {
+    label: "هذا الشهر", key: "thismonth",
+    get: () => {
+      const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Riyadh" }));
+      const y = now.getFullYear(), m = String(now.getMonth() + 1).padStart(2, "0");
+      return { from: `${y}-${m}-01`, to: saudiToday() };
+    },
+  },
+  {
+    label: "الشهر الماضي", key: "lastmonth",
+    get: () => {
+      const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Riyadh" }));
+      const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const last = new Date(now.getFullYear(), now.getMonth(), 0);
+      const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      return { from: fmt(first), to: fmt(last) };
+    },
+  },
+  {
+    label: "هذا العام", key: "thisyear",
+    get: () => {
+      const y = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Riyadh" })).getFullYear();
+      return { from: `${y}-01-01`, to: saudiToday() };
+    },
+  },
+  {
+    label: "العام الماضي", key: "lastyear",
+    get: () => {
+      const y = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Riyadh" })).getFullYear() - 1;
+      return { from: `${y}-01-01`, to: `${y}-12-31` };
+    },
+  },
+  {
+    label: "كل الفترات", key: "all",
+    get: () => ({ from: "2023-01-01", to: saudiToday() }),
+  },
+];
+
 export default function ProductReportsPage() {
   const [, setLocation] = useLocation();
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [fromDate, setFromDate] = useState(() => `${new Date().getFullYear()}-01-01`);
-  const [toDate, setToDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [activeShortcut, setActiveShortcut] = useState<string>("thismonth");
+  const [fromDate, setFromDate] = useState(() => {
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Riyadh" }));
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  });
+  const [toDate, setToDate] = useState(() => saudiToday());
   const [sort, setSort] = useState<"qty" | "revenue" | "name" | "zero">("qty");
   const [year, setYear] = useState(new Date().getFullYear());
   const printRef = useRef<HTMLDivElement>(null);
 
+  function applyShortcut(key: string) {
+    const sc = DATE_SHORTCUTS.find(s => s.key === key);
+    if (!sc) return;
+    const { from, to } = sc.get();
+    setFromDate(from);
+    setToDate(to);
+    setActiveShortcut(key);
+  }
+
+  const apiUrl = `/api/analytics/products?from=${fromDate}&to=${toDate}`;
+
   const { data, isLoading, refetch } = useQuery<{ products: ProductSummary[]; period: any; totalOrders: number }>({
-    queryKey: ["/api/analytics/products", fromDate, toDate],
-    queryFn: () =>
-      fetch(`/api/analytics/products?from=${fromDate}&to=${toDate}`, { credentials: "include" }).then(r => r.json()),
+    queryKey: [apiUrl],
+    queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
   const products = data?.products || [];
@@ -558,17 +657,36 @@ export default function ProductReportsPage() {
 
       {/* Filters */}
       <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap gap-3 items-end">
-            <div className="flex-1 min-w-[160px]">
+        <CardContent className="p-4 space-y-3">
+          {/* Date Shortcuts */}
+          <div>
+            <p className="text-xs font-medium text-muted-foreground mb-2">اختصارات الفترة</p>
+            <div className="flex flex-wrap gap-1.5">
+              {DATE_SHORTCUTS.map(sc => (
+                <Button
+                  key={sc.key}
+                  size="sm"
+                  variant={activeShortcut === sc.key ? "default" : "outline"}
+                  className={`h-7 text-xs px-3 ${activeShortcut === sc.key ? "bg-[#2D9B6E] hover:bg-[#25845c] text-white" : ""}`}
+                  onClick={() => applyShortcut(sc.key)}
+                >
+                  {sc.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {/* Manual inputs + sort + search */}
+          <div className="flex flex-wrap gap-3 items-end pt-1 border-t">
+            <div className="flex-1 min-w-[140px]">
               <label className="text-xs font-medium text-muted-foreground mb-1 block">من تاريخ</label>
-              <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="text-sm" />
+              <Input type="date" value={fromDate} onChange={e => { setFromDate(e.target.value); setActiveShortcut("custom"); }} className="text-sm" />
             </div>
-            <div className="flex-1 min-w-[160px]">
+            <div className="flex-1 min-w-[140px]">
               <label className="text-xs font-medium text-muted-foreground mb-1 block">إلى تاريخ</label>
-              <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="text-sm" />
+              <Input type="date" value={toDate} onChange={e => { setToDate(e.target.value); setActiveShortcut("custom"); }} className="text-sm" />
             </div>
-            <div className="flex-1 min-w-[160px]">
+            <div className="flex-1 min-w-[130px]">
               <label className="text-xs font-medium text-muted-foreground mb-1 block">السنة للتفاصيل</label>
               <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
                 <SelectTrigger className="text-sm"><SelectValue /></SelectTrigger>
@@ -579,7 +697,7 @@ export default function ProductReportsPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex-1 min-w-[160px]">
+            <div className="flex-1 min-w-[150px]">
               <label className="text-xs font-medium text-muted-foreground mb-1 block">ترتيب حسب</label>
               <Select value={sort} onValueChange={v => setSort(v as any)}>
                 <SelectTrigger className="text-sm"><SelectValue /></SelectTrigger>
@@ -591,7 +709,7 @@ export default function ProductReportsPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex-1 min-w-[200px]">
+            <div className="flex-1 min-w-[180px]">
               <label className="text-xs font-medium text-muted-foreground mb-1 block">بحث</label>
               <div className="relative">
                 <Search className="absolute right-2.5 top-2.5 w-3.5 h-3.5 text-muted-foreground" />
@@ -599,6 +717,11 @@ export default function ProductReportsPage() {
               </div>
             </div>
           </div>
+
+          {/* Active period indicator */}
+          <p className="text-xs text-muted-foreground">
+            الفترة المحددة: <span className="font-medium text-foreground">{fromDate}</span> ← <span className="font-medium text-foreground">{toDate}</span>
+          </p>
         </CardContent>
       </Card>
 

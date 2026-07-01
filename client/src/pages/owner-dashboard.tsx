@@ -22,6 +22,7 @@ import { apiRequest } from "@/lib/queryClient";
 import type { Employee } from "@shared/schema";
 import SarIcon from "@/components/sar-icon";
 import DashboardAnalyticsPanel from "@/components/dashboard-analytics-panel";
+import TopProductsWidget from "@/components/top-products-widget";
 import { ManagerSidebar, MobileBottomNav } from "@/components/manager-sidebar";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -793,6 +794,11 @@ export default function OwnerDashboard() {
             {/* ── Weekly Stats, Profits & Product Consumption ── */}
             <div className="mb-6">
               <DashboardAnalyticsPanel branchId={selectedBranchFilter || undefined} />
+            </div>
+
+            {/* ── Top Products Widget ── */}
+            <div className="mb-6">
+              <TopProductsWidget branchId={selectedBranchFilter || undefined} />
             </div>
 
             <Card className="bg-card border border-border mb-6">
