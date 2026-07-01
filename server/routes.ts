@@ -21159,8 +21159,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
       const { branchId, from, to } = req.query as Record<string, string>;
 
-      const startDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
-      const endDate = to ? new Date(to) : new Date();
+      const startDate = from ? new Date(from + "T00:00:00+03:00") : new Date(new Date().getFullYear(), 0, 1);
+      const endDate = to ? new Date(to + "T23:59:59.999+03:00") : new Date();
 
       const matchQ: any = { tenantId, createdAt: { $gte: startDate, $lte: endDate }, status: { $nin: ['cancelled'] } };
       if (branchId) matchQ.branchId = branchId;
