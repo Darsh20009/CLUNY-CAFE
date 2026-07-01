@@ -1,9 +1,9 @@
 services:
   - type: web
-    name: qahwacup
+    name: cluny-cafe
     runtime: node
-    buildCommand: npm ci && NODE_OPTIONS=--max-old-space-size=3072 npm run build
-    startCommand: npm run start
+    buildCommand: npm ci --prefer-offline && NODE_OPTIONS=--max-old-space-size=3072 npm run build
+    startCommand: node dist/index.js
     envVars:
       - key: NODE_ENV
         value: production
