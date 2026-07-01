@@ -1,0 +1,44 @@
+cluny.cafe
+
+Your free instance will spin down with inactivity, which can delay requests by 50 seconds or more.
+Upgrade now
+July 1, 2026 at 3:43 PM
+failed
+d617997
+Update Node.js version to resolve build errors Update the project's Node.js engine to version 18 to use a compatible version of npm, resolving build failures caused by npm version 10 bugs on the deployment platform. Replit-Commit-Author: Agent Replit-Commit-Session-Id: e83e2287-9153-4c42-a1cc-a27dd33cd823 Replit-Commit-Checkpoint-Type: full_checkpoint Replit-Commit-Event-Id: f413c5ab-cff1-4aa3-a7b1-257d453701cb Replit-Commit-Screenshot-Url: https://storage.googleapis.com/screenshot-production-us-central1/3b15fdb9-3be0-4088-bcc2-071e645f2a1e/e83e2287-9153-4c42-a1cc-a27dd33cd823/zfXNAMh Replit-Helium-Checkpoint-Created: true
+
+Rollback
+Exited with status 1 while building your code.
+Read our docs for common ways to troubleshoot your deploy.
+
+All logs
+Search
+Search logs
+
+Live tail
+
+
+
+==> Downloading cache...
+==> Cloning from https://github.com/Darsh20009/CLUNY-CAFE
+==> Checking out commit d6179972241b93b2a612c0264400a374563ab2e2 in branch main
+==> Downloaded 200KB in 1s. Extraction took 0s.
+==> Using Node.js version 18.17.0 via /opt/render/project/src/.node-version
+==> Node.js version 18.17.0 has reached end-of-life.
+==> Upgrade to a maintained version to receive important security updates.
+==> Information on maintained Node.js versions: https://nodejs.org/en/about/previous-releases
+==> Docs on specifying a Node.js version: https://render.com/docs/node-version
+==> Installing Node.js version 18.17.0...
+==> Running build command 'npm ci && NODE_OPTIONS=--max-old-space-size=3072 npm run build'...
+npm ERR! code ENOTFOUND
+npm ERR! syscall getaddrinfo
+npm ERR! errno ENOTFOUND
+npm ERR! network request to http://package-firewall.replit.local/npm/zod-validation-error/-/zod-validation-error-3.5.4.tgz failed, reason: getaddrinfo ENOTFOUND package-firewall.replit.local
+npm ERR! network This is a problem related to network connectivity.
+npm ERR! network In most cases you are behind a proxy or have bad network settings.
+npm ERR! network 
+npm ERR! network If you are behind a proxy, please make sure that the
+npm ERR! network 'proxy' config is set properly.  See: 'npm help config'
+npm ERR! A complete log of this run can be found in: /opt/render/.cache/_logs/2026-07-01T12_43_21_966Z-debug-0.log
+==> Build failed 😞
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys

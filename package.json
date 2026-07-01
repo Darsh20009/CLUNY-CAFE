@@ -4,7 +4,7 @@
   "description": "CLUNY CAFE - نظام إدارة المقاهي الرقمي الشامل | CLUNY SYSTEMS - Employee Portal",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=18.0.0" },
+  "engines": { "node": ">=18.0.0 <23.0.0" },
   "scripts": {
     "dev": "NODE_ENV=development node_modules/.bin/tsx server/index.ts",
     "build": "sh build.sh",
