@@ -1,0 +1,20 @@
+1:59:37 PM [express] POST /api/payments/create-session-token 200 in 244ms :: {"token":"67a62a7cf0e05…
+[Geidea] eInvoice request body: {"amount":1.35,"currency":"SAR","merchantReferenceId":"CLN1782914373734","customer":{"name":"jhb"},"callbackUrl":"https://1958fa44-62a3-4182-b157-1d2294391e10-00-3hf2nrgi72ztk.sisko.replit.dev/payment-return?pt=67a62a7cf0e05e574444600517ad69d07dbcf57f2399ea3996e05b6710e2ddd2&provider=geidea","returnUrl":"https://1958fa44-62a3-4182-b157-1d2294391e10-00-3hf2nrgi72ztk.sisko.replit.dev/payment-return?pt=67a62a7cf0e05e574444600517ad69d07dbcf57f2399ea3996e05b6710e2ddd2&provider=geidea"}
+[Geidea] eInvoice response: {"Customer.Email":["'Email' must not be empty.","At least one of 'Email' or 'PhoneNumber' must not be empty"]}
+[Geidea] Payment init failed: {
+  'Customer.Email': [
+    "'Email' must not be empty.",
+    "At least one of 'Email' or 'PhoneNumber' must not be empty"
+  ]
+}
+1:59:38 PM [express] POST /api/payments/init 400 in 1253ms :: {"error":"فشل في إنشاء رابط الدفع عبر …
+1:59:41 PM [express] POST /api/payments/create-session-token 200 in 222ms :: {"token":"59528ee6c3780…
+[Geidea] eInvoice request body: {"amount":1.35,"currency":"SAR","merchantReferenceId":"CLN1782914378162","customer":{"name":"jhb"},"callbackUrl":"https://1958fa44-62a3-4182-b157-1d2294391e10-00-3hf2nrgi72ztk.sisko.replit.dev/payment-return?pt=59528ee6c3780320a7242cd3c6f971c1655dc0468ce63cd07c9b64c9d63d02c9&provider=geidea","returnUrl":"https://1958fa44-62a3-4182-b157-1d2294391e10-00-3hf2nrgi72ztk.sisko.replit.dev/payment-return?pt=59528ee6c3780320a7242cd3c6f971c1655dc0468ce63cd07c9b64c9d63d02c9&provider=geidea"}
+[Geidea] eInvoice response: {"Customer.Email":["'Email' must not be empty.","At least one of 'Email' or 'PhoneNumber' must not be empty"]}
+[Geidea] Payment init failed: {
+  'Customer.Email': [
+    "'Email' must not be empty.",
+    "At least one of 'Email' or 'PhoneNumber' must not be empty"
+  ]
+}
+1:59:42 PM [express] POST /api/payments/init 400 in 753ms :: {"error":"فشل في إنشاء رابط الدفع عبر ج…

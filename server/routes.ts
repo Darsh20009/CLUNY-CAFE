@@ -3443,11 +3443,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const cleanPhone = (customerPhone || '').replace(/\D/g, '')
             .replace(/^00966/, '').replace(/^\+?966/, '').replace(/^0/, '').slice(-9);
 
-          // Geidea requires Name — use phone as fallback for guest checkouts
+          // Geidea requires Name + (email OR phoneNumber)
           const geideaCustomer: any = {
             name: (customerName || '').trim() || (cleanPhone ? `Customer${cleanPhone}` : 'Customer'),
           };
-          if (customerEmail) geideaCustomer.email = customerEmail;
+          if (customerEmail) {
+            geideaCustomer.email = customerEmail;
+          } else if (cleanPhone) {
+            // Geidea expects full Saudi format: 05XXXXXXXX
+            geideaCustomer.phoneNumber = cleanPhone.length === 9 ? `0${cleanPhone}` : cleanPhone;
+          } else {
+            // Hard fallback so the request is never rejected
+            geideaCustomer.email = 'guest@cluny.cafe';
+          }
 
           const geideaBody: any = {
             amount: Number(Number(amount).toFixed(2)),
