@@ -796,16 +796,31 @@ app.use((req, res, next) => {
       console.error('⚠️ Auto-migration of main branch skipped:', err);
     }
 
-    // Ensure paymentTestMode is OFF on every startup
+    // ── Ensure Geidea credentials are always set and test mode is OFF ───────────
     try {
       const { BusinessConfigModel: BCM } = await import("./models");
+      const GEIDEA_PUBLIC_KEY   = process.env.GEIDEA_PUBLIC_KEY   || '5bf49a11-693b-4d3c-9d85-4f757d03cc1c';
+      const GEIDEA_API_PASSWORD = process.env.GEIDEA_API_PASSWORD || 'c37321b2-9785-4439-8e53-61005f13fab3';
+      const GEIDEA_BASE_URL     = process.env.GEIDEA_BASE_URL     || 'https://api.ksamerchant.geidea.net';
+
       await BCM.updateOne(
-        { tenantId: 'demo-tenant', 'paymentGateway.paymentTestMode': true },
-        { $set: { 'paymentGateway.paymentTestMode': false } }
+        { tenantId: 'demo-tenant' },
+        {
+          $set: {
+            'paymentGateway.provider':                   'geidea',
+            'paymentGateway.geidea.publicKey':           GEIDEA_PUBLIC_KEY,
+            'paymentGateway.geidea.apiPassword':         GEIDEA_API_PASSWORD,
+            'paymentGateway.geidea.baseUrl':             GEIDEA_BASE_URL,
+            'paymentGateway.geidea.applePayMerchantId': process.env.APPLE_PAY_MERCHANT_ID || 'merchant.cluny.cafe',
+            'paymentGateway.paymentTestMode':            false,
+            'paymentGateway.qahwaCardEnabled':           true,
+          }
+        },
+        { upsert: false }
       );
-      console.log('✅ Payment test mode verified OFF');
+      console.log('✅ Geidea payment gateway configured — test mode OFF');
     } catch (err) {
-      console.error('⚠️ Could not reset paymentTestMode:', err);
+      console.error('⚠️ Could not configure Geidea gateway:', err);
     }
 
     // Auto-configure PayMob Saudi Arabia payment gateway when credentials are provided
