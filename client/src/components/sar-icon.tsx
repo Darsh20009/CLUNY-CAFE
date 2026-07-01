@@ -3,16 +3,15 @@ interface SarIconProps {
   size?: number;
 }
 
-export function SarIcon({ className = "", size = 14 }: SarIconProps) {
+export function SarIcon({ className = "", size = 16 }: SarIconProps) {
   return (
-    <img
-      src="/sar-icon.png"
-      alt="ر.س"
-      className={`inline-block align-middle select-none brightness-0 dark:invert ${className}`}
-      style={{ width: size, height: size, objectFit: "contain" }}
-      draggable={false}
+    <span
+      className={`inline-flex items-center justify-center font-bold select-none ${className}`}
+      style={{ fontSize: size, lineHeight: 1, fontFamily: "'Cairo', 'Arial', sans-serif" }}
       aria-label="ريال سعودي"
-    />
+    >
+      ر.س
+    </span>
   );
 }
 

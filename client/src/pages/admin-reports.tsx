@@ -2,176 +2,54 @@ import { useState, useMemo } from 'react';
 import { useTranslate } from "@/lib/useTranslate";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { ArrowUp, Download, Filter, Printer } from 'lucide-react';
+import {
+  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+} from 'recharts';
+import {
+  ArrowUp, ArrowDown, Download, Printer, TrendingUp, TrendingDown,
+  BarChart3, Package, Users, ShoppingBag, RefreshCw, ExternalLink, ChevronRight
+} from 'lucide-react';
 import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 import SarIcon from "@/components/sar-icon";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 
-const COLORS = ['#f97316', '#fbbf24', '#34d399', '#60a5fa', '#a78bfa', '#f472b6'];
+const COLORS = ['#2D9B6E', '#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4'];
+
+function getMonthRange(monthOffset: number) {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+  const end = new Date(now.getFullYear(), now.getMonth() + monthOffset + 1, 0, 23, 59, 59);
+  return { start, end };
+}
 
 export default function AdminReports() {
   const tc = useTranslate();
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [timePeriod, setTimePeriod] = useState('month');
-  const [reportType, setReportType] = useState('revenue');
+  const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
 
-  const { data: orders = [] } = useQuery({
+  const { data: orders = [], isLoading } = useQuery<any[]>({
     queryKey: ['/api/orders'],
-    queryFn: async () => {
-      const res = await fetch('/api/orders', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch orders');
-      return res.json();
-    },
   });
 
-  const { data: employees = [] } = useQuery({
+  const { data: employees = [] } = useQuery<any[]>({
     queryKey: ['/api/employees'],
-    queryFn: async () => {
-      const res = await fetch('/api/employees', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch employees');
-      return res.json();
-    },
   });
 
-  const { data: coffeeItems = [] } = useQuery({
+  const { data: coffeeItems = [] } = useQuery<any[]>({
     queryKey: ['/api/coffee-items'],
-    queryFn: async () => {
-      const res = await fetch('/api/coffee-items', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch items');
-      return res.json();
-    },
   });
 
-  // Generate date-based data
-  const getDateRange = (period: string) => {
-    const today = new Date();
-    const data: any[] = [];
-
-    if (period === 'week') {
-      for (let i = 6; i >= 0; i--) {
-        const date = new Date(today);
-        date.setDate(date.getDate() - i);
-        data.push({
-          date: date.toLocaleDateString('ar-SA', { weekday: 'short' }),
-          fullDate: date.toISOString().split('T')[0],
-          revenue: 0,
-          orders: 0,
-        });
-      }
-    } else if (period === 'month') {
-      for (let i = 29; i >= 0; i--) {
-        const date = new Date(today);
-        date.setDate(date.getDate() - i);
-        const day = date.getDate();
-        if (day <= 7 || day % 7 === 0) {
-          data.push({
-            date: `${day}`,
-            fullDate: date.toISOString().split('T')[0],
-            revenue: 0,
-            orders: 0,
-          });
-        }
-      }
-    } else {
-      for (let i = 11; i >= 0; i--) {
-        const date = new Date(today);
-        date.setMonth(date.getMonth() - i);
-        data.push({
-          date: date.toLocaleDateString('ar-SA', { month: 'short' }),
-          fullDate: date.toISOString().split('T')[0],
-          revenue: 0,
-          orders: 0,
-        });
-      }
-    }
-
-    return data;
-  };
-
-  const revenueData = useMemo(() => {
-    const dateData = getDateRange(timePeriod);
-    orders.forEach((order: any) => {
-      const orderDate = new Date(order.createdAt).toISOString().split('T')[0];
-      const entry = dateData.find((d: any) => d.fullDate === orderDate || d.fullDate.startsWith(orderDate.substring(0, 7)));
-      if (entry) {
-        entry.revenue = (entry.revenue || 0) + (order.totalAmount || 0);
-        entry.orders = (entry.orders || 0) + 1;
-      }
-    });
-    return dateData.slice(-10);
-  }, [orders, timePeriod]);
-
-  const topProducts = useMemo(() => {
-    const productMap: any = {};
-    orders.forEach((order: any) => {
-      const items = Array.isArray(order.items) ? order.items : [];
-      items.forEach((item: any) => {
-        const itemId = item.coffeeItemId || item.id;
-        const product = coffeeItems.find((c: any) => c.id === itemId);
-        if (product) {
-          productMap[itemId] = {
-            name: product.nameAr,
-            sold: (productMap[itemId]?.sold || 0) + (item.quantity || 1),
-            revenue: (productMap[itemId]?.revenue || 0) + ((item.totalPrice || item.quantity * product.price) || 0),
-          };
-        }
-      });
-    });
-    return Object.values(productMap).sort((a: any, b: any) => b.sold - a.sold).slice(0, 6);
-  }, [orders, coffeeItems]);
-
-  const employeePerformance = useMemo(() => {
-    const empMap: any = {};
-    orders.forEach((order: any) => {
-      const empId = order.employeeId || 'unknown';
-      const employee = employees.find((e: any) => e.id === empId);
-      if (empId !== 'unknown' && employee) {
-        empMap[empId] = {
-          name: employee.fullName,
-          orders: (empMap[empId]?.orders || 0) + 1,
-          revenue: (empMap[empId]?.revenue || 0) + (order.totalAmount || 0),
-        };
-      }
-    });
-    return Object.values(empMap).sort((a: any, b: any) => b.revenue - a.revenue).slice(0, 8);
-  }, [orders, employees]);
-
-  const totalRevenue = orders.reduce((sum: number, order: any) => sum + (order.totalAmount || 0), 0);
-  const totalOrders = orders.length;
-  const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
-
-  const StatBox = ({ label, value, trend, icon: Icon }: any) => (
-    <Card className="border-0 bg-gradient-to-br from-card to-background">
-      <CardContent className="pt-6">
-        <p className="text-sm text-muted-foreground font-medium">{label}</p>
-        <p className="text-3xl font-bold mt-2">{value}</p>
-        {trend && (
-          <div className="flex items-center gap-1 mt-2 text-emerald-600 dark:text-emerald-400 text-sm">
-            <ArrowUp className="w-4 h-4" />
-            <span>{trend}% {tc("من الشهر الماضي", "vs last month")}</span>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-
-  const { data: businessConfig, refetch: refetchConfig } = useQuery({
+  const { data: businessConfig, refetch: refetchConfig } = useQuery<any>({
     queryKey: ['/api/business-config'],
-    queryFn: async () => {
-      const res = await fetch('/api/business-config');
-      return res.json();
-    }
   });
 
   const updateConfigMutation = useMutation({
@@ -185,8 +63,150 @@ export default function AdminReports() {
     }
   });
 
-  const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
+  // ── Real period calculations ──────────────────────────────────────────────
+  const now = new Date();
 
+  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastMonthEnd   = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+
+  const thisWeekStart = new Date(now);
+  thisWeekStart.setDate(now.getDate() - now.getDay());
+  thisWeekStart.setHours(0, 0, 0, 0);
+
+  const lastWeekStart = new Date(thisWeekStart);
+  lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+  const lastWeekEnd = new Date(thisWeekStart);
+  lastWeekEnd.setMilliseconds(-1);
+
+  const thisYearStart = new Date(now.getFullYear(), 0, 1);
+  const lastYearStart = new Date(now.getFullYear() - 1, 0, 1);
+  const lastYearEnd   = new Date(now.getFullYear() - 1, 11, 31, 23, 59, 59);
+
+  const filterOrders = (from: Date, to: Date) =>
+    orders.filter((o: any) => {
+      const d = new Date(o.createdAt);
+      return d >= from && d <= to;
+    });
+
+  const currentPeriodOrders = useMemo(() => {
+    if (timePeriod === 'week')  return filterOrders(thisWeekStart, now);
+    if (timePeriod === 'year')  return filterOrders(thisYearStart, now);
+    return filterOrders(thisMonthStart, now);
+  }, [orders, timePeriod]);
+
+  const prevPeriodOrders = useMemo(() => {
+    if (timePeriod === 'week')  return filterOrders(lastWeekStart, lastWeekEnd);
+    if (timePeriod === 'year')  return filterOrders(lastYearStart, lastYearEnd);
+    return filterOrders(lastMonthStart, lastMonthEnd);
+  }, [orders, timePeriod]);
+
+  const currentRevenue = currentPeriodOrders.reduce((s: number, o: any) => s + Number(o.totalAmount || 0), 0);
+  const prevRevenue    = prevPeriodOrders.reduce((s: number, o: any)    => s + Number(o.totalAmount || 0), 0);
+  const currentOrderCount = currentPeriodOrders.length;
+  const prevOrderCount    = prevPeriodOrders.length;
+  const currentAvg = currentOrderCount > 0 ? currentRevenue / currentOrderCount : 0;
+  const prevAvg    = prevOrderCount > 0    ? prevRevenue / prevOrderCount : 0;
+
+  const pctChange = (cur: number, prev: number) => {
+    if (prev === 0) return cur > 0 ? 100 : 0;
+    return Math.round(((cur - prev) / prev) * 100);
+  };
+
+  const revTrend = pctChange(currentRevenue, prevRevenue);
+  const ordTrend = pctChange(currentOrderCount, prevOrderCount);
+  const avgTrend = pctChange(currentAvg, prevAvg);
+
+  const periodLabel = timePeriod === 'week'
+    ? tc("مقارنة بالأسبوع الماضي", "vs last week")
+    : timePeriod === 'year'
+      ? tc("مقارنة بالعام الماضي", "vs last year")
+      : tc("مقارنة بالشهر الماضي", "vs last month");
+
+  // ── Chart data ────────────────────────────────────────────────────────────
+  const revenueData = useMemo(() => {
+    const result: any[] = [];
+    if (timePeriod === 'week') {
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        d.setHours(0, 0, 0, 0);
+        const next = new Date(d); next.setDate(next.getDate() + 1);
+        const dayOrders = orders.filter((o: any) => {
+          const od = new Date(o.createdAt);
+          return od >= d && od < next;
+        });
+        result.push({
+          date: d.toLocaleDateString('ar-SA', { weekday: 'short' }),
+          revenue: Math.round(dayOrders.reduce((s: number, o: any) => s + Number(o.totalAmount || 0), 0)),
+          orders: dayOrders.length,
+        });
+      }
+    } else if (timePeriod === 'month') {
+      for (let i = 29; i >= 0; i--) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        d.setHours(0, 0, 0, 0);
+        const next = new Date(d); next.setDate(next.getDate() + 1);
+        if (d.getDate() % 5 === 1 || i === 0) {
+          const dayOrders = orders.filter((o: any) => {
+            const od = new Date(o.createdAt);
+            return od >= d && od < next;
+          });
+          result.push({
+            date: `${d.getDate()}/${d.getMonth() + 1}`,
+            revenue: Math.round(dayOrders.reduce((s: number, o: any) => s + Number(o.totalAmount || 0), 0)),
+            orders: dayOrders.length,
+          });
+        }
+      }
+    } else {
+      for (let i = 11; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const next = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+        const monthOrders = orders.filter((o: any) => {
+          const od = new Date(o.createdAt);
+          return od >= d && od < next;
+        });
+        result.push({
+          date: d.toLocaleDateString('ar-SA', { month: 'short' }),
+          revenue: Math.round(monthOrders.reduce((s: number, o: any) => s + Number(o.totalAmount || 0), 0)),
+          orders: monthOrders.length,
+        });
+      }
+    }
+    return result;
+  }, [orders, timePeriod]);
+
+  const topProducts = useMemo(() => {
+    const map: any = {};
+    currentPeriodOrders.forEach((order: any) => {
+      (order.items || []).forEach((item: any) => {
+        const key = item.coffeeItemId || item.id || item.nameAr;
+        const product = coffeeItems.find((c: any) => c.id === key);
+        const name = product?.nameAr || item.nameAr || item.name || key;
+        if (!map[key]) map[key] = { name, sold: 0, revenue: 0 };
+        map[key].sold += item.quantity || 1;
+        map[key].revenue += item.totalPrice || (item.quantity || 1) * (item.price || product?.price || 0);
+      });
+    });
+    return Object.values(map).sort((a: any, b: any) => b.sold - a.sold).slice(0, 8) as any[];
+  }, [currentPeriodOrders, coffeeItems]);
+
+  const employeePerf = useMemo(() => {
+    const map: any = {};
+    currentPeriodOrders.forEach((order: any) => {
+      const emp = employees.find((e: any) => e.id === order.employeeId);
+      if (!emp) return;
+      const key = emp.id;
+      if (!map[key]) map[key] = { name: emp.fullName, orders: 0, revenue: 0 };
+      map[key].orders++;
+      map[key].revenue += Number(order.totalAmount || 0);
+    });
+    return Object.values(map).sort((a: any, b: any) => b.revenue - a.revenue).slice(0, 8) as any[];
+  }, [currentPeriodOrders, employees]);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
   const handleBulkPrint = async () => {
     if (selectedOrders.length === 0) return;
     const res = await apiRequest('POST', '/api/orders/bulk-print-employee', { orderIds: selectedOrders });
@@ -198,150 +218,102 @@ export default function AdminReports() {
   const handlePrintDailySummary = async () => {
     const { printHtmlInPage } = await import('@/lib/print-utils');
     const { brand } = await import('@/lib/brand');
-
-    // Filter today's completed orders (Saudi time UTC+3)
     const nowSaudi = new Date(Date.now() + 3 * 60 * 60 * 1000);
     const todayStr = nowSaudi.toISOString().slice(0, 10);
-    const todayOrders = (Array.isArray(orders) ? orders : []).filter((o: any) => {
+    const todayOrders = orders.filter((o: any) => {
       const d = new Date(new Date(o.createdAt).getTime() + 3 * 60 * 60 * 1000);
-      return d.toISOString().slice(0, 10) === todayStr &&
-        o.status !== 'cancelled';
+      return d.toISOString().slice(0, 10) === todayStr && o.status !== 'cancelled';
     });
-
     if (todayOrders.length === 0) {
       toast({ title: tc("لا توجد طلبات اليوم", "No orders today"), variant: "destructive" });
       return;
     }
-
-    const totalRevenue = todayOrders.reduce((s: number, o: any) => s + (Number(o.totalAmount) || 0), 0);
-    const totalVat = totalRevenue - totalRevenue / 1.15;
-    const netRevenue = totalRevenue / 1.15;
-    const printDate = nowSaudi.toLocaleDateString('ar-SA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-    const printTime = nowSaudi.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
-
-    const payLabels: Record<string, string> = {
-      cash: 'نقدي', pos: 'نقاط البيع', stc: 'STC', geidea: 'جهاز', delivery: 'توصيل',
-      alinma: 'الإنماء', ur: 'يور باي', barq: 'برق', rajhi: 'الراجحي', 'qahwa-card': 'بطاقة قهوة',
-    };
-
+    const rev = todayOrders.reduce((s: number, o: any) => s + Number(o.totalAmount || 0), 0);
+    const vat = rev - rev / 1.15;
+    const net = rev / 1.15;
+    const pd = nowSaudi.toLocaleDateString('ar-SA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const pt = nowSaudi.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+    const payLabels: Record<string, string> = { cash: 'نقدي', pos: 'نقاط البيع', stc: 'STC', geidea: 'جهاز', delivery: 'توصيل', alinma: 'الإنماء', ur: 'يور باي', barq: 'برق', rajhi: 'الراجحي', 'qahwa-card': 'بطاقة قهوة' };
     const rowsHtml = todayOrders.map((o: any, i: number) => {
-      const items = (Array.isArray(o.items) ? o.items : [])
-        .map((it: any) => `${it.nameAr || it.coffeeItem?.nameAr || it.name || ''}×${it.quantity || 1}`)
-        .join('، ');
-      const time = new Date(new Date(o.createdAt).getTime() + 3 * 60 * 60 * 1000)
-        .toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
-      return `
-        <tr style="background:${i % 2 === 0 ? '#fff' : '#f9f9f9'};">
-          <td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;">${o.orderNumber || o.dailyNumber || i + 1}</td>
-          <td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;font-size:10px;">${time}</td>
-          <td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;font-size:9px;">${items}</td>
-          <td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;font-size:10px;">${payLabels[o.paymentMethod] || o.paymentMethod || ''}</td>
-          <td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;font-weight:bold;">${Number(o.totalAmount || 0).toFixed(2)}</td>
-        </tr>`;
+      const items = (o.items || []).map((it: any) => `${it.nameAr || it.name || ''}×${it.quantity || 1}`).join('، ');
+      const time = new Date(new Date(o.createdAt).getTime() + 3 * 60 * 60 * 1000).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+      return `<tr style="background:${i % 2 === 0 ? '#fff' : '#f9f9f9'};"><td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;">${o.orderNumber || i + 1}</td><td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;font-size:10px;">${time}</td><td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;font-size:9px;">${items}</td><td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;font-size:10px;">${payLabels[o.paymentMethod] || o.paymentMethod || ''}</td><td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;font-weight:bold;">${Number(o.totalAmount || 0).toFixed(2)}</td></tr>`;
     }).join('');
-
-    const html = `
-      <div style="font-family:'Cairo',Arial,sans-serif;direction:rtl;width:80mm;max-width:80mm;margin:0 auto;padding:10px;color:#000;font-size:11px;">
-        <div style="text-align:center;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:8px;">
-          <div style="font-size:16px;font-weight:bold;">${brand.nameAr}</div>
-          <div style="font-size:12px;font-weight:bold;margin-top:4px;">موجز أرباح وطلبات اليوم</div>
-          <div style="font-size:10px;color:#555;">${printDate}</div>
-          <div style="font-size:10px;color:#555;">وقت الطباعة: ${printTime}</div>
-        </div>
-
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-          <span style="font-weight:bold;">إجمالي الطلبات:</span>
-          <span style="font-weight:bold;">${todayOrders.length} طلب</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-          <span>صافي المبيعات (بدون ضريبة):</span>
-          <span>${netRevenue.toFixed(2)} ر.س</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-          <span>ضريبة القيمة المضافة (15%):</span>
-          <span>${totalVat.toFixed(2)} ر.س</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:bold;border:1px solid #000;padding:5px;margin-bottom:8px;border-radius:4px;">
-          <span>إجمالي الإيرادات:</span>
-          <span>${totalRevenue.toFixed(2)} ر.س</span>
-        </div>
-
-        <div style="border-top:1px dashed #000;padding-top:6px;margin-bottom:4px;font-size:10px;font-weight:bold;text-align:center;">
-          تفصيل الطلبات
-        </div>
-        <table style="width:100%;border-collapse:collapse;font-size:10px;">
-          <thead>
-            <tr style="background:#000;color:#fff;">
-              <th style="padding:4px 4px;text-align:right;">#</th>
-              <th style="padding:4px 4px;text-align:right;">الوقت</th>
-              <th style="padding:4px 4px;text-align:right;">الأصناف</th>
-              <th style="padding:4px 4px;text-align:right;">الدفع</th>
-              <th style="padding:4px 4px;text-align:left;">المبلغ</th>
-            </tr>
-          </thead>
-          <tbody>${rowsHtml}</tbody>
-          <tfoot>
-            <tr style="background:#000;color:#fff;font-weight:bold;">
-              <td colspan="4" style="padding:5px 6px;text-align:right;">الإجمالي</td>
-              <td style="padding:5px 6px;text-align:left;">${totalRevenue.toFixed(2)}</td>
-            </tr>
-          </tfoot>
-        </table>
-
-        <div style="text-align:center;margin-top:10px;font-size:10px;color:#777;border-top:1px solid #ccc;padding-top:6px;">
-          <div>${brand.nameEn} — www.cluny.cafe</div>
-          <div>تم الإصدار: ${printDate} ${printTime}</div>
-        </div>
-      </div>`;
-
+    const html = `<div style="font-family:'Cairo',Arial,sans-serif;direction:rtl;width:80mm;max-width:80mm;margin:0 auto;padding:10px;color:#000;font-size:11px;"><div style="text-align:center;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:8px;"><div style="font-size:16px;font-weight:bold;">${brand.nameAr}</div><div style="font-size:12px;font-weight:bold;margin-top:4px;">موجز أرباح وطلبات اليوم</div><div style="font-size:10px;color:#555;">${pd}</div><div style="font-size:10px;color:#555;">وقت الطباعة: ${pt}</div></div><div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span style="font-weight:bold;">إجمالي الطلبات:</span><span style="font-weight:bold;">${todayOrders.length} طلب</span></div><div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span>صافي المبيعات (بدون ضريبة):</span><span>${net.toFixed(2)} ر.س</span></div><div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span>ضريبة القيمة المضافة (15%):</span><span>${vat.toFixed(2)} ر.س</span></div><div style="display:flex;justify-content:space-between;font-size:14px;font-weight:bold;border:1px solid #000;padding:5px;margin-bottom:8px;border-radius:4px;"><span>إجمالي الإيرادات:</span><span>${rev.toFixed(2)} ر.س</span></div><div style="border-top:1px dashed #000;padding-top:6px;margin-bottom:4px;font-size:10px;font-weight:bold;text-align:center;">تفصيل الطلبات</div><table style="width:100%;border-collapse:collapse;font-size:10px;"><thead><tr style="background:#000;color:#fff;"><th style="padding:4px;text-align:right;">#</th><th style="padding:4px;text-align:right;">الوقت</th><th style="padding:4px;text-align:right;">الأصناف</th><th style="padding:4px;text-align:right;">الدفع</th><th style="padding:4px;text-align:left;">المبلغ</th></tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr style="background:#000;color:#fff;font-weight:bold;"><td colspan="4" style="padding:5px 6px;text-align:right;">الإجمالي</td><td style="padding:5px 6px;text-align:left;">${rev.toFixed(2)}</td></tr></tfoot></table><div style="text-align:center;margin-top:10px;font-size:10px;color:#777;border-top:1px solid #ccc;padding-top:6px;"><div>${brand.nameEn} — www.cluny.cafe</div><div>تم الإصدار: ${pd} ${pt}</div></div></div>`;
     printHtmlInPage(html, '80mm');
   };
 
-  return (
-    <div className="p-6 space-y-8 bg-white dark:bg-background min-h-screen">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-4xl font-bold">{tc("التقارير والتحليلات", "Reports & Analytics")}</h1>
-          <p className="text-muted-foreground mt-1">{tc("تحليل شامل لأداء المبيعات والعمليات", "Comprehensive analysis of sales performance and operations")}</p>
+  // ── Trend badge ───────────────────────────────────────────────────────────
+  const TrendBadge = ({ pct }: { pct: number }) => (
+    <div className={`flex items-center gap-1 mt-2 text-sm font-medium ${pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+      {pct >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+      <span>{Math.abs(pct)}% {periodLabel}</span>
+    </div>
+  );
+
+  const StatCard = ({ label, value, icon: Icon, trend, color, sub }: any) => (
+    <Card className="border border-border bg-card">
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between mb-3">
+          <p className="text-sm text-muted-foreground font-medium">{label}</p>
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: `${color}18` }}>
+            <Icon className="w-5 h-5" style={{ color }} />
+          </div>
         </div>
-        <div className="flex gap-3">
-          <Card className="flex items-center gap-4 px-4 py-2">
-            <span className="text-sm font-medium">{tc("فاتورة الموظف (ملخص)", "Employee Invoice (Summary)")}</span>
-            <input 
-              type="checkbox" 
-              checked={businessConfig?.employeeInvoiceEnabled || false} 
+        <p className="text-2xl font-bold text-foreground">{value}</p>
+        {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
+        {trend !== undefined && <TrendBadge pct={trend} />}
+      </CardContent>
+    </Card>
+  );
+
+  return (
+    <div className="p-4 lg:p-6 space-y-6 bg-background min-h-screen" dir={tc('rtl', 'ltr')}>
+
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl lg:text-3xl font-bold text-foreground">{tc("التقارير والتحليلات", "Reports & Analytics")}</h1>
+          <p className="text-muted-foreground text-sm mt-0.5">{tc("تحليل حقيقي لأداء المبيعات والعمليات", "Real analysis of sales performance")}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Card className="flex items-center gap-3 px-3 py-2">
+            <span className="text-xs font-medium text-muted-foreground">{tc("فاتورة الموظف", "Employee Invoice")}</span>
+            <input
+              type="checkbox"
+              checked={businessConfig?.employeeInvoiceEnabled || false}
               onChange={(e) => updateConfigMutation.mutate({ employeeInvoiceEnabled: e.target.checked })}
-              className="w-4 h-4 cursor-pointer"
+              className="w-4 h-4 cursor-pointer accent-primary"
             />
           </Card>
-          <Button variant="outline" onClick={handlePrintDailySummary} data-testid="button-print-daily-summary">
-            <Printer className="w-4 h-4 ml-2" />
-            {tc("طباعة موجز اليوم", "Print Daily Summary")}
+          <Button variant="outline" size="sm" onClick={handlePrintDailySummary} data-testid="button-print-daily">
+            <Printer className="w-4 h-4 ml-1" />
+            <span className="hidden sm:inline">{tc("طباعة موجز اليوم", "Print Today")}</span>
+            <span className="sm:hidden">{tc("طباعة", "Print")}</span>
           </Button>
-          <Button variant="outline" data-testid="button-export-report">
-            <Download className="w-4 h-4 ml-2" />
-            {tc("تصدير", "Export")}
+          <Button variant="outline" size="sm" onClick={() => navigate('/manager/product-reports')} data-testid="button-product-reports">
+            <BarChart3 className="w-4 h-4 ml-1" />
+            <span>{tc("تقارير المنتجات", "Product Reports")}</span>
+            <ExternalLink className="w-3 h-3 mr-1" />
           </Button>
         </div>
       </div>
 
-      {/* Bulk Print Actions */}
+      {/* Bulk actions */}
       {selectedOrders.length > 0 && (
-        <Card className="p-4 bg-primary/5 border-primary/20 flex justify-between items-center">
-          <span className="font-medium">{selectedOrders.length} {tc("طلبات مختارة", "orders selected")}</span>
+        <Card className="p-3 bg-primary/5 border-primary/20 flex justify-between items-center">
+          <span className="font-medium text-sm">{selectedOrders.length} {tc("طلبات مختارة", "orders selected")}</span>
           <Button onClick={handleBulkPrint} size="sm">
-            <Printer className="w-4 h-4 ml-2" />
+            <Printer className="w-4 h-4 ml-1" />
             {tc("طباعة فواتير الموظفين", "Print Employee Invoices")}
           </Button>
         </Card>
       )}
 
-
-      {/* Filters */}
-      <div className="flex gap-3 flex-wrap">
+      {/* Period filter */}
+      <div className="flex items-center gap-3 flex-wrap">
         <Select value={timePeriod} onValueChange={setTimePeriod}>
-          <SelectTrigger className="w-40" data-testid="select-time-period">
+          <SelectTrigger className="w-44" data-testid="select-period">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -350,203 +322,264 @@ export default function AdminReports() {
             <SelectItem value="year">{tc("هذا العام", "This Year")}</SelectItem>
           </SelectContent>
         </Select>
+        <Badge variant="secondary" className="text-xs">
+          {currentPeriodOrders.length} {tc("طلب في الفترة", "orders in period")}
+        </Badge>
+        {isLoading && (
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            {tc("جارٍ التحميل...", "Loading...")}
+          </div>
+        )}
       </div>
 
-      {/* Key Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatBox label={tc("إجمالي الإيرادات", "Total Revenue")} value={`${totalRevenue.toFixed(0)} ${tc("ر.س","SAR")}`} trend="12" />
-        <StatBox label={tc("عدد الطلبات", "Total Orders")} value={totalOrders} trend="8" />
-        <StatBox label={tc("متوسط الطلب", "Avg Order Value")} value={`${averageOrderValue.toFixed(2)} ${tc("ر.س","SAR")}`} trend="5" />
-        <StatBox label={tc("عدد الموظفين النشطين", "Active Employees")} value={employees.filter((e: any) => e.isActivated === 1).length} />
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard
+          label={tc("إيرادات الفترة", "Period Revenue")}
+          value={<span className="flex items-center gap-1">{currentRevenue.toFixed(0)} <SarIcon /></span>}
+          icon={TrendingUp}
+          trend={revTrend}
+          color="#2D9B6E"
+          sub={prevRevenue > 0 ? `${tc("الفترة السابقة", "Prev")}: ${prevRevenue.toFixed(0)} ر.س` : undefined}
+        />
+        <StatCard
+          label={tc("عدد الطلبات", "Orders Count")}
+          value={currentOrderCount}
+          icon={ShoppingBag}
+          trend={ordTrend}
+          color="#3b82f6"
+          sub={prevOrderCount > 0 ? `${tc("الفترة السابقة", "Prev")}: ${prevOrderCount}` : undefined}
+        />
+        <StatCard
+          label={tc("متوسط الطلب", "Avg Order")}
+          value={<span className="flex items-center gap-1">{currentAvg.toFixed(1)} <SarIcon /></span>}
+          icon={BarChart3}
+          trend={avgTrend}
+          color="#f59e0b"
+          sub={prevAvg > 0 ? `${tc("الفترة السابقة", "Prev")}: ${prevAvg.toFixed(1)} ر.س` : undefined}
+        />
+        <StatCard
+          label={tc("الموظفون النشطون", "Active Employees")}
+          value={employees.filter((e: any) => e.isActivated === 1).length}
+          icon={Users}
+          color="#8b5cf6"
+          sub={`${tc("من", "of")} ${employees.length} ${tc("إجمالاً", "total")}`}
+        />
       </div>
 
-      {/* Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Revenue Trend */}
-        <Card className="border-0 bg-white dark:bg-card">
-          <CardHeader className="pb-4">
-            <CardTitle>{tc("اتجاه الإيرادات", "Revenue Trend")}</CardTitle>
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card className="border border-border bg-card">
+          <CardHeader className="pb-2 px-5 pt-4">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-primary" />
+              {tc("اتجاه الإيرادات", "Revenue Trend")}
+            </CardTitle>
           </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
+          <CardContent className="px-2 pb-4">
+            <ResponsiveContainer width="100%" height={220}>
               <LineChart data={revenueData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" />
-                <YAxis stroke="hsl(var(--muted-foreground))" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} />
+                <YAxis tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} />
                 <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'hsl(var(--card))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '8px',
-                  }}
+                  contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: 11 }}
+                  formatter={(v: any) => [`${v} ر.س`, tc("إيراد", "Revenue")]}
                 />
-                <Legend />
-                <Line
-                  type="monotone"
-                  dataKey="revenue"
-                  stroke="#f97316"
-                  strokeWidth={2}
-                  dot={{ fill: '#f97316', r: 4 }}
-                  name={tc("الإيرادات (ر.س)", "Revenue (SAR)")}
-                />
+                <Line type="monotone" dataKey="revenue" stroke="#2D9B6E" strokeWidth={2.5} dot={{ fill: '#2D9B6E', r: 3 }} name={tc("الإيرادات", "Revenue")} />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
 
-        {/* Orders Count */}
-        <Card className="border-0 bg-white dark:bg-card">
-          <CardHeader className="pb-4">
-            <CardTitle>{tc("عدد الطلبات اليومية", "Daily Orders")}</CardTitle>
+        <Card className="border border-border bg-card">
+          <CardHeader className="pb-2 px-5 pt-4">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <ShoppingBag className="w-4 h-4 text-blue-500" />
+              {tc("عدد الطلبات اليومية", "Daily Orders")}
+            </CardTitle>
           </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
+          <CardContent className="px-2 pb-4">
+            <ResponsiveContainer width="100%" height={220}>
               <BarChart data={revenueData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" />
-                <YAxis stroke="hsl(var(--muted-foreground))" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} />
+                <YAxis tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} />
                 <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'hsl(var(--card))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '8px',
-                  }}
+                  contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: 11 }}
+                  formatter={(v: any) => [v, tc("طلبات", "Orders")]}
                 />
-                <Legend />
-                <Bar dataKey="orders" fill="#f97316" name={tc("الطلبات", "Orders")} radius={[8, 8, 0, 0]} />
+                <Bar dataKey="orders" fill="#3b82f6" name={tc("الطلبات", "Orders")} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
       </div>
 
-      {/* Top Products & Employee Performance */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top Products */}
-        <Card className="border-0 bg-white dark:bg-card">
-          <CardHeader className="pb-4">
-            <CardTitle>{tc("أفضل المنتجات مبيعاً", "Top Selling Products")}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={topProducts} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis type="number" stroke="hsl(var(--muted-foreground))" />
-                <YAxis dataKey="name" type="category" width={80} stroke="hsl(var(--muted-foreground))" />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'hsl(var(--card))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '8px',
-                  }}
-                />
-                <Bar dataKey="sold" fill="#f97316" name={tc("المبيعات", "Sales")} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Employee Performance */}
-        <Card className="border-0 bg-white dark:bg-card">
-          <CardHeader className="pb-4">
-            <CardTitle>{tc("أداء الموظفين", "Employee Performance")}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {employeePerformance.map((emp: any, idx: number) => (
-                <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
-                  <div>
-                    <p className="font-medium">{emp.name}</p>
-                    <p className="text-sm text-muted-foreground">{emp.orders} {tc("طلب", "orders")}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-bold text-accent dark:text-accent">{emp.revenue.toFixed(0)} <SarIcon /></p>
-                  </div>
-                </div>
-              ))}
+      {/* Top Products + Employee Performance */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card className="border border-border bg-card">
+          <CardHeader className="pb-2 px-5 pt-4">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Package className="w-4 h-4 text-amber-500" />
+                {tc("أفضل المنتجات مبيعاً", "Top Selling Products")}
+              </CardTitle>
+              <Button variant="ghost" size="sm" onClick={() => navigate('/manager/product-reports')} className="text-xs text-primary gap-1">
+                {tc("تفصيلي", "Details")} <ChevronRight className="w-3 h-3" />
+              </Button>
             </div>
+          </CardHeader>
+          <CardContent className="px-5 pb-4">
+            {topProducts.length > 0 ? (
+              <div className="space-y-2">
+                {topProducts.slice(0, 6).map((p: any, i: number) => {
+                  const maxSold = topProducts[0]?.sold || 1;
+                  const pct = Math.round((p.sold / maxSold) * 100);
+                  return (
+                    <div key={i} className="flex items-center gap-3">
+                      <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
+                        style={{ background: COLORS[i % COLORS.length] }}>
+                        {i + 1}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="text-xs font-medium text-foreground truncate">{p.name}</span>
+                          <span className="text-xs text-muted-foreground mr-2">{p.sold} {tc("قطعة", "pcs")}</span>
+                        </div>
+                        <div className="w-full bg-muted rounded-full h-1.5">
+                          <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, background: COLORS[i % COLORS.length] }} />
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">{Math.round(p.revenue)} ر.س</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                <Package className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                <p className="text-xs">{tc("لا توجد مبيعات في هذه الفترة", "No sales in this period")}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border border-border bg-card">
+          <CardHeader className="pb-2 px-5 pt-4">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Users className="w-4 h-4 text-pink-500" />
+              {tc("أداء الموظفين", "Employee Performance")}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-5 pb-4">
+            {employeePerf.length > 0 ? (
+              <div className="space-y-2">
+                {employeePerf.map((emp: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between p-2.5 rounded-lg bg-muted/40 border border-border/50">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                        <span className="text-[11px] text-primary font-bold">{(emp.name || '?')[0]}</span>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium text-foreground">{emp.name}</p>
+                        <p className="text-[10px] text-muted-foreground">{emp.orders} {tc("طلب", "orders")}</p>
+                      </div>
+                    </div>
+                    <p className="text-sm font-bold text-primary flex items-center gap-1">
+                      {Math.round(emp.revenue)} <SarIcon size={12} />
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                <Users className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                <p className="text-xs">{tc("لا يوجد بيانات في هذه الفترة", "No data in this period")}</p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Product Distribution */}
-      <Card className="border-0 bg-white dark:bg-card">
-        <CardHeader className="pb-4">
-          <CardTitle>{tc("توزيع المبيعات حسب الفئة", "Sales Distribution by Category")}</CardTitle>
+      {/* Detailed orders table */}
+      <Card className="border border-border bg-card">
+        <CardHeader className="pb-2 px-5 pt-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <CardTitle className="text-sm">{tc("تفاصيل الطلبات الأخيرة", "Recent Orders Details")}</CardTitle>
+            {selectedOrders.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">{selectedOrders.length} {tc("محدد", "selected")}</span>
+                <Button size="sm" onClick={handleBulkPrint}>
+                  <Printer className="w-3.5 h-3.5 ml-1" />
+                  {tc("طباعة", "Print")}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setSelectedOrders([])}>
+                  {tc("إلغاء", "Cancel")}
+                </Button>
+              </div>
+            )}
+          </div>
         </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={400}>
-            <PieChart>
-              <Pie
-                data={topProducts}
-                cx="50%"
-                cy="50%"
-                labelLine={true}
-                label={({ name, sold }) => `${name}: ${sold}`}
-                outerRadius={120}
-                fill="#8884d8"
-                dataKey="sold"
-              >
-                {topProducts.map((_, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'hsl(var(--card))',
-                  border: '1px solid hsl(var(--border))',
-                  borderRadius: '8px',
-                }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      {/* Detailed Table */}
-      <Card className="border-0 bg-white dark:bg-card">
-        <CardHeader className="pb-4">
-          <CardTitle>تفاصيل الطلبات الأخيرة</CardTitle>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="px-0 pb-0">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b-2 border-accent dark:border-accent/30">
-                  <th className="p-4 w-10"></th>
-                  <th className="text-right p-4 font-semibold">{tc("رقم الطلب", "Order #")}</th>
-                  <th className="text-right p-4 font-semibold">{tc("العميل", "Customer")}</th>
-                  <th className="text-right p-4 font-semibold">{tc("الموظف", "Employee")}</th>
-                  <th className="text-right p-4 font-semibold">{tc("المبلغ", "Amount")}</th>
-                  <th className="text-right p-4 font-semibold">{tc("التاريخ", "Date")}</th>
+                <tr className="border-b border-border bg-muted/30">
+                  <th className="p-3 w-10">
+                    <input
+                      type="checkbox"
+                      className="w-3.5 h-3.5"
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedOrders(orders.slice(-20).map((o: any) => o.id));
+                        else setSelectedOrders([]);
+                      }}
+                    />
+                  </th>
+                  <th className="text-right p-3 text-xs font-semibold text-muted-foreground">{tc("رقم الطلب", "Order #")}</th>
+                  <th className="text-right p-3 text-xs font-semibold text-muted-foreground">{tc("العميل", "Customer")}</th>
+                  <th className="text-right p-3 text-xs font-semibold text-muted-foreground hidden md:table-cell">{tc("الموظف", "Employee")}</th>
+                  <th className="text-right p-3 text-xs font-semibold text-muted-foreground">{tc("المبلغ", "Amount")}</th>
+                  <th className="text-right p-3 text-xs font-semibold text-muted-foreground hidden sm:table-cell">{tc("التاريخ", "Date")}</th>
                 </tr>
               </thead>
               <tbody>
-                {orders.slice(-10).reverse().map((order: any) => {
+                {orders.slice(-20).reverse().map((order: any) => {
                   const emp = employees.find((e: any) => e.id === order.employeeId);
                   return (
-                    <tr key={order.id} className="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                      <td className="p-4">
-                        <input 
-                          type="checkbox" 
+                    <tr key={order.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
+                      <td className="p-3">
+                        <input
+                          type="checkbox"
+                          className="w-3.5 h-3.5"
                           checked={selectedOrders.includes(order.id)}
                           onChange={(e) => {
                             if (e.target.checked) setSelectedOrders([...selectedOrders, order.id]);
                             else setSelectedOrders(selectedOrders.filter(id => id !== order.id));
                           }}
-                          className="w-4 h-4"
                         />
                       </td>
-                      <td className="p-4">{order.orderNumber}</td>
-                      <td className="p-4 text-muted-foreground">{order.customerInfo?.name || tc('زائر', 'Guest')}</td>
-                      <td className="p-4">{emp?.fullName || '-'}</td>
-                      <td className="p-4 font-bold text-accent dark:text-accent">{order.totalAmount?.toFixed(2)} <SarIcon /></td>
-                      <td className="p-4 text-muted-foreground">{new Date(order.createdAt).toLocaleDateString('ar-SA')}</td>
+                      <td className="p-3 text-xs font-medium">#{order.orderNumber || order.dailyNumber || '—'}</td>
+                      <td className="p-3 text-xs text-muted-foreground">{order.customerInfo?.name || tc('زائر', 'Guest')}</td>
+                      <td className="p-3 text-xs hidden md:table-cell">{emp?.fullName || '—'}</td>
+                      <td className="p-3 text-xs font-bold text-primary flex items-center gap-1">
+                        {Number(order.totalAmount || 0).toFixed(2)} <SarIcon size={11} />
+                      </td>
+                      <td className="p-3 text-xs text-muted-foreground hidden sm:table-cell">
+                        {new Date(order.createdAt).toLocaleDateString('ar-SA')}
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+            {orders.length === 0 && !isLoading && (
+              <div className="text-center py-10 text-muted-foreground">
+                <ShoppingBag className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                <p className="text-xs">{tc("لا توجد طلبات بعد", "No orders yet")}</p>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

@@ -408,10 +408,13 @@ export default function AdminDashboard() {
                   {[
                     { label: tc("الموظفون", "Employees"), icon: Users, path: "/admin/employees", color: "#3b82f6" },
                     { label: tc("التقارير", "Reports"), icon: BarChart3, path: "/admin/reports", color: "#2D9B6E" },
-                    { label: tc("الحضور", "Attendance"), icon: Clock, path: "/manager/attendance", color: "#f59e0b" },
+                    { label: tc("تقارير المنتجات", "Product Reports"), icon: Package, path: "/manager/product-reports", color: "#f59e0b", badge: tc("جديد","New") },
+                    { label: tc("الحضور", "Attendance"), icon: Clock, path: "/manager/attendance", color: "#06b6d4" },
+                    { label: tc("الطلبات", "Orders"), icon: ShoppingBag, path: "/manager/orders", color: "#ec4899" },
                     { label: tc("الإعدادات", "Settings"), icon: Settings, path: "/admin/settings", color: "#8b5cf6" },
-                    { label: tc("المخزون", "Inventory"), icon: Package, path: "/manager/inventory", color: "#ec4899" },
-                    { label: tc("الذكاء الاصطناعي", "AI Center"), icon: Sparkles, path: "/manager/ai", color: "#2D9B6E" },
+                    { label: tc("المخزون", "Inventory"), icon: Package, path: "/manager/inventory", color: "#f97316" },
+                    { label: tc("التقارير الموحدة", "Unified Reports"), icon: BarChart3, path: "/manager/unified-reports", color: "#14b8a6" },
+                    { label: tc("الذكاء الاصطناعي", "AI Center"), icon: Sparkles, path: "/manager/ai", color: "#a855f7" },
                   ].map(item => (
                     <button
                       key={item.path}
