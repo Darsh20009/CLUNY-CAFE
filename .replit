@@ -44,11 +44,11 @@ build = ["npm", "run", "build"]
 [userenv]
 
 [userenv.shared]
-SMTP_HOST = "mail.smtp2go.com"
-SMTP_PORT = "587"
+SMTP_HOST = "server222.web-hosting.com"
+SMTP_PORT = "465"
 NOTIFICATION_EMAIL = "noreply@cluny.cafe"
-SMTP_USER = "cluny cafe"
-SMTP_FROM = "noreply@cluny.cafe"
+SMTP_USER = "info@qirox.online"
+SMTP_FROM = "info@qirox.online"
 VAPID_PUBLIC_KEY = "BLSPrcCPmuaeZtLfhDof5Lz7CSzLke9R_DcmawCvNzlL4792Bav5wNjIzGQ1DrvprAuE2csWTWbGT_ykTFuq_D0"
 VAPID_SUBJECT = "mailto:admin@cluny.cafe"
 MONGODB_URI = "mongodb+srv://Vercel-Admin-qiroxcafe:ASDqwe123@qiroxcafe.j8ukhq5.mongodb.net/?appName=qiroxcafe"
@@ -67,3 +67,4 @@ APPLE_PAY_MERCHANT_ID = "merchant.cluny.cafe"
 APPLE_PAY_CERT_PATH = "certs/apple_pay_merchant.pem"
 APPLE_PAY_DOMAIN = "cluny.cafe"
 APPLE_PAY_PAYMENT_PROCESSING_CERT_PATH = "certs/apple_pay_payment_processing_merchant_cluny_cafe.cer"
+ADMIN_REPORT_EMAIL = "info@qirox.online"
