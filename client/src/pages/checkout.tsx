@@ -14,6 +14,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import PaymentMethods from "@/components/payment-methods";
 import SimulatedCardPayment from "@/components/simulated-card-payment";
 import PaymobCheckoutWidget from "@/components/paymob-checkout";
+import ApplePayNative from "@/components/apple-pay-native";
 import { isCapacitorNative } from "@/lib/platform";
 import { customerStorage } from "@/lib/customer-storage";
 import { useCustomer } from "@/contexts/CustomerContext";
@@ -216,6 +217,7 @@ export default function CheckoutPage() {
 
   const [showSimulatedCard, setShowSimulatedCard] = useState(false);
   const [showPaymobCheckout, setShowPaymobCheckout] = useState(false);
+  const [showApplePayNative, setShowApplePayNative] = useState(false);
   const [paymobCheckoutUrl, setPaymobCheckoutUrl] = useState("");
   const [paymobSessionId, setPaymobSessionId] = useState("");
   const isPaymobFlow = useRef(false);
@@ -820,6 +822,10 @@ export default function CheckoutPage() {
       initiatePaymobDirect();
       return;
     }
+    if (selectedPaymentMethod === 'apple_pay') {
+      setShowApplePayNative(true);
+      return;
+    }
     if (isCardPaymentMethod(selectedPaymentMethod) || isOnlinePaymentMethod(selectedPaymentMethod)) {
       confirmAndCreateOrder();
       return;
@@ -839,10 +845,10 @@ export default function CheckoutPage() {
     return ['paymob-card', 'paymob-wallet', 'paymob-apple-pay', 'neoleap'].includes(method);
   };
 
-  // Geidea real payment methods (card + Apple Pay)
+  // Geidea HPP payment methods (does NOT include apple_pay — that uses native ApplePaySession)
   const isOnlinePaymentMethod = (method: string | null) => {
     if (!method) return false;
-    return ['geidea', 'apple_pay'].includes(method);
+    return ['geidea'].includes(method);
   };
 
   const buildOrderData = async (): Promise<{ orderData: any; activeCustomerId: string | undefined }> => {
@@ -2100,10 +2106,40 @@ export default function CheckoutPage() {
                   </div>
                 )}
 
-                {!showSimulatedCard && !showPaymobCheckout ? (
+                {/* Apple Pay Native — shown inline when apple_pay is selected */}
+                {showApplePayNative && (
+                  <div className="rounded-2xl border border-black/10 bg-white dark:bg-zinc-900 p-4">
+                    <ApplePayNative
+                      amount={getFinalAmount()}
+                      orderId={`CLN-${Date.now()}`}
+                      customerPhone={customerPhone}
+                      customerEmail={customerEmail}
+                      onSuccess={async (transactionId) => {
+                        setShowApplePayNative(false);
+                        // Build and create the order after Apple Pay authorisation
+                        try {
+                          const { orderData } = await buildOrderData();
+                          orderData.paymentMethod = 'apple_pay';
+                          orderData.onlinePaymentTransactionId = transactionId;
+                          createOrderMutation.mutate(orderData);
+                        } catch (err: any) {
+                          toast({ variant: "destructive", title: "خطأ", description: err.message });
+                        }
+                      }}
+                      onError={(msg) => {
+                        setShowApplePayNative(false);
+                        toast({ variant: "destructive", title: "فشل الدفع عبر Apple Pay", description: msg });
+                      }}
+                      onCancel={() => setShowApplePayNative(false)}
+                    />
+                  </div>
+                )}
+
+                {!showSimulatedCard && !showPaymobCheckout && !showApplePayNative ? (
                   (() => {
-                    const isApplePaySelected = (selectedPaymentMethod as string) === 'paymob-apple-pay' || (selectedPaymentMethod as string) === 'apple_pay' || (selectedPaymentMethod as string) === 'neoleap-apple-pay';
-                    if (isApplePaySelected) {
+                    const isNativeApplePay = (selectedPaymentMethod as string) === 'apple_pay';
+                    const isOtherApplePay = (selectedPaymentMethod as string) === 'paymob-apple-pay' || (selectedPaymentMethod as string) === 'neoleap-apple-pay';
+                    if (isNativeApplePay || isOtherApplePay) {
                       return (
                         <button
                           onClick={handleProceedPayment}

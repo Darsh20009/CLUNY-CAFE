@@ -13,11 +13,19 @@ import { useTranslate } from "@/lib/useTranslate";
 // Payment methods temporarily disabled — coming soon
 const COMING_SOON_METHODS = ['neoleap', 'neoleap-apple-pay'];
 
-// Detect Apple device (iPhone, iPad, Mac + Safari)
+// Detect Apple Pay support — only available in Safari on Apple devices with a card in Wallet.
+// window.ApplePaySession exists ONLY in WebKit/Safari; Chrome/Firefox don't have it at all.
 const isAppleDevice = (): boolean => {
-  if (typeof navigator === 'undefined') return false;
-  return /iPhone|iPad|iPod|Macintosh/i.test(navigator.userAgent) &&
-    (/Safari/i.test(navigator.userAgent) || (window as any).ApplePaySession !== undefined);
+  try {
+    return (
+      typeof window !== 'undefined' &&
+      'ApplePaySession' in window &&
+      typeof (window as any).ApplePaySession?.canMakePayments === 'function' &&
+      (window as any).ApplePaySession.canMakePayments()
+    );
+  } catch {
+    return false;
+  }
 };
 
 interface PaymentMethodsProps {
