@@ -3436,44 +3436,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Alphanumeric only — Geidea rejects dashes/special chars in merchantReferenceId
           const merchantReferenceId = (orderId || internalSessionId).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40) || internalSessionId;
 
+          // Timestamp in format required by Geidea: YYYY/MM/DD HH:mm:ss
+          const now = new Date();
+          const pad = (n: number) => String(n).padStart(2, '0');
+          const timestamp = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+          // HMAC-SHA256 signature: Base64(HMAC-SHA256(publicKey+amount+currency+merchantReferenceId+timestamp, apiPassword))
+          const { createHmac } = await import('crypto');
+          const amountStr = Number(Number(amount).toFixed(2)).toFixed(2);
+          const sigData = `${publicKey}${amountStr}${currency}${merchantReferenceId}${timestamp}`;
+          const signature = createHmac('sha256', apiPassword).update(sigData).digest('base64');
+
           // Build the callback URL
           const callbackBase = returnUrl || pg.geidea?.callbackUrl || '';
 
-          // Normalize phone: strip country code, keep 9 digits
-          const cleanPhone = (customerPhone || '').replace(/\D/g, '')
-            .replace(/^00966/, '').replace(/^\+?966/, '').replace(/^0/, '').slice(-9);
-
-          // Geidea requires Name + (email OR phoneNumber)
-          const geideaCustomer: any = {
-            name: (customerName || '').trim() || (cleanPhone ? `Customer${cleanPhone}` : 'Customer'),
-          };
+          // Build customer object — all fields are optional in HPP
+          const geideaCustomer: any = {};
           if (customerEmail) {
             geideaCustomer.email = customerEmail;
-          } else if (cleanPhone) {
-            // Geidea requires phoneNumber + phoneCountryCode together
-            geideaCustomer.phoneNumber = cleanPhone.length === 9 ? `0${cleanPhone}` : cleanPhone;
-            geideaCustomer.phoneCountryCode = '966';
-          } else {
-            // Hard fallback so the request is never rejected
-            geideaCustomer.email = 'guest@cluny.cafe';
+          }
+          if (customerPhone) {
+            const cleanPhone = customerPhone.replace(/\D/g, '')
+              .replace(/^00966/, '').replace(/^\+?966/, '').replace(/^0/, '').slice(-9);
+            if (cleanPhone) {
+              geideaCustomer.phoneNumber = cleanPhone;
+              geideaCustomer.phonecountrycode = '+966';
+            }
+          }
+          if (customerName) {
+            // HPP uses firstName/lastName — split on first space
+            const nameParts = customerName.trim().split(/\s+/);
+            geideaCustomer.firstName = nameParts[0] || customerName;
+            geideaCustomer.lastName = nameParts.slice(1).join(' ') || nameParts[0] || customerName;
           }
 
           const geideaBody: any = {
-            amount: Number(Number(amount).toFixed(2)),
+            amount: amountStr,
             currency,
             merchantReferenceId,
-            customer: geideaCustomer,
+            timestamp,
+            signature,
+            language: 'ar',
+            paymentOperation: 'Pay',
           };
 
-          // Only include callbackUrl/returnUrl if available — Geidea may reject unregistered domains
           if (callbackBase) {
             geideaBody.callbackUrl = callbackBase;
             geideaBody.returnUrl = callbackBase;
           }
 
-          console.log('[Geidea] eInvoice request body:', JSON.stringify(geideaBody));
+          if (Object.keys(geideaCustomer).length > 0) {
+            geideaBody.customer = geideaCustomer;
+          }
 
-          const geideaResponse = await fetch(`${baseUrl}/payment-intent/api/v1/direct/eInvoice`, {
+          console.log('[Geidea] Create Session request body:', JSON.stringify({ ...geideaBody, signature: '[HIDDEN]' }));
+
+          // Use the correct HPP Create Session endpoint (v2)
+          const geideaResponse = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -3484,12 +3503,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
 
           const geideaData = await geideaResponse.json() as any;
-          console.log('[Geidea] eInvoice response:', JSON.stringify(geideaData));
+          console.log('[Geidea] Create Session response:', JSON.stringify(geideaData));
 
-          const geideaEInvoiceId = geideaData.eInvoiceId || geideaData.paymentIntentId;
-          const geideaPaymentUrl = geideaData.paymentUrl || geideaData.redirectUrl;
+          const sessionId = geideaData?.session?.id;
 
-          if (geideaResponse.ok && geideaPaymentUrl) {
+          // Derive HPP checkout URL from the API base URL
+          // api.ksamerchant.geidea.net → www.ksamerchant.geidea.net
+          // api.merchant.geidea.net → www.merchant.geidea.net
+          const hppBase = baseUrl.replace('https://api.', 'https://www.');
+          const geideaPaymentUrl = sessionId ? `${hppBase}/hpp/checkout/?${sessionId}` : null;
+
+          if (geideaResponse.ok && sessionId) {
             await logPayment({
               tenantId,
               event: 'init',
@@ -3497,8 +3521,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               amount: Number(amount),
               currency,
               status: 'pending',
-              sessionId: geideaEInvoiceId || internalSessionId,
-              externalId: geideaEInvoiceId,
+              sessionId,
+              externalId: sessionId,
               orderId: req.body.orderId,
               customerPhone: req.body.customerPhone,
               customerEmail: req.body.customerEmail,
@@ -3506,15 +3530,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
             return res.json({
               success: true,
-              sessionId: geideaEInvoiceId || internalSessionId,
+              sessionId,
               redirectUrl: geideaPaymentUrl,
               paymentUrl: geideaPaymentUrl,
               provider: 'geidea',
               merchantReferenceId,
-              externalId: geideaEInvoiceId,
+              externalId: sessionId,
             });
           } else {
-            console.error('[Geidea] Payment init failed:', geideaData);
+            const errMsg = geideaData?.detailedResponseMessage || geideaData?.responseMessage
+              || JSON.stringify(geideaData) || 'فشل إنشاء جلسة الدفع';
+            console.error('[Geidea] Create Session failed:', geideaData);
             await logPayment({
               tenantId,
               event: 'failed',
@@ -3524,13 +3550,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
               status: 'failed',
               orderId: req.body.orderId,
               customerPhone: req.body.customerPhone,
-              errorMessage: geideaData.detailedResponseMessage || geideaData.responseMessage || 'فشل إنشاء eInvoice',
+              errorMessage: errMsg,
               rawData: geideaData,
               ipAddress: req.ip,
             });
             return res.status(400).json({
-              error: "فشل في إنشاء رابط الدفع عبر جيديا",
-              details: geideaData.detailedResponseMessage || geideaData.responseMessage || 'خطأ غير معروف',
+              error: "فشل في إنشاء جلسة الدفع عبر جيديا",
+              details: errMsg,
               raw: geideaData,
             });
           }
