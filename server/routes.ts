@@ -3433,37 +3433,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         try {
           const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
-          const merchantReferenceId = orderId || `order-${internalSessionId}`;
+          // Alphanumeric only — Geidea rejects dashes/special chars in merchantReferenceId
+          const merchantReferenceId = (orderId || internalSessionId).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40) || internalSessionId;
 
-          // Build the callback URL so Geidea appends its result params
+          // Build the callback URL
           const callbackBase = returnUrl || pg.geidea?.callbackUrl || '';
-          const callbackUrl = callbackBase.includes('?')
-            ? callbackBase
-            : callbackBase;
 
           // Normalize phone: strip country code, keep 9 digits
           const cleanPhone = (customerPhone || '').replace(/\D/g, '')
             .replace(/^00966/, '').replace(/^\+?966/, '').replace(/^0/, '').slice(-9);
 
           // Geidea requires Name — use phone as fallback for guest checkouts
-          // Note: phone fields omitted intentionally — Geidea's HPP collects them on their page
           const geideaCustomer: any = {
-            name: customerName || (cleanPhone ? `Customer-${cleanPhone}` : 'Customer'),
+            name: (customerName || '').trim() || (cleanPhone ? `Customer${cleanPhone}` : 'Customer'),
           };
           if (customerEmail) geideaCustomer.email = customerEmail;
 
           const geideaBody: any = {
-            amount: Number(amount),
+            amount: Number(Number(amount).toFixed(2)),
             currency,
             merchantReferenceId,
             customer: geideaCustomer,
           };
 
-          // Set callbackUrl (server-to-server webhook) and returnUrl (customer redirect)
+          // Only include callbackUrl/returnUrl if available — Geidea may reject unregistered domains
           if (callbackBase) {
             geideaBody.callbackUrl = callbackBase;
             geideaBody.returnUrl = callbackBase;
           }
+
+          console.log('[Geidea] eInvoice request body:', JSON.stringify(geideaBody));
 
           const geideaResponse = await fetch(`${baseUrl}/payment-intent/api/v1/direct/eInvoice`, {
             method: 'POST',
