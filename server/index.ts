@@ -232,7 +232,7 @@ async function connectDatabase() {
     } catch (err) {
       console.error("BRCAFE10 seed error:", err);
     }
-    // Seed discount code TECH10 — كلية التقنية للبنات بينبع (10% off, POS use)
+    // Seed discount code TECH10 — خصم 10% للمستخدم عبر نقطة البيع
     // Hidden from customers by default — admin can toggle visibility from admin settings.
     try {
       const { DiscountCodeModel } = await import("@shared/schema");
@@ -242,7 +242,7 @@ async function connectDatabase() {
           $setOnInsert: {
             code: "TECH10",
             discountPercentage: 10,
-            reason: "كلية التقنية للبنات بينبع",
+            reason: "خصم خاص 10%",
             employeeId: "system",
             isActive: 1,
             usageCount: 0,
@@ -258,7 +258,7 @@ async function connectDatabase() {
         { code: "TECH10", _seedHiddenV1: { $exists: false } },
         { $set: { visibleToCustomers: false, _seedHiddenV1: true } }
       );
-      console.log("✅ Discount code TECH10 (كلية التقنية للبنات بينبع — 10% off) is ready (hidden by default)");
+      console.log("✅ Discount code TECH10 (خصم خاص 10%) is ready (hidden by default)");
     } catch (err) {
       console.error("TECH10 seed error:", err);
     }
@@ -796,6 +796,18 @@ app.use((req, res, next) => {
       console.error('⚠️ Auto-migration of main branch skipped:', err);
     }
 
+    // Ensure paymentTestMode is OFF on every startup
+    try {
+      const { BusinessConfigModel: BCM } = await import("./models");
+      await BCM.updateOne(
+        { tenantId: 'demo-tenant', 'paymentGateway.paymentTestMode': true },
+        { $set: { 'paymentGateway.paymentTestMode': false } }
+      );
+      console.log('✅ Payment test mode verified OFF');
+    } catch (err) {
+      console.error('⚠️ Could not reset paymentTestMode:', err);
+    }
+
     // Auto-configure PayMob Saudi Arabia payment gateway when credentials are provided
     try {
       const { BusinessConfigModel } = await import("./models");
@@ -840,7 +852,6 @@ app.use((req, res, next) => {
     } catch (err) {
       console.error('❌ Failed to auto-configure PayMob:', err);
     }
-    
     // Verify Mail Service on startup
     try {
       const { testEmailConnection } = await import("./mail-service");

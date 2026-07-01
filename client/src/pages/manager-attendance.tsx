@@ -754,7 +754,7 @@ export default function ManagerAttendance() {
               const hasEmployeesWithLoc = liveEmployees.some(e => e.lastLocation?.lat);
               const hasBranchLoc = displayBranch?.location?.lat && displayBranch?.location?.lng;
 
-              // Compute map center: branch location, first employee, or Yanbu default
+              // Compute map center: branch location, first employee, or Riyadh default
               const center: [number, number] = hasBranchLoc
                 ? [displayBranch!.location!.lat, displayBranch!.location!.lng]
                 : hasEmployeesWithLoc

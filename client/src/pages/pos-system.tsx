@@ -941,7 +941,7 @@ export default function PosSystem() {
 
   const calculateSubtotal = useMemo(() => calculateTotal / 1.15, [calculateTotal]);
 
-  // Discount coupon (e.g. TECH10 — كلية التقنية للبنات بينبع)
+  // Discount coupon (e.g. TECH10 — خصم خاص)
   const [discountCode, setDiscountCode] = useState("");
   const [isValidatingDiscount, setIsValidatingDiscount] = useState(false);
   const [appliedDiscount, setAppliedDiscount] = useState<{ code: string; percentage: number; reason?: string } | null>(null);
