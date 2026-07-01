@@ -32,6 +32,7 @@ import {
 } from "recharts";
 import type { Employee, Order, Customer } from "@shared/schema";
 import SarIcon from "@/components/sar-icon";
+import DashboardAnalyticsPanel from "@/components/dashboard-analytics-panel";
 import { DemoDataManager } from "@/components/demo-data-manager";
 import { FlaskConical, Sparkles, Brain, Globe, Plug, Gauge, Code2 } from "lucide-react";
 import { useTranslate } from "@/lib/useTranslate";
@@ -1145,6 +1146,11 @@ export default function ManagerDashboard() {
                </button>
              ))}
            </div>
+         </div>
+
+         {/* ── Weekly Stats, Profits & Product Consumption ── */}
+         <div className="mb-4">
+           <DashboardAnalyticsPanel />
          </div>
 
          {/* ── TABS (DETAILED SECTIONS) ── */}

@@ -14,6 +14,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from "recharts";
 import SarIcon from "@/components/sar-icon";
+import DashboardAnalyticsPanel from "@/components/dashboard-analytics-panel";
 import { useTranslate } from "@/lib/useTranslate";
 import { ManagerSidebar, MobileBottomNav } from "@/components/manager-sidebar";
 import { apiRequest } from "@/lib/queryClient";
@@ -396,6 +397,9 @@ export default function AdminDashboard() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Weekly Stats, Profits & Product Consumption */}
+          <DashboardAnalyticsPanel />
 
           {/* Quick Links + Employee List */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
