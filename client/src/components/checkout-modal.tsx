@@ -20,11 +20,9 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import GeideaCheckoutWidget from "./geidea-checkout";
 import PaymobCheckoutWidget from "./paymob-checkout";
-import ApplePayNative from "./apple-pay-native";
 import SarIcon from "@/components/sar-icon";
 
-const GEIDEA_HPP_METHODS = ['geidea', 'neoleap', 'neoleap-apple-pay'];
-const APPLE_PAY_NATIVE_METHODS = ['apple_pay'];
+const GEIDEA_HPP_METHODS = ['geidea', 'neoleap'];
 const PAYMOB_METHODS = ['paymob-card', 'paymob-wallet'];
 
 type CheckoutStep = 'review' | 'delivery' | 'payment' | 'confirmation' | 'success';
@@ -67,7 +65,6 @@ const CheckoutModal = memo(() => {
  const [receiptFile, setReceiptFile] = useState<File | null>(null);
  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
  const [showGeideaWidget, setShowGeideaWidget] = useState(false);
- const [showApplePayWidget, setShowApplePayWidget] = useState(false);
  const [showPaymobWidget, setShowPaymobWidget] = useState(false);
  const [paymobCheckoutUrl, setPaymobCheckoutUrl] = useState("");
 
@@ -91,8 +88,6 @@ const CheckoutModal = memo(() => {
  if (!customer) saveOrderLocally(order.orderNumber);
  if (selectedPaymentMethod === 'cash') {
    handlePaymentConfirmed(order);
- } else if (selectedPaymentMethod && APPLE_PAY_NATIVE_METHODS.includes(selectedPaymentMethod as string)) {
-   setShowApplePayWidget(true);
  } else if (selectedPaymentMethod && GEIDEA_HPP_METHODS.includes(selectedPaymentMethod as string)) {
    setShowGeideaWidget(true);
  } else if (selectedPaymentMethod && PAYMOB_METHODS.includes(selectedPaymentMethod as string)) {
@@ -255,7 +250,6 @@ const CheckoutModal = memo(() => {
  setReceiptFile(null);
  setReceiptPreview(null);
  setShowGeideaWidget(false);
- setShowApplePayWidget(false);
  };
 
  const steps = [
@@ -400,25 +394,7 @@ const CheckoutModal = memo(() => {
 
  {currentStep === 'payment' && (
  <div className="space-y-6 animate-in fade-in duration-500">
-   {showApplePayWidget && orderDetails ? (
-     <ApplePayNative
-       amount={getTotalPrice()}
-       orderId={orderDetails.orderNumber}
-       customerPhone={customerPhone}
-       customerEmail={customer?.email}
-       onSuccess={() => {
-         setShowApplePayWidget(false);
-         handlePaymentConfirmed(orderDetails);
-       }}
-       onError={(msg) => {
-         setShowApplePayWidget(false);
-         toast({ variant: "destructive", title: "فشل الدفع", description: msg });
-       }}
-       onCancel={() => {
-         setShowApplePayWidget(false);
-       }}
-     />
-   ) : showGeideaWidget && orderDetails ? (
+  {showGeideaWidget && orderDetails ? (
      <GeideaCheckoutWidget
        orderNumber={orderDetails.orderNumber}
        amount={getTotalPrice()}
@@ -458,16 +434,11 @@ const CheckoutModal = memo(() => {
          <Button
            onClick={handleProceedPayment}
            disabled={createOrderMutation.isPending}
-           className={`flex-1 ${selectedPaymentMethod === 'apple_pay' ? 'bg-black hover:bg-black/90 text-white' : ''}`}
+           className="flex-1"
            data-testid="button-confirm-order"
          >
            {createOrderMutation.isPending ? (
              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> جاري المعالجة...</>
-           ) : selectedPaymentMethod === 'apple_pay' ? (
-             <span style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif", display: 'flex', alignItems: 'center', gap: '6px' }}>
-               <svg viewBox="0 0 20 24" style={{ height: '18px', fill: 'currentColor' }}><path d="M13.23 3.02C14.28 1.71 14.94 0 14.94 0s-1.71.28-2.76 1.59c-.96 1.21-1.57 2.86-1.47 3.64.97.07 2.53-.3 3.52-2.21zM16.44 8.74c-1.77-.07-3.28 1-4.13 1-.85 0-2.14-.94-3.55-.91-1.82.03-3.5 1.06-4.43 2.71-1.9 3.28-.49 8.15 1.35 10.82.9 1.31 1.97 2.77 3.38 2.72 1.35-.05 1.86-.87 3.49-.87 1.62 0 2.09.87 3.51.84 1.46-.03 2.39-1.32 3.29-2.63.97-1.47 1.37-2.9 1.4-2.97-.03-.01-2.71-1.04-2.74-4.13-.03-2.59 2.11-3.83 2.21-3.9-1.2-1.78-3.08-1.68-3.78-1.68z" /></svg>
-               Pay
-             </span>
            ) : selectedPaymentMethod && GEIDEA_HPP_METHODS.includes(selectedPaymentMethod as string) ? (
              <><CreditCard className="w-4 h-4 mr-2" /> الدفع الآن</>
            ) : selectedPaymentMethod && PAYMOB_METHODS.includes(selectedPaymentMethod as string) ? (
