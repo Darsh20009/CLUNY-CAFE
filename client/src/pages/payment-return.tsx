@@ -374,7 +374,9 @@ export default function PaymentReturnPage() {
         </div>
 
         <p className="text-xs text-muted-foreground">
-          {tc("مدعوم بواسطة PayMob — بوابة الدفع المعتمدة في السعودية", "Powered by PayMob — Certified Saudi Payment Gateway")}
+          {provider === "geidea"
+            ? tc("مدعوم بواسطة Geidea — بوابة الدفع الآمنة", "Powered by Geidea — Secure Payment Gateway")
+            : tc("بوابة الدفع الآمنة المعتمدة في السعودية", "Certified Saudi Secure Payment Gateway")}
         </p>
       </div>
     </div>

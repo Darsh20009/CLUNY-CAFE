@@ -4596,7 +4596,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         tenantId,
         paymentStatus: "paid",
         status: "pending",
-        paymentMethod: record.orderData?.paymentMethod || "paymob-card",
+        paymentMethod: record.orderData?.paymentMethod || "geidea",
         ...(paymobTxId ? { paymentTransactionId: paymobTxId } : {}),
         customerInfo: record.orderData?.customerInfo || {
           customerName: record.customerName || record.orderData?.customerName,
