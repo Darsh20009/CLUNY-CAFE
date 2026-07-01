@@ -3452,7 +3452,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (customerEmail) geideaCustomer.email = customerEmail;
           if (cleanPhone) {
             geideaCustomer.phoneNumber = cleanPhone;
-            geideaCustomer.phoneCountryCode = '966';
+            geideaCustomer.phoneCountryCode = '+966';
           }
 
           const geideaBody: any = {
