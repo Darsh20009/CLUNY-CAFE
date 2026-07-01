@@ -92,6 +92,11 @@ export interface PushPayload {
   data?: Record<string, any>;
 }
 
+/** Convert any Base64 variant to URL-safe Base64 (no padding) as required by web-push */
+function toUrlSafeBase64(str: string): string {
+  return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 async function sendPushToSubscriptions(
   subscriptions: any[],
   payload: PushPayload
@@ -128,13 +133,17 @@ async function sendPushToSubscriptions(
   };
 
   const results = await Promise.allSettled(
-    subscriptions.map((sub) =>
-      webpush.sendNotification(
-        { endpoint: sub.endpoint, keys: sub.keys },
+    subscriptions.map((sub) => {
+      const normalizedKeys = sub.keys ? {
+        p256dh: toUrlSafeBase64(sub.keys.p256dh || ''),
+        auth:   toUrlSafeBase64(sub.keys.auth   || ''),
+      } : sub.keys;
+      return webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: normalizedKeys },
         pushPayload,
         pushOptions
-      )
-    )
+      );
+    })
   );
 
   const staleEndpoints: string[] = [];

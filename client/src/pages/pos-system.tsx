@@ -321,7 +321,9 @@ export default function PosSystem() {
           }
         }, 500);
       }
-    } else if (!isPosOrder) {
+    } else {
+      // POS-channel orders: play a short confirmation beep so the cashier
+      // knows the order registered successfully (even when they created it).
       playChannelSound('manual');
     }
   });
