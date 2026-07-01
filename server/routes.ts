@@ -3894,7 +3894,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const apiPassword = pg.geidea?.apiPassword;
       const baseUrl = (pg.geidea?.baseUrl || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
       const merchantIdentifier = pg.geidea?.applePayMerchantId || 'merchant.cluny.cafe';
-      const domainName = pg.geidea?.applePayDomain || 'cluny.cafe';
+      const configDomain = pg.geidea?.applePayDomain || 'cluny.cafe';
+      // Use the actual domain the browser is on (from Origin/Host) so Apple Pay
+      // merchant validation matches the initiating domain. Fall back to config.
+      const requestOrigin = req.get('origin') || req.get('referer') || '';
+      let initiativeDomain = configDomain;
+      try {
+        if (requestOrigin) {
+          const parsed = new URL(requestOrigin);
+          initiativeDomain = parsed.hostname;
+        }
+      } catch {}
+      const domainName = configDomain;
       const displayName = (pg.geidea?.displayName || 'CLUNY CAFE').slice(0, 64);
 
       if (!publicKey || !apiPassword) return res.status(400).json({ error: "بيانات جيديا غير مكتملة" });
@@ -3928,7 +3939,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log('[Apple Pay] Session created:', sessionId);
 
       // Step 2: Validate merchant with Apple via Geidea
-      const merchantBody = { sessionId, validationUrl, merchantIdentifier, domainName, displayName, initiative: 'web', initiativeContext: domainName };
+      const merchantBody = { sessionId, validationUrl, merchantIdentifier, domainName, displayName, initiative: 'web', initiativeContext: initiativeDomain };
       console.log('[Apple Pay] Validating merchant:', merchantBody);
       const merchantRes = await fetch(`${baseUrl}/payment/api/v1/direct/apple/merchant-session`, {
         method: 'POST',

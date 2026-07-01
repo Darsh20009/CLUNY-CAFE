@@ -182,9 +182,11 @@ export default function PaymentMethods({
     // paymob-apple-pay and neoleap-apple-pay hidden — routes through Geidea for apple_pay
     if (['paymob-apple-pay', 'neoleap-apple-pay'].includes(method.id as string)) return null;
 
-    // apple_pay only works on Safari (ApplePaySession available) — hide on other browsers
+    // apple_pay only works on Safari on Apple devices AND only on the registered domain (cluny.cafe)
     if ((method.id as string) === 'apple_pay') {
+      const isProductionDomain = typeof window !== 'undefined' && window.location.hostname === 'cluny.cafe';
       const applePayAvailable =
+        isProductionDomain &&
         typeof window !== 'undefined' &&
         typeof (window as any).ApplePaySession !== 'undefined' &&
         (window as any).ApplePaySession.canMakePayments();
