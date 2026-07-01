@@ -1,5 +1,3 @@
-const SYMBOL_URL = "/riyal-symbol.svg";
-
 const PATTERN = /(ر\.\u200f?س|ريال\s*سعودي|\bSAR\b|\bSR\b)/g;
 
 const SKIP_TAGS = new Set([
@@ -15,14 +13,14 @@ const SKIP_TAGS = new Set([
 
 const PROCESSED_NODES = new WeakSet<Node>();
 
-function makeSymbolElement(): HTMLImageElement {
-  const img = document.createElement("img");
-  img.src = SYMBOL_URL;
-  img.alt = "ريال";
-  img.setAttribute("data-riyal-symbol", "true");
-  img.style.cssText =
-    "display:inline-block;width:0.95em;height:0.95em;vertical-align:-0.15em;margin:0 0.12em;object-fit:contain;";
-  return img;
+// Inline SVG for the Saudi Riyal symbol — uses currentColor so it inherits text color.
+const RIYAL_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="currentColor" aria-label="ريال" role="img" style="display:inline-block;width:0.95em;height:0.95em;vertical-align:-0.15em;margin:0 0.1em;overflow:visible" data-riyal-symbol="true"><rect x="30" y="10" width="22" height="90" rx="4"/><rect x="78" y="10" width="22" height="90" rx="4"/><polygon points="20,100 180,65 180,84 20,119"/><polygon points="20,125 180,90 180,109 20,144"/><polygon points="45,150 180,115 180,134 45,169"/></svg>`;
+
+function makeSymbolElement(): Element {
+  const template = document.createElement("template");
+  template.innerHTML = RIYAL_SVG;
+  const svg = template.content.firstElementChild!;
+  return svg;
 }
 
 function processTextNode(textNode: Text): void {
@@ -33,6 +31,8 @@ function processTextNode(textNode: Text): void {
   if (!tag || SKIP_TAGS.has(tag)) return;
   if ((parent as HTMLElement).closest?.("[data-no-riyal]")) return;
   if ((parent as HTMLElement).closest?.("[contenteditable='true']")) return;
+  // Don't process if parent is already an SVG context
+  if ((parent as HTMLElement).closest?.("svg")) return;
 
   const original = textNode.nodeValue || "";
   PATTERN.lastIndex = 0;

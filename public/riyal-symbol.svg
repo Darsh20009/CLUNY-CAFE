@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="currentColor">
+  <!-- Saudi Riyal Official Symbol -->
+  <!-- Two vertical columns at top -->
+  <rect x="30" y="10" width="22" height="90" rx="4"/>
+  <rect x="78" y="10" width="22" height="90" rx="4"/>
+  <!-- Three diagonal bars from right to left, going down-right -->
+  <polygon points="20,100  180,65  180,84  20,119"/>
+  <polygon points="20,125  180,90  180,109 20,144"/>
+  <polygon points="45,150  180,115 180,134 45,169"/>
+</svg>
