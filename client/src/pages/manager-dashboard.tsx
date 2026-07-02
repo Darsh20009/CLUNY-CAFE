@@ -34,6 +34,7 @@ import type { Employee, Order, Customer } from "@shared/schema";
 import SarIcon from "@/components/sar-icon";
 import DashboardAnalyticsPanel from "@/components/dashboard-analytics-panel";
 import TopProductsWidget from "@/components/top-products-widget";
+import EmailComposerWidget from "@/components/email-composer-widget";
 import { DemoDataManager } from "@/components/demo-data-manager";
 import { FlaskConical, Sparkles, Brain, Globe, Plug, Gauge, Code2 } from "lucide-react";
 import { useTranslate } from "@/lib/useTranslate";
@@ -1154,9 +1155,14 @@ export default function ManagerDashboard() {
            <DashboardAnalyticsPanel />
          </div>
 
-         {/* ── Top Products Widget ── */}
-         <div className="mb-4">
-           <TopProductsWidget />
+         {/* ── Top Products + Email Composer ── */}
+         <div className="mb-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+           <div className="lg:col-span-2">
+             <TopProductsWidget />
+           </div>
+           <div className="lg:col-span-1">
+             <EmailComposerWidget />
+           </div>
          </div>
 
          {/* ── TABS (DETAILED SECTIONS) ── */}

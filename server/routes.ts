@@ -891,6 +891,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Send manual email to customer
+  // ─── Direct email to any recipient ──────────────────────────────────────
+  app.post("/api/email/send-direct", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const { to, subject, message, recipientName } = req.body;
+      if (!to || !subject || !message) return res.status(400).json({ error: "الحقول مطلوبة: to, subject, message" });
+      // Basic email validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(to)) return res.status(400).json({ error: "صيغة البريد الإلكتروني غير صحيحة" });
+
+      const { sendPromotionEmail } = await import("./mail-service");
+      const success = await sendPromotionEmail(to, recipientName || "عزيزي العميل", subject, message);
+
+      if (success) {
+        res.json({ message: "تم إرسال البريد الإلكتروني بنجاح" });
+      } else {
+        res.status(500).json({ error: "فشل إرسال البريد — تحقق من إعدادات SMTP" });
+      }
+    } catch (error: any) {
+      console.error("Direct email error:", error);
+      res.status(500).json({ error: error.message || "خطأ في الخادم" });
+    }
+  });
+
   app.post("/api/admin/send-email", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {
       const { customerId, subject, message } = req.body;
