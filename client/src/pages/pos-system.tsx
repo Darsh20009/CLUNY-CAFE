@@ -2214,44 +2214,41 @@ export default function PosSystem() {
         <main className="flex-1 flex overflow-hidden">
 
           <section className={`${mobilePanelView === 'products' ? 'flex' : 'hidden'} md:flex flex-1 flex-col overflow-hidden`}>
-            {/* Department Tabs — مشروبات / أكل */}
-            {availableDepartments.length > 1 && (
-              <div className={`${mobilePanelView === 'cart' ? 'hidden' : ''} flex border-b bg-background shrink-0`}>
-                <button
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-sm font-bold transition-all border-b-2 ${selectedDepartment === 'all' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => { setSelectedDepartment('all'); setSelectedCategory('all'); }}
-                  data-testid="button-dept-all"
-                >
-                  <Grid3X3 className="w-4 h-4" />
-                  <span>الكل</span>
-                </button>
-                {availableDepartments.map(dept => (
-                  <button
-                    key={dept.id}
-                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-sm font-bold transition-all border-b-2 ${selectedDepartment === dept.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-                    onClick={() => { setSelectedDepartment(dept.id); setSelectedCategory('all'); }}
-                    data-testid={`button-dept-${dept.id}`}
-                  >
-                    {dept.id === 'drinks' ? <Coffee className="w-4 h-4" /> : <ShoppingBag className="w-4 h-4" />}
-                    <span>{i18n.language === 'ar' ? dept.nameAr : dept.nameEn}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Category Top Bar */}
+            {/* Category + Department Top Bar */}
             <div className={`${mobilePanelView === 'cart' ? 'hidden' : ''} flex border-b bg-muted/30 shrink-0`}>
               {/* Scrollable category buttons */}
               <div className="flex gap-1 overflow-x-auto px-2 py-2 no-scrollbar flex-1 min-w-0">
+                {/* "الكل" button — resets both dept and category */}
                 <Button
-                  variant={selectedCategory === "all" ? "default" : "ghost"}
+                  variant={selectedDepartment === "all" && selectedCategory === "all" ? "default" : "ghost"}
                   className="flex-row gap-1.5 h-9 px-3 shrink-0 rounded-lg"
-                  onClick={() => setSelectedCategory("all")}
+                  onClick={() => { setSelectedDepartment('all'); setSelectedCategory("all"); }}
                   data-testid="button-category-all"
                 >
                   <Grid3X3 className="w-4 h-4" />
                   <span className="text-xs font-bold whitespace-nowrap">{t('pos.category_all')}</span>
                 </Button>
+
+                {/* Department buttons — always visible when products exist */}
+                {availableDepartments.map(dept => (
+                  <Button
+                    key={`dept-${dept.id}`}
+                    variant={selectedDepartment === dept.id && selectedCategory === "all" ? "default" : "ghost"}
+                    className="flex-row gap-1.5 h-9 px-3 shrink-0 rounded-lg"
+                    onClick={() => { setSelectedDepartment(dept.id); setSelectedCategory('all'); }}
+                    data-testid={`button-dept-${dept.id}`}
+                  >
+                    {dept.id === 'drinks' ? <Coffee className="w-4 h-4" /> : <ShoppingBag className="w-4 h-4" />}
+                    <span className="text-xs font-bold whitespace-nowrap">{i18n.language === 'ar' ? dept.nameAr : dept.nameEn}</span>
+                  </Button>
+                ))}
+
+                {/* Separator before sub-categories */}
+                {visibleCategories.length > 0 && (
+                  <div className="w-px bg-border self-stretch mx-1 shrink-0" />
+                )}
+
+                {/* Sub-category buttons */}
                 {visibleCategories.map((cat: any) => (
                   <Button
                     key={cat.id}
