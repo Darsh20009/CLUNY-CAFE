@@ -914,20 +914,54 @@ export default function PosSystem() {
     return result;
   }, [productsData]);
 
+  // Arabic display names for raw category keys (fallback when no MenuCategory records exist)
+  const CATEGORY_DISPLAY: Record<string, { ar: string; en: string }> = {
+    hot:       { ar: 'ساخن',           en: 'Hot' },
+    cold:      { ar: 'بارد',           en: 'Cold' },
+    desserts:  { ar: 'الحلى',          en: 'Desserts' },
+    food:      { ar: 'أكل',            en: 'Food' },
+    drinks:    { ar: 'مشروبات',        en: 'Drinks' },
+    coffee:    { ar: 'قهوة',           en: 'Coffee' },
+    juice:     { ar: 'عصائر',          en: 'Juices' },
+    tea:       { ar: 'شاي',            en: 'Tea' },
+    snacks:    { ar: 'سناكس',          en: 'Snacks' },
+    breakfast: { ar: 'فطور',           en: 'Breakfast' },
+    lunch:     { ar: 'غداء',           en: 'Lunch' },
+    dinner:    { ar: 'عشاء',           en: 'Dinner' },
+    bakery:    { ar: 'مخبوزات',        en: 'Bakery' },
+    seasonal:  { ar: 'موسمي',          en: 'Seasonal' },
+    special:   { ar: 'مميز',           en: 'Special' },
+    other:     { ar: 'أخرى',           en: 'Other' },
+  };
+
   const visibleCategories = useMemo(() => {
-    // Only show categories that belong to products matching the selected department
     const filteredProducts = selectedDepartment === 'all'
       ? productsData || []
       : (productsData || []).filter((p: any) => (p.department || 'drinks') === selectedDepartment);
     const itemCategorySet = new Set(filteredProducts.map((p: any) => p.category).filter(Boolean));
-    return menuCategories
-      .filter(c => itemCategorySet.has(c.id))
-      .map(c => ({
+
+    // ① Try to match against MenuCategory records (when they exist)
+    const fromMenuCats = menuCategories
+      .filter((c: any) => itemCategorySet.has(c.id))
+      .map((c: any) => ({
         id: c.id,
-        name: i18n.language === 'ar' ? (c.nameAr || c.nameEn) : (c.nameEn || c.nameAr),
+        name: i18n.language === 'ar' ? (c.nameAr || c.nameEn || c.id) : (c.nameEn || c.nameAr || c.id),
         icon: Tag,
-        color: "text-primary"
       }));
+
+    if (fromMenuCats.length > 0) return fromMenuCats;
+
+    // ② Fallback: build buttons from the raw category strings on products
+    return Array.from(itemCategorySet).map((catKey: any) => {
+      const display = CATEGORY_DISPLAY[catKey as string];
+      return {
+        id: catKey,
+        name: display
+          ? (i18n.language === 'ar' ? display.ar : display.en)
+          : catKey,
+        icon: Tag,
+      };
+    });
   }, [productsData, menuCategories, selectedDepartment, i18n.language]);
 
   // Helper: get the correct unit price for a POS order item, respecting the selected size
