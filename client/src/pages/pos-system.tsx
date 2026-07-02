@@ -126,6 +126,7 @@ export default function PosSystem() {
   });
   
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedDepartment, setSelectedDepartment] = useState<'all' | 'drinks' | 'food'>('all');
   const [searchQuery, setSearchQuery] = useState("");
   const [orderItems, setOrderItems] = useState<any[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -883,9 +884,10 @@ export default function PosSystem() {
     const bsThreshold = allCounts.length >= 3 ? allCounts[2] : (allCounts[0] || 1);
     return Object.values(groupedItemsMap)
       .filter(group => {
-        const rep = group[0];
+        const rep = group[0] as any;
+        const matchesDept = selectedDepartment === 'all' || (rep.department || 'drinks') === selectedDepartment;
         const matchesCategory = selectedCategory === "all" || rep.category === selectedCategory;
-        if (!matchesCategory) return false;
+        if (!matchesDept || !matchesCategory) return false;
         if (!q) return true;
         return group.some(item => {
           const arName = (item.nameAr || '').toLowerCase();
@@ -900,10 +902,24 @@ export default function PosSystem() {
           isBestSeller: (item.salesCount || 0) >= bsThreshold && bsThreshold > 0,
         };
       });
-  }, [productsData, selectedCategory, searchQuery, groupedItemsMap]);
+  }, [productsData, selectedCategory, selectedDepartment, searchQuery, groupedItemsMap]);
+
+  // Departments that have at least one product
+  const availableDepartments = useMemo(() => {
+    if (!productsData) return [];
+    const depts = new Set(productsData.map((p: any) => p.department || 'drinks'));
+    const result: { id: 'drinks' | 'food'; nameAr: string; nameEn: string }[] = [];
+    if (depts.has('drinks')) result.push({ id: 'drinks', nameAr: 'مشروبات', nameEn: 'Drinks' });
+    if (depts.has('food'))   result.push({ id: 'food',   nameAr: 'أكل',      nameEn: 'Food'   });
+    return result;
+  }, [productsData]);
 
   const visibleCategories = useMemo(() => {
-    const itemCategorySet = new Set(productsData?.map(p => p.category).filter(Boolean) || []);
+    // Only show categories that belong to products matching the selected department
+    const filteredProducts = selectedDepartment === 'all'
+      ? productsData || []
+      : (productsData || []).filter((p: any) => (p.department || 'drinks') === selectedDepartment);
+    const itemCategorySet = new Set(filteredProducts.map((p: any) => p.category).filter(Boolean));
     return menuCategories
       .filter(c => itemCategorySet.has(c.id))
       .map(c => ({
@@ -912,7 +928,7 @@ export default function PosSystem() {
         icon: Tag,
         color: "text-primary"
       }));
-  }, [productsData, menuCategories, i18n.language]);
+  }, [productsData, menuCategories, selectedDepartment, i18n.language]);
 
   // Helper: get the correct unit price for a POS order item, respecting the selected size
   // Defined here (before calculateTotal) so it can be used in useMemo callbacks
@@ -2198,6 +2214,31 @@ export default function PosSystem() {
         <main className="flex-1 flex overflow-hidden">
 
           <section className={`${mobilePanelView === 'products' ? 'flex' : 'hidden'} md:flex flex-1 flex-col overflow-hidden`}>
+            {/* Department Tabs — مشروبات / أكل */}
+            {availableDepartments.length > 1 && (
+              <div className={`${mobilePanelView === 'cart' ? 'hidden' : ''} flex border-b bg-background shrink-0`}>
+                <button
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-sm font-bold transition-all border-b-2 ${selectedDepartment === 'all' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => { setSelectedDepartment('all'); setSelectedCategory('all'); }}
+                  data-testid="button-dept-all"
+                >
+                  <Grid3X3 className="w-4 h-4" />
+                  <span>الكل</span>
+                </button>
+                {availableDepartments.map(dept => (
+                  <button
+                    key={dept.id}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-sm font-bold transition-all border-b-2 ${selectedDepartment === dept.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => { setSelectedDepartment(dept.id); setSelectedCategory('all'); }}
+                    data-testid={`button-dept-${dept.id}`}
+                  >
+                    {dept.id === 'drinks' ? <Coffee className="w-4 h-4" /> : <ShoppingBag className="w-4 h-4" />}
+                    <span>{i18n.language === 'ar' ? dept.nameAr : dept.nameEn}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Category Top Bar */}
             <div className={`${mobilePanelView === 'cart' ? 'hidden' : ''} flex border-b bg-muted/30 shrink-0`}>
               {/* Scrollable category buttons */}
