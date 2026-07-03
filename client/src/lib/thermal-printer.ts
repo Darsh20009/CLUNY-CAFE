@@ -1458,6 +1458,191 @@ export async function buildShiftReportEscPos(opts: ShiftReportOpts): Promise<Uin
   return new Uint8Array(raster);
 }
 
+// ── Generic Report (non-order) Canvas ──────────────────────────────────────
+export interface GenericReportRow {
+  label: string;
+  value: string;
+  bold?: boolean;
+}
+
+export interface GenericReportSection {
+  title: string;
+  rows: GenericReportRow[];
+}
+
+export interface GenericReportOpts {
+  shopName: string;
+  reportTitle: string;
+  periodLabel?: string;
+  dateLabel?: string;
+  kpis?: GenericReportRow[];
+  sections?: GenericReportSection[];
+  footer?: string;
+  paperWidth: '58mm' | '80mm';
+}
+
+/**
+ * Renders a generic operational/statistical report (product reports, analytics,
+ * daily summaries, etc — anything that is NOT an accounting/ERP financial
+ * statement) to a Canvas 2D bitmap with native Arabic shaping, so it can be
+ * sent straight to a thermal printer like the rest of the system.
+ */
+export async function buildGenericReportCanvas(opts: GenericReportOpts): Promise<HTMLCanvasElement> {
+  const DW = opts.paperWidth === '58mm' ? 384 : 576;
+  const PAD = Math.round(DW * 0.04);
+  const FS = opts.paperWidth === '58mm' ? 22 : 28;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = DW;
+  canvas.height = 6000;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, DW, 6000);
+
+  let y = 16;
+  const lh = (fs: number) => Math.ceil(fs * 1.65);
+
+  const drawCenter = (text: string, fs: number, bold = false, color = '#000') => {
+    ctx.font = `${bold ? '700' : '400'} ${fs}px Tahoma, Arial, sans-serif`;
+    ctx.fillStyle = color;
+    ctx.direction = 'rtl';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, DW / 2, y);
+    y += lh(fs);
+  };
+
+  const drawRow = (label: string, value: string, fs: number, boldVal = false) => {
+    ctx.direction = 'rtl';
+    ctx.fillStyle = '#000';
+    ctx.font = `400 ${fs}px Tahoma, Arial, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.fillText(label, DW - PAD, y);
+    ctx.font = `${boldVal ? '700' : '400'} ${fs}px Tahoma, Arial, sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.fillText(value, PAD, y);
+    y += lh(fs);
+  };
+
+  const drawDash = () => {
+    y += 16;
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = '#aaa';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PAD, y);
+    ctx.lineTo(DW - PAD, y);
+    ctx.stroke();
+    ctx.restore();
+    y += 16;
+  };
+
+  const drawSolid = () => {
+    y += 16;
+    ctx.save();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(PAD, y);
+    ctx.lineTo(DW - PAD, y);
+    ctx.stroke();
+    ctx.restore();
+    y += 16;
+  };
+
+  const drawSectionTitle = (text: string) => {
+    ctx.font = `700 ${Math.round(FS * 0.95)}px Tahoma, Arial, sans-serif`;
+    ctx.fillStyle = '#2D9B6E';
+    ctx.direction = 'rtl';
+    ctx.textAlign = 'right';
+    ctx.fillText(text, DW - PAD, y);
+    y += lh(Math.round(FS * 0.95)) + 2;
+  };
+
+  // ── HEADER ──
+  drawCenter(opts.shopName, Math.round(FS * 1.4), true);
+  drawCenter(opts.reportTitle, Math.round(FS * 0.95), false, '#444');
+  if (opts.dateLabel) drawCenter(opts.dateLabel, Math.round(FS * 0.85), false, '#555');
+
+  drawSolid();
+
+  if (opts.periodLabel) {
+    drawRow('الفترة:', opts.periodLabel, FS);
+    drawDash();
+  }
+
+  // ── KPIs ──
+  if (opts.kpis && opts.kpis.length > 0) {
+    for (const kpi of opts.kpis) {
+      drawRow(kpi.label, kpi.value, kpi.bold === false ? FS : Math.round(FS * 1.02), kpi.bold !== false);
+    }
+    drawDash();
+  }
+
+  // ── SECTIONS ──
+  if (opts.sections && opts.sections.length > 0) {
+    opts.sections.forEach((section, idx) => {
+      drawSectionTitle(section.title);
+      for (const row of section.rows) {
+        drawRow(row.label, row.value, Math.round(FS * 0.9), !!row.bold);
+      }
+      if (idx < opts.sections!.length - 1) y += 6;
+    });
+  }
+
+  // ── FOOTER ──
+  drawDash();
+  drawCenter(opts.footer || `CLUNY SYSTEMS — ${new Date().toLocaleString('ar-SA')}`, Math.round(FS * 0.8), false, '#666');
+
+  y += 40; // feed before cut
+
+  const finalH = Math.min(y + 10, 6000);
+  const trimmed = document.createElement('canvas');
+  trimmed.width = DW;
+  trimmed.height = finalH;
+  trimmed.getContext('2d')!.drawImage(canvas, 0, 0);
+  return trimmed;
+}
+
+/**
+ * Convert generic report canvas to ESC/POS raster bytes with feed + full cut.
+ */
+export async function buildGenericReportEscPos(opts: GenericReportOpts): Promise<Uint8Array> {
+  const canvas = await buildGenericReportCanvas(opts);
+  const DW = canvas.width;
+  const finalH = canvas.height;
+  const ctx = canvas.getContext('2d')!;
+
+  const imgData = ctx.getImageData(0, 0, DW, finalH);
+  const bpl = Math.ceil(DW / 8);
+  const raster: number[] = [];
+
+  raster.push(0x1b, 0x40);
+  raster.push(0x1d, 0x76, 0x30, 0x00);
+  raster.push(bpl & 0xff, (bpl >> 8) & 0xff);
+  raster.push(finalH & 0xff, (finalH >> 8) & 0xff);
+
+  for (let row = 0; row < finalH; row++) {
+    for (let bx = 0; bx < bpl; bx++) {
+      let byte = 0;
+      for (let bit = 0; bit < 8; bit++) {
+        const px = bx * 8 + bit;
+        if (px < DW) {
+          const i = (row * DW + px) * 4;
+          const lum = 0.299 * imgData.data[i] + 0.587 * imgData.data[i + 1] + 0.114 * imgData.data[i + 2];
+          if (lum < 128) byte |= 1 << (7 - bit);
+        }
+      }
+      raster.push(byte);
+    }
+  }
+
+  raster.push(0x1b, 0x64, 4);
+  raster.push(0x1d, 0x56, 0x41, 0x03);
+
+  return new Uint8Array(raster);
+}
+
 /**
  * Arabic-safe kitchen/employee ticket via Canvas 2D bitmap.
  * Replaces the legacy raw-text builder which produced garbled Arabic on most thermal printers.

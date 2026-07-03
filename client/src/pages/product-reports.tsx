@@ -37,6 +37,8 @@ import {
   Timer,
 } from "lucide-react";
 import clunyLogo from "@assets/cluny-logo.png";
+import { buildGenericReportEscPos, thermalPrint, loadPrinterSettings } from "@/lib/thermal-printer";
+import { useToast } from "@/hooks/use-toast";
 
 const MONTHS_AR = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
 const DAYS_AR = ["الأحد","الإثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"];
@@ -591,13 +593,14 @@ export default function ProductReportsPage() {
   const zeroProducts = products.filter(p => p.totalQty === 0);
   const topProduct = products.reduce((top, p) => (!top || p.totalQty > top.totalQty) ? p : top, null as ProductSummary | null);
 
-  const handlePrintSummary = () => {
-    if (!printRef.current) return;
-    const printWin = window.open("", "_blank", "width=1000,height=700");
-    if (!printWin) return;
-    const content = printRef.current.innerHTML;
-    printWin.document.write(`
-      <!DOCTYPE html><html dir="rtl" lang="ar">
+  const { toast } = useToast();
+
+  const handlePrintSummary = async () => {
+    const settings = loadPrinterSettings();
+    const paperWidth = settings.paperWidth || "80mm";
+
+    const fallbackHtml = printRef.current
+      ? `<!DOCTYPE html><html dir="rtl" lang="ar">
       <head><meta charset="UTF-8"><title>تقرير مبيعات المنتجات — CLUNY CAFE</title>
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -617,9 +620,37 @@ export default function ProductReportsPage() {
         .ok { background: #f0fdf4; color: #16a34a; border-radius: 4px; padding: 2px 6px; font-size: 11px; }
         .footer { margin-top: 20px; text-align: center; color: #aaa; font-size: 11px; border-top: 1px solid #eee; padding-top: 10px; }
       </style></head>
-      <body>${content}</body></html>`);
-    printWin.document.close();
-    setTimeout(() => { printWin.print(); printWin.close(); }, 500);
+      <body>${printRef.current.innerHTML}</body></html>`
+      : "";
+
+    const topN = filtered.slice(0, 30);
+    const esc = await buildGenericReportEscPos({
+      shopName: "CLUNY CAFE",
+      reportTitle: "تقرير مبيعات المنتجات",
+      dateLabel: new Date().toLocaleDateString("ar-SA"),
+      periodLabel: `${fromDate} إلى ${toDate}`,
+      kpis: [
+        { label: "إجمالي المبيعات", value: totalQty.toLocaleString("ar-SA") },
+        { label: "إجمالي الإيرادات", value: `${formatSAR(totalRevenue)} ر.س` },
+        { label: "عدد المنتجات", value: String(products.length) },
+        { label: "منتجات بدون مبيعات", value: String(zeroProducts.length) },
+      ],
+      sections: [
+        {
+          title: `تفاصيل المنتجات${filtered.length > 30 ? " (أعلى 30)" : ""}`,
+          rows: topN.map(p => ({
+            label: p.nameAr,
+            value: `${p.totalQty} × ${formatSAR(p.totalRevenue)} ر.س`,
+          })),
+        },
+      ],
+      paperWidth,
+    });
+
+    const result = await thermalPrint(esc, fallbackHtml, paperWidth);
+    if (!result.success) {
+      toast({ title: "فشل الطباعة", description: result.error || "تعذر الطباعة الحرارية", variant: "destructive" });
+    }
   };
 
   if (selectedProduct) {
