@@ -463,21 +463,41 @@ export default function OwnerDashboard() {
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5" /> {tc("تاريخ مخصص", "Custom date")}
+                  <Calendar className="w-3.5 h-3.5" /> {tc("من تاريخ", "From date")}
                 </label>
                 <Input
                   type="date"
-                  value={dateFrom && dateTo ? dateFrom : selectedDate}
+                  value={dateFrom || selectedDate}
                   onChange={(e) => {
                     const v = e.target.value || formatLocalDateISO(new Date());
-                    setSelectedDate(v);
-                    setDateFrom('');
-                    setDateTo('');
+                    const currentTo = dateTo || dateFrom || selectedDate;
+                    setDateFrom(v);
+                    setDateTo(currentTo < v ? v : currentTo);
                     setActiveShortcut('custom');
                   }}
                   max={formatLocalDateISO(new Date())}
                   className="h-9 w-40"
-                  data-testid="input-stats-date"
+                  data-testid="input-stats-date-from"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5" /> {tc("إلى تاريخ", "To date")}
+                </label>
+                <Input
+                  type="date"
+                  value={dateTo || dateFrom || selectedDate}
+                  onChange={(e) => {
+                    const v = e.target.value || formatLocalDateISO(new Date());
+                    const currentFrom = dateFrom || selectedDate;
+                    setDateTo(v);
+                    setDateFrom(currentFrom > v ? v : currentFrom);
+                    setActiveShortcut('custom');
+                  }}
+                  min={dateFrom || undefined}
+                  max={formatLocalDateISO(new Date())}
+                  className="h-9 w-40"
+                  data-testid="input-stats-date-to"
                 />
               </div>
               <div className="flex flex-col gap-1">
