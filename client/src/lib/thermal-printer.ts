@@ -1924,7 +1924,7 @@ async function _loadQZScript(): Promise<any> {
       const poll = setInterval(() => {
         if ((window as any).qz) { clearInterval(poll); resolve((window as any).qz); }
       }, 100);
-      setTimeout(() => { clearInterval(poll); reject(new Error('QZ timeout')); }, 10000);
+      setTimeout(() => { clearInterval(poll); reject(new Error('QZ timeout')); }, 3000);
       return;
     }
     const s = document.createElement('script');
@@ -1938,14 +1938,14 @@ async function _loadQZScript(): Promise<any> {
   return _qzLoadPromise;
 }
 
-async function _connectQZ(timeoutMs = 4000): Promise<any> {
+async function _connectQZ(timeoutMs = 3000): Promise<any> {
   const qz = await _loadQZScript();
   if (_qzConnected && qz.websocket.isActive()) return qz;
   qz.security.setCertificatePromise((res: (v: any) => void) => res(''));
   qz.security.setSignaturePromise((_: string, res: (v: any) => void) => res(''));
   await Promise.race([
     qz.websocket.connect({ retries: 1, delay: 1 }),
-    new Promise<never>((_, r) => setTimeout(() => r(new Error('timeout')), timeoutMs)),
+    new Promise<never>((_, r) => setTimeout(() => r(new Error('timeout')), Math.min(timeoutMs, 3000))),
   ]);
   _qzConnected = true;
   return qz;
@@ -1956,7 +1956,7 @@ export async function isQZTrayAvailable(): Promise<boolean> {
   try {
     const qz = await Promise.race([
       _loadQZScript(),
-      new Promise<never>((_, r) => setTimeout(() => r(new Error('timeout')), 4000)),
+      new Promise<never>((_, r) => setTimeout(() => r(new Error('timeout')), 3000)),
     ]);
     if (qz.websocket.isActive()) return true;
     await _connectQZ(3000);
@@ -2024,9 +2024,9 @@ export async function networkPrint(escData: Uint8Array, ip: string, port: number
   // 3. Server-side TCP — for public/accessible IPs (local server deployments)
   try {
     const base64Data = btoa(Array.from(escData, b => String.fromCharCode(b)).join(''));
-    // Dynamic timeouts: scale with payload size (no hard limit on receipt length)
-    const printTimeout = Math.max(7_000, Math.ceil(escData.length / 8_000) * 1_000 + 3_000);
-    const fetchTimeout = printTimeout + 3_000;
+    // Hard cap: 3 s max — fail fast so the UI never freezes
+    const printTimeout = 3_000;
+    const fetchTimeout = 3_000;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), fetchTimeout);
     try {
@@ -2084,8 +2084,8 @@ export async function relayAgentPrint(
     const b64      = btoa(Array.from(escData, b => String.fromCharCode(b)).join(''));
     const endpoint = options.direct ? `${base}/print/direct` : `${base}/print`;
 
-    // Dynamic timeout: 8s base + 1s per 8KB of data — fail fast on weak/slow devices
-    const dynamicTimeoutMs = Math.max(8_000, Math.ceil(escData.length / 8_000) * 1_000 + 5_000);
+    // Hard cap: 3 s max — fail fast so the UI never freezes
+    const dynamicTimeoutMs = 3_000;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), dynamicTimeoutMs);
 
@@ -2133,7 +2133,7 @@ export async function testRelayAgent(relayUrl: string, printerIp?: string, print
 
     // 1. Ping the relay agent itself
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 5000);
+    setTimeout(() => controller.abort(), 3000);
     const resp = await fetch(`${base}/status`, { signal: controller.signal });
     if (!resp.ok) throw new Error(`الوكيل أجاب بخطأ ${resp.status}`);
     const info = await resp.json();
@@ -2141,7 +2141,7 @@ export async function testRelayAgent(relayUrl: string, printerIp?: string, print
     // 2. If printer IP provided, also test printer reachability through the relay
     if (printerIp) {
       const c2 = new AbortController();
-      setTimeout(() => c2.abort(), 6000);
+      setTimeout(() => c2.abort(), 3000);
       const r2 = await fetch(`${base}/test`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },

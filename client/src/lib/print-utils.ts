@@ -157,12 +157,12 @@ function _armPrintWatchdog() {
   if (_printWatchdog) clearTimeout(_printWatchdog);
   _printWatchdog = setTimeout(() => {
     if (_isPrinting) {
-      console.warn('[Print] Watchdog: print job stuck >20s — resetting queue');
+      console.warn('[Print] Watchdog: print job stuck >6s — resetting queue');
       _isPrinting = false;
       _printWatchdog = null;
       if (_printQueue.length > 0) setTimeout(_drainPrintQueue, 300);
     }
-  }, 20000);
+  }, 6000);
 }
 
 function _clearPrintWatchdog() {
@@ -279,10 +279,10 @@ function _printInPopup(win: Window | null, html: string, delayMs: number): void 
   }
   setTimeout(() => {
     try { win.print(); } catch {}
-    // Close the popup after printing (or after 8 s if afterprint never fires)
+    // Close the popup after printing (or after 3 s if afterprint never fires)
     const close = () => { try { if (!win.closed) win.close(); } catch {} };
     win.addEventListener('afterprint', close, { once: true });
-    setTimeout(close, 8000);
+    setTimeout(close, 3000);
   }, delayMs);
 }
 
