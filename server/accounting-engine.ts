@@ -15,6 +15,10 @@ import {
   type IAccountingSnapshot,
 } from "@shared/schema";
 
+// Saudi VAT rate — order/menu totals are stored VAT-inclusive, so it must be
+// stripped out before computing profit/margin figures (VAT is not revenue).
+const VAT_RATE = 0.15;
+
 /**
  * 3.1 Daily Snapshot
  * Real-time aggregations for today's operations
@@ -62,9 +66,10 @@ export class AccountingEngine {
       }
     }
 
-    const grossProfit = totalRevenue - totalCOGS;
+    const netRevenue = totalRevenue / (1 + VAT_RATE);
+    const grossProfit = netRevenue - totalCOGS;
     const profitMargin =
-      totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+      netRevenue > 0 ? (grossProfit / netRevenue) * 100 : 0;
 
     // Get waste for today
     const wasteMovements = await StockMovementModel.find({
@@ -168,10 +173,12 @@ export class AccountingEngine {
     }
 
     // Convert to array with calculations
+    // Item prices are VAT-inclusive; strip VAT before computing profit/margin.
     return Object.entries(itemStats).map(([itemId, stats]) => {
-      const totalProfit = stats.revenue - stats.cogs;
+      const netRevenue = stats.revenue / (1 + VAT_RATE);
+      const totalProfit = netRevenue - stats.cogs;
       const profitMargin =
-        stats.revenue > 0 ? (totalProfit / stats.revenue) * 100 : 0;
+        netRevenue > 0 ? (totalProfit / netRevenue) * 100 : 0;
       const profitPerUnit =
         stats.quantity > 0 ? totalProfit / stats.quantity : 0;
 
@@ -231,10 +238,13 @@ export class AccountingEngine {
       categoryStats[cat].cogs += drink.totalCOGS;
     }
 
+    // stats.revenue here is VAT-inclusive (aggregated from totalRevenue above);
+    // strip VAT before computing profit/margin so category profit matches item-level figures.
     return Object.entries(categoryStats).map(([category, stats]) => {
-      const totalProfit = stats.revenue - stats.cogs;
+      const netRevenue = stats.revenue / (1 + VAT_RATE);
+      const totalProfit = netRevenue - stats.cogs;
       const profitMargin =
-        stats.revenue > 0 ? (totalProfit / stats.revenue) * 100 : 0;
+        netRevenue > 0 ? (totalProfit / netRevenue) * 100 : 0;
 
       return {
         category,

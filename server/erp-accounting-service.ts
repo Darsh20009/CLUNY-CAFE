@@ -779,7 +779,11 @@ export class ErpAccountingService {
       const orders = await OrderModel.find(orderQuery).lean();
 
       if (orders.length > 0) {
-        const orderRevenue = orders.reduce((sum: number, o: any) => sum + (o.total || o.totalAmount || o.subtotal || 0), 0);
+        // order.total/totalAmount/subtotal are VAT-inclusive; the journal-based
+        // revenue above already excludes VAT (posted separately to account 2120),
+        // so this fallback must strip VAT out too or income statements won't match.
+        const orderRevenueGross = orders.reduce((sum: number, o: any) => sum + (o.total || o.totalAmount || o.subtotal || 0), 0);
+        const orderRevenue = orderRevenueGross / (1 + 0.15);
         const orderCogs = orders.reduce((sum: number, o: any) => sum + (o.costOfGoods || 0), 0);
 
         if (totalRevenue === 0 && orderRevenue > 0) {

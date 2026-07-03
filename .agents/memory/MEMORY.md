@@ -1,1 +1,2 @@
 - [Reference migration](reference-migration.md) — migrating from reference ZIP (Black Rose) to CLUNY: brand.ts is single source of truth; mass sed for brand strings; @assets alias = attached_assets/ dir.
+- [VAT-inclusive financial calcs](vat-inclusive-financial-calcs.md) — order/menu totals are VAT-inclusive; always divide by (1+VAT_RATE) before comparing revenue to COGS in profit/margin math.

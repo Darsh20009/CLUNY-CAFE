@@ -188,6 +188,15 @@ All admin routes now wrapped with `AdminLayout` in `App.tsx`:
 - **Deploy command**: `node dist/index.js` (production server).
 - **Apple Pay / Geidea Update (April 2026)**: Installed the latest Geidea-provided Apple Pay domain association file at `public/.well-known/apple-developer-merchantid-domain-association` and mirrored it to `client/public/.well-known/`. Stored the latest Apple Pay payment processing certificate at `certs/apple_pay_payment_processing_merchant_cluny_cafe.cer`. Apple Pay now defaults to domain `cluny.cafe` and merchant ID `merchant.cluny.cafe`, with diagnostics available at `/api/payments/apple-pay/diagnose`.
 
+## Financial Accuracy Audit (July 2026)
+
+Following a full audit of accounting/analytics code, several bugs that produced incorrect financial numbers were found and fixed:
+
+- **Missing sales journal entries**: Auto-accounting on order completion referenced non-existent chart-of-accounts codes ("1101"/"1102"), so the sales journal entry silently failed to post for every order. Corrected to the real codes (1111 Petty Cash / 1112 Bank).
+- **Journal CSV/JSON export mismatch**: Export endpoint used invented account codes not matching the real chart of accounts; realigned to actual codes so exports reconcile with the books.
+- **VAT-inclusive figures treated as pure revenue**: Menu prices and `order.totalAmount` are VAT-inclusive, but several profit/margin calculations subtracted COGS directly from them without excluding VAT first, inflating profit margins. Fixed in: `/api/analytics/cogs`, `AccountingEngine` (daily snapshot, profit-per-drink, profit-per-category), the inventory dashboard's `grossMarginToday`, and the ERP income statement's order-based fallback (when no journal entries exist yet, revenue is now VAT-stripped to match the journal-based calculation it complements).
+- **Rule going forward**: any new revenue/profit calculation using `order.totalAmount`, `order.total`, `order.subtotal`, or `item.price` must divide by `(1 + VAT_RATE)` before comparing against COGS/expenses — these fields are always VAT-inclusive.
+
 ## Recent Enhancements (April 2026)
 
 ### Sales Analytics API

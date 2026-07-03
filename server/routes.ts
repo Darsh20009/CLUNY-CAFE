@@ -487,7 +487,10 @@ async function deductInventoryForOrder(orderId: string, branchId: string, employ
         if (!existingSales) {
           const salesAccount = await AccountModel.findOne({ tenantId, accountNumber: "4100" });
           const payMethod = (order as any).paymentMethod || 'cash';
-          const debitAccNum = payMethod === 'card' || payMethod === 'network' || payMethod === 'mada' ? "1102" : "1101";
+          // NOTE: must match the actual seeded chart of accounts in erp-accounting-service.ts
+          // (1111 = الصندوق/Petty Cash, 1112 = البنك/Bank). Using non-existent codes here
+          // silently drops the sales journal entry for every order (accounts lookup returns null).
+          const debitAccNum = payMethod === 'card' || payMethod === 'network' || payMethod === 'mada' ? "1112" : "1111";
           const debitAccount = await AccountModel.findOne({ tenantId, accountNumber: debitAccNum });
           if (salesAccount && debitAccount) {
             await ErpAccountingService.createJournalEntry({
@@ -20631,22 +20634,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const date = new Date(o.createdAt).toISOString().split('T')[0];
         const orderNum = (o as any).orderNumber || o.id || entryNum;
 
-        let debitAccount = '1101';
-        let debitAccountName = 'النقدية';
+        // NOTE: account codes below must match the actual chart of accounts seeded in
+        // erp-accounting-service.ts (1111 = الصندوق/Petty Cash, 1112 = البنك/Bank,
+        // 4100 = إيرادات المبيعات, 2120 = ضريبة القيمة المضافة المستحقة) so this export
+        // reconciles with the real posted journal entries instead of showing invented codes.
+        let debitAccount = '1111';
+        let debitAccountName = 'الصندوق (نقدي)';
         if (method === 'card' || method === 'network' || method === 'pos' || method === 'pos-network' ||
             method === 'mada' || method === 'apple_pay' || method === 'paymob-apple-pay' ||
             method === 'neoleap-apple-pay' || method === 'stc-pay' || method === 'geidea' ||
-            method === 'paymob-card' || method === 'paymob') {
-          debitAccount = '1102';
-          debitAccountName = 'الشبكة/المحافظ الرقمية';
-        } else if (method === 'qahwa-card' || method === 'loyalty-card' || method === 'qirox-card') {
-          debitAccount = '1103';
-          debitAccountName = 'بطاقة الولاء';
-        } else if (method === 'bank_transfer' || method === 'rajhi' || method === 'alinma') {
-          debitAccount = '1104';
-          debitAccountName = 'التحويل البنكي';
+            method === 'paymob-card' || method === 'paymob' ||
+            method === 'qahwa-card' || method === 'loyalty-card' || method === 'qirox-card' ||
+            method === 'bank_transfer' || method === 'rajhi' || method === 'alinma') {
+          debitAccount = '1112';
+          debitAccountName = 'البنك (شبكة/تحويل/محفظة)';
         } else if (!method || method === 'unknown' || method === 'other') {
-          debitAccount = '1101';
+          debitAccount = '1111';
           debitAccountName = 'غير محدد';
         }
 
@@ -20657,11 +20660,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           debitAccount,
           debitAccountName,
           debitAmount: amount,
-          creditAccount: '4101',
+          creditAccount: '4100',
           creditAccountName: 'إيرادات المبيعات',
           creditAmount: netAmount,
-          vatAccount: '2201',
-          vatAccountName: 'ضريبة القيمة المضافة',
+          vatAccount: '2120',
+          vatAccountName: 'ضريبة القيمة المضافة المستحقة',
           vatAmount,
           description: `مبيعات طلب #${orderNum}`,
           status: o.status === 'cancelled' ? 'ملغي' : 'مؤكد',
@@ -21160,13 +21163,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const itemIngredients = allIngredients.filter(ing => ing.coffeeItemId === item.id);
         const calculatedCOGS = Number(item.costOfGoods) || 0;
         const price = Number(item.price) || 0;
-        const profit = price - calculatedCOGS;
-        const margin = price > 0 ? Math.round((profit / price) * 100) : 0;
+        // Menu prices are VAT-inclusive; VAT is not revenue, so it must be excluded
+        // before computing profit/margin or the report overstates true profitability.
+        const priceExVat = price / (1 + VAT_RATE);
+        const profit = priceExVat - calculatedCOGS;
+        const margin = priceExVat > 0 ? Math.round((profit / priceExVat) * 100) : 0;
         return {
           id: item.id,
           nameAr: item.nameAr,
           nameEn: item.nameEn || '',
           price,
+          priceExVat: Math.round(priceExVat * 100) / 100,
           cogs: Math.round(calculatedCOGS * 100) / 100,
           profit: Math.round(profit * 100) / 100,
           margin,
@@ -24734,7 +24741,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
           notDeductedOrders: notDeductedCount,
           cogsToday: parseFloat(cogsToday.toFixed(2)),
           revenueToday: parseFloat(revenueToday.toFixed(2)),
-          grossMarginToday: revenueToday > 0 ? parseFloat(((1 - cogsToday / revenueToday) * 100).toFixed(1)) : 0,
+          grossMarginToday: revenueToday > 0 ? parseFloat(((1 - cogsToday / (revenueToday / (1 + VAT_RATE))) * 100).toFixed(1)) : 0,
           lowStockCount: lowStockItems.length,
         },
         productsWithoutRecipe: productsWithoutRecipe.slice(0, 20).map((p: any) => ({
