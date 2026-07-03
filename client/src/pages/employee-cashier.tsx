@@ -28,6 +28,7 @@ import BarcodeScanner from "@/components/barcode-scanner";
 import { TableOccupancyAlerts } from "@/components/table-occupancy-alerts";
 import { ClassicCashierLayout, POSCashierLayout, SplitCashierLayout } from "@/components/cashier-layouts";
 import { printTaxInvoice, printCustomerPickupReceipt, printCashierReceipt, printAllReceipts, fmtOrderNum, prewarmZatcaQr } from "@/lib/print-utils";
+import { ReceiptInvoice } from "@/components/receipt-invoice";
 import type { Employee, CoffeeItem, PaymentMethod, LoyaltyCard } from "@shared/schema";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
 import PrinterSettingsPanel from "@/components/printer-settings-panel";
@@ -122,6 +123,10 @@ export default function EmployeeCashier() {
   const [pendingOrdersList, setPendingOrdersList] = useState<PendingOrder[]>([]);
   const [newOnlineOrdersCount, setNewOnlineOrdersCount] = useState(0);
   const [soundEnabled, setSoundEnabled] = useState(() => getSoundEnabled('cashier'));
+  const [autoPrintEnabled, setAutoPrintEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem('cashier_autoPrint') !== 'false'; } catch { return true; }
+  });
+  const [pendingAutoPrintOrder, setPendingAutoPrintOrder] = useState<any>(null);
 
  const { toast } = useToast();
  const { i18n } = useTranslation();
@@ -1037,19 +1042,9 @@ export default function EmployeeCashier() {
          setPendingOrdersList(getPendingOrders());
        }
 
-       // Pre-warm ZATCA QR cache so buildReceiptPreviewHtml is instant (same approach as POS system)
-       prewarmZatcaQr({
-         orderNumber: order.orderNumber,
-         total: receiptTotal,
-         date: new Date().toISOString(),
-         vatNumber: businessConfig?.vatNumber,
-       });
-
-       // Auto-print receipts
-       try {
-         await printAllReceipts(receiptData);
-       } catch (e) {
-         console.error("Auto-print error:", e);
+       // Auto-print: render ReceiptInvoice variant="auto" (same component as orders page)
+       if (autoPrintEnabled) {
+         setPendingAutoPrintOrder({ ...order, _autoPrintKey: Date.now() });
        }
      }
    } catch (error) {
@@ -1073,6 +1068,22 @@ export default function EmployeeCashier() {
    onToggleSound={(v) => { setSoundEnabled(v); saveSoundEnabled('cashier', v); }}
    compact
  />
+
+ {/* 🖨️ Auto-print toggle */}
+ <div className="flex items-center justify-between gap-3 mb-2 bg-white border border-gray-200 rounded-lg px-4 py-2" data-testid="auto-print-toggle-bar">
+   <div className="flex items-center gap-2">
+     <Printer className="w-4 h-4 text-gray-500" />
+     <span className="text-sm text-gray-700">{tc("طباعة تلقائية عند إنشاء الطلب", "Auto-print on new order")}</span>
+   </div>
+   <Switch
+     checked={autoPrintEnabled}
+     onCheckedChange={(v) => {
+       setAutoPrintEnabled(v);
+       try { localStorage.setItem('cashier_autoPrint', String(v)); } catch {}
+     }}
+     data-testid="switch-auto-print"
+   />
+ </div>
 
  {/* 🆕 New online orders alert banner */}
  {newOnlineOrdersCount > 0 && (
@@ -1931,6 +1942,14 @@ export default function EmployeeCashier() {
  </Dialog>
 
  <MobileBottomNav employeeRole={employee?.role} />
+
+ {/* Hidden auto-print — same ReceiptInvoice component as the orders page, variant="auto" fires when QR codes are ready */}
+ {pendingAutoPrintOrder && (
+   <div style={{ position: 'fixed', left: '-9999px', top: 0, width: '80mm', pointerEvents: 'none', opacity: 0 }} aria-hidden="true">
+     <ReceiptInvoice key={pendingAutoPrintOrder._autoPrintKey} order={pendingAutoPrintOrder} variant="auto" />
+   </div>
+ )}
+
  </div>
  );
 }

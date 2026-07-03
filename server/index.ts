@@ -1,3 +1,9 @@
+// Polyfill Web Crypto API for MongoDB driver compatibility (must be first)
+import { webcrypto } from "node:crypto";
+if (!globalThis.crypto) {
+  (globalThis as any).crypto = webcrypto;
+}
+
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import MongoStore from "connect-mongo";

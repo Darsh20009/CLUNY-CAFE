@@ -223,11 +223,11 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
   };
 
   useEffect(() => {
-    if (variant !== "auto" || !order?.id) return;
+    if (variant !== "auto" || !(order?.id || order?.orderNumber)) return;
     if (!printReady) return;
     const t = setTimeout(() => { printReceipt(); }, 50);
     return () => clearTimeout(t);
-  }, [variant, order?.id, printReady]);
+  }, [variant, order?.id, order?.orderNumber, printReady]);
 
   /* ─── style helpers ─── */
   const cell = (extra?: React.CSSProperties): React.CSSProperties => ({ padding: "3px 0", fontSize: "13px", lineHeight: "1.7", ...extra });
