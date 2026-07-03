@@ -2025,8 +2025,8 @@ export async function networkPrint(escData: Uint8Array, ip: string, port: number
   try {
     const base64Data = btoa(Array.from(escData, b => String.fromCharCode(b)).join(''));
     // Dynamic timeouts: scale with payload size (no hard limit on receipt length)
-    const printTimeout = Math.max(10_000, Math.ceil(escData.length / 8_000) * 1_000 + 5_000);
-    const fetchTimeout = printTimeout + 5_000;
+    const printTimeout = Math.max(7_000, Math.ceil(escData.length / 8_000) * 1_000 + 3_000);
+    const fetchTimeout = printTimeout + 3_000;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), fetchTimeout);
     try {
@@ -2084,8 +2084,8 @@ export async function relayAgentPrint(
     const b64      = btoa(Array.from(escData, b => String.fromCharCode(b)).join(''));
     const endpoint = options.direct ? `${base}/print/direct` : `${base}/print`;
 
-    // Dynamic timeout: 15s base + 1s per 8KB of data — supports massive receipts (2000+ items)
-    const dynamicTimeoutMs = Math.max(15_000, Math.ceil(escData.length / 8_000) * 1_000 + 10_000);
+    // Dynamic timeout: 8s base + 1s per 8KB of data — fail fast on weak/slow devices
+    const dynamicTimeoutMs = Math.max(8_000, Math.ceil(escData.length / 8_000) * 1_000 + 5_000);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), dynamicTimeoutMs);
 
@@ -2487,11 +2487,15 @@ export function getBluetoothState(): { connected: boolean; deviceName: string | 
 export async function queuePrint(escData: Uint8Array, printerIp: string, printerPort = 9100): Promise<PrintResult> {
   try {
     const b64 = btoa(Array.from(escData, b => String.fromCharCode(b)).join(''));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
     const resp = await fetch('/api/print-queue', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ data: b64, printerIp, printerPort }),
+      signal:  controller.signal,
     });
+    clearTimeout(timer);
     const result = await resp.json();
     if (!resp.ok || !result.ok) {
       return { success: false, mode: 'error', error: result.error || 'فشل إرسال طلب الطباعة' };

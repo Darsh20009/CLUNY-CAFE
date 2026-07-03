@@ -1242,24 +1242,34 @@ select {
   }
 }
 
-/* Print styles for invoice */
+/* Print styles for invoice — only active when the main page itself is printed (not an iframe) */
 @media print {
-  body * {
+  /* Hide everything by default — but ONLY when printing the main page directly */
+  body > *:not(#pos-root):not([data-testid="invoice-preview"]) {
     visibility: hidden;
   }
-  
+
+  /* POS system: keep fully visible & never rearrange its layout during print */
+  #pos-root,
+  #pos-root * {
+    visibility: visible !important;
+    transform: none !important;
+    width: auto !important;
+    height: auto !important;
+  }
+
   [data-testid="invoice-preview"],
   [data-testid="invoice-preview"] * {
     visibility: visible;
   }
-  
+
   [data-testid="invoice-preview"] {
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
   }
-  
+
   .no-print {
     display: none !important;
   }

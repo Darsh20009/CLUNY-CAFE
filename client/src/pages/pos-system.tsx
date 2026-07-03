@@ -1820,6 +1820,7 @@ export default function PosSystem() {
   }, [showReceiptDialog, receiptPreviewHtml]);
 
   // Helper: fast-path print only when staged iframe is truly ready & populated.
+  // NOTE: Do NOT call focus() before print — it causes UI freeze + viewport shrink in Chromium.
   const tryStagedPrint = (): boolean => {
     const staged = stagedPrintIframeRef.current;
     if (!staged || !staged.contentWindow) return false;
@@ -1829,7 +1830,6 @@ export default function PosSystem() {
       return false;
     }
     try {
-      staged.contentWindow.focus();
       staged.contentWindow.print();
       return true;
     } catch {
@@ -1958,7 +1958,7 @@ export default function PosSystem() {
   const inverseScale = 1 / scale;
 
   return (
-    <div dir="ltr" style={{ width: "100vw", height: "100vh", overflow: "hidden" }}>
+    <div id="pos-root" dir="ltr" style={{ width: "100vw", height: "100vh", overflow: "hidden" }}>
       <div
         className="flex flex-col bg-background overflow-hidden selection:bg-primary selection:text-primary-foreground"
         dir={dir}

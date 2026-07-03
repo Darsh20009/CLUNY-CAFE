@@ -278,7 +278,7 @@ function _printInPopup(win: Window | null, html: string, delayMs: number): void 
     // cross-origin or other write error — silently ignore
   }
   setTimeout(() => {
-    try { win.focus(); win.print(); } catch {}
+    try { win.print(); } catch {}
     // Close the popup after printing (or after 8 s if afterprint never fires)
     const close = () => { try { if (!win.closed) win.close(); } catch {} };
     win.addEventListener('afterprint', close, { once: true });
@@ -351,7 +351,7 @@ function _printCanvasImage(imgSrc: string, paperWidth: '58mm' | '80mm' = '80mm')
   let done = false;
   const finish = () => { if (done) return; done = true; setTimeout(() => { try { printFrame.remove(); } catch {} }, 200); };
   const doPrint = () => {
-    try { printFrame.contentWindow?.focus(); printFrame.contentWindow?.print(); } catch {}
+    try { printFrame.contentWindow?.print(); } catch {}
     printFrame.contentWindow?.addEventListener('afterprint', finish, { once: true });
     setTimeout(finish, 5000);
   };
@@ -934,13 +934,13 @@ export async function openReceiptPreviewWindow(data: TaxInvoiceData): Promise<vo
       if (custEl) custEl.srcdoc = customerHtml;
       if (kitEl)  kitEl.srcdoc  = kitchenHtml;
       doc.getElementById('btn-cust')?.addEventListener('click', () => {
-        try { custEl?.contentWindow?.focus(); custEl?.contentWindow?.print(); } catch {}
+        try { custEl?.contentWindow?.print(); } catch {}
       });
       doc.getElementById('btn-kit')?.addEventListener('click', () => {
-        try { kitEl?.contentWindow?.focus(); kitEl?.contentWindow?.print(); } catch {}
+        try { kitEl?.contentWindow?.print(); } catch {}
       });
       doc.getElementById('btn-both')?.addEventListener('click', () => {
-        try { win.focus(); win.print(); } catch {}
+        try { win.print(); } catch {}
       });
       doc.getElementById('btn-close')?.addEventListener('click', () => {
         try { win.close(); } catch {}
