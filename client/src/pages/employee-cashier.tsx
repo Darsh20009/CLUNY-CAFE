@@ -1042,9 +1042,21 @@ export default function EmployeeCashier() {
          setPendingOrdersList(getPendingOrders());
        }
 
-       // Auto-print: render ReceiptInvoice variant="auto" (same component as orders page)
+       // Auto-print via printAllReceipts:
+       // - If thermal printer (ESC/POS) is configured → sends directly, NO browser dialog, NO screen glitch
+       // - If no thermal printer → falls back to browser HTML print
        if (autoPrintEnabled) {
-         setPendingAutoPrintOrder({ ...order, _autoPrintKey: Date.now() });
+         prewarmZatcaQr({
+           orderNumber: order.orderNumber,
+           total: receiptTotal,
+           date: new Date().toISOString(),
+           vatNumber: businessConfig?.vatNumber,
+         });
+         try {
+           await printAllReceipts(receiptData);
+         } catch (e) {
+           console.error("Auto-print error:", e);
+         }
        }
      }
    } catch (error) {
