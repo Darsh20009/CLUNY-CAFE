@@ -13837,7 +13837,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     };
 
   // Configure multer for employee image uploads
-  const employeeUploadsDir = path.join(import.meta.dirname, '..', 'attached_assets', 'employees');
+  const employeeUploadsDir = path.join(__dirname, '..', 'attached_assets', 'employees');
   const employeeStorage = multer.diskStorage({
     destination: function (req, file, cb) {
       cb(null, employeeUploadsDir);
@@ -14097,7 +14097,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Configure multer for attendance photo uploads
-  const attendanceUploadsDir = path.join(import.meta.dirname, '..', 'attached_assets', 'attendance');
+  const attendanceUploadsDir = path.join(__dirname, '..', 'attached_assets', 'attendance');
   const attendanceStorage = multer.diskStorage({
     destination: function (req, file, cb) {
       cb(null, attendanceUploadsDir);
