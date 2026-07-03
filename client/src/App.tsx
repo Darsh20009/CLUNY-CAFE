@@ -17,7 +17,6 @@ import { PWAUpdateNotifier } from "@/components/PWAUpdateNotifier";
 import { GlobalPrompts } from "@/components/global-prompts";
 import { PWAInstallBanner } from "@/components/pwa-install";
 import { OfflineIndicator } from "@/components/offline-indicator";
-import { NativeBackButton } from "@/components/native-back-button";
 import { CustomerNotificationListener } from "@/components/customer-notification-listener";
 import { GlobalCommandPalette } from "@/components/global-command-palette";
 import { QuickActionBar } from "@/components/quick-action-bar";
@@ -626,7 +625,6 @@ function App() {
               <ErrorBoundary>
                 <WouterRouter>
                   <AppContent />
-                  <ErrorBoundary silent><NativeBackButton /></ErrorBoundary>
                 </WouterRouter>
               </ErrorBoundary>
               <ErrorBoundary silent><GlobalPrompts /></ErrorBoundary>
