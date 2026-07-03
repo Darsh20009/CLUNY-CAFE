@@ -1,5 +1,6 @@
 import QRCode from "qrcode";
 import { VAT_RATE } from "@/lib/constants";
+import brand from "@/lib/brand";
 
 // ── ZATCA QR pre-generation cache ────────────────────────────────────────────
 // Key: `zatca:${orderNumber}:${total}` → SVG string
@@ -1111,71 +1112,73 @@ export async function buildReceiptPreviewHtml(data: TaxInvoiceData): Promise<str
     ⭐ +${(data as any).loyaltyPoints} نقطة أضيفت لرصيدك
   </div>` : '';
 
+  // ── رأس كلوني الكلاسيكي (شعار متباعد الحروف + كـلـونـي + فاصل cafe · كافيه) ──
+  const clunyHeaderHtml = `
+    <div style="text-align:center;padding:6px 0 10px;">
+      <div style="font-size:32px;font-weight:700;color:#000;letter-spacing:8px;text-transform:uppercase;line-height:1;">CLUNY</div>
+      <div style="font-size:17px;font-weight:700;color:#000;letter-spacing:4px;line-height:1.3;direction:rtl;margin-top:2px;">كـلـونـي</div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin:5px 0 2px;">
+        <span style="flex:1;height:1px;background:#000;max-width:45px;display:block;"></span>
+        <span style="font-size:10px;color:#000;letter-spacing:3px;">cafe</span>
+        <span style="width:4px;height:4px;background:#000;border-radius:50%;display:inline-block;"></span>
+        <span style="font-size:10px;color:#000;letter-spacing:2px;direction:rtl;">كافيه</span>
+        <span style="flex:1;height:1px;background:#000;max-width:45px;display:block;"></span>
+      </div>
+    </div>`;
+
   return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:Tahoma,Arial,'Segoe UI',sans-serif;direction:rtl;background:#d6d6d6;display:flex;justify-content:center;align-items:flex-start;padding:24px 10px;min-height:100vh;}
-.paper{background:#fff;width:302px;font-size:13px;color:#111;line-height:1.5;border-radius:2px;
-  box-shadow:0 2px 8px rgba(0,0,0,.18),0 8px 32px rgba(0,0,0,.12);}
-.header-bar{background:#1a1a1a;color:#fff;text-align:center;padding:12px 8px 10px;}
-.header-bar .brand{font-size:18px;font-weight:900;letter-spacing:2px;text-transform:uppercase;}
-.header-bar .sub{font-size:10px;color:#aaa;margin-top:2px;}
-.order-num{text-align:center;font-size:34px;font-weight:900;letter-spacing:4px;padding:10px 0 4px;color:#111;}
-.order-meta{text-align:center;font-size:11px;color:#777;padding:0 8px 8px;line-height:1.8;}
-.type-badge{display:inline-block;background:#1a1a1a;color:#fff;font-size:11px;font-weight:700;padding:3px 14px;border-radius:20px;margin:2px 0 6px;}
-.sect-head{display:flex;justify-content:space-between;font-size:10px;color:#aaa;font-weight:700;padding:5px 12px 3px;text-transform:uppercase;letter-spacing:.5px;}
-.item-row{padding:5px 12px;border-bottom:1px solid #f0f0f0;}
-.item-row:last-child{border-bottom:none;}
-.item-main{display:flex;justify-content:space-between;font-size:12.5px;font-weight:600;}
-.item-extra{font-size:10.5px;color:#888;margin-top:1px;}
-.item-disc{font-size:10.5px;color:#16a34a;margin-top:1px;}
-.totals{padding:8px 12px 4px;}
-.tot-row{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:#555;}
-.tot-row span:first-child{direction:ltr;}
-.grand-row{display:flex;justify-content:space-between;font-size:18px;font-weight:900;padding:8px 0 4px;border-top:2px solid #111;margin-top:4px;color:#111;}
-.grand-row span:first-child{direction:ltr;}
-.pay-row{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 0 2px;}
-.pay-badge{background:#f3f4f6;border:1px solid #e5e7eb;border-radius:12px;padding:2px 10px;font-weight:700;font-size:11px;}
-.split-row{display:flex;justify-content:space-between;font-size:11.5px;padding:2px 0;color:#444;}
-.split-row span:first-child{direction:ltr;}
-.change-box{background:#f0fdf4;border:1px solid #86efac;border-radius:6px;margin:6px 0 2px;padding:5px 10px;}
+body{font-family:'Cairo',Tahoma,Arial,sans-serif;direction:rtl;background:#d6d6d6;display:flex;justify-content:center;align-items:flex-start;padding:24px 10px;min-height:100vh;color:#000;}
+.paper{background:#fff;width:302px;padding:12px 12px 10px;box-shadow:0 2px 8px rgba(0,0,0,.18),0 8px 32px rgba(0,0,0,.12);}
+.label{background:#000;color:#fff;padding:2px 8px;border-radius:4px;font-size:13px;font-weight:bold;margin-bottom:8px;display:inline-block;}
+.header{text-align:center;border-bottom:1px solid #000;padding-bottom:10px;margin-bottom:10px;}
+.website{font-size:13px;font-weight:bold;color:#b45309;margin-bottom:4px;}
+.head-line{font-size:11.5px;margin:2px 0;}
+.order-line{font-size:13px;font-weight:bold;margin-top:4px;}
+.info-block{margin-bottom:10px;font-size:12px;border-bottom:1px dashed #ccc;padding-bottom:6px;}
+.info-block div{padding:1px 0;}
+.item-row{display:flex;justify-content:space-between;align-items:flex-start;padding:4px 0;border-bottom:1px dashed #eee;font-size:12.5px;}
+.item-name{flex:1;text-align:right;font-weight:600;}
+.item-extra{font-size:10.5px;color:#666;margin-top:2px;font-weight:400;}
+.item-disc{font-size:10.5px;color:#16a34a;margin-top:2px;}
+.item-price{width:60px;text-align:left;flex-shrink:0;direction:ltr;}
+.totals{margin-top:10px;}
+.row{display:flex;justify-content:space-between;margin:4px 0;font-size:12.5px;}
+.row span:last-child{direction:ltr;}
+.total{font-weight:bold;font-size:16px;border-top:2px solid #000;padding-top:6px;margin-top:8px;}
+.split-row{font-size:11px;color:#555;margin:2px 0;}
+.change-box{background:#f0fdf4;border:1px solid #86efac;border-radius:6px;margin:8px 0 2px;padding:6px 10px;}
 .change-row{display:flex;justify-content:space-between;font-size:11.5px;color:#166534;}
-.change-row span:first-child{direction:ltr;font-weight:700;}
-.car-box{margin:6px 8px;background:#fef9c3;border:1px solid #fbbf24;border-radius:6px;padding:6px 10px;font-size:11.5px;font-weight:700;text-align:center;}
-.notes-box{margin:4px 8px 6px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;font-size:11.5px;line-height:1.7;}
-.footer{text-align:center;padding:8px 8px 4px;}
-.footer .cashier{font-size:11px;color:#777;margin-bottom:2px;}
-.footer .tagline{font-size:11.5px;font-weight:800;color:#222;margin-bottom:4px;}
-.footer .pwby{font-size:10px;color:#bbb;padding-top:2px;}
-.qty-count{text-align:center;font-size:11px;color:#aaa;padding:4px 0;border-top:1px dashed #e5e7eb;}
-.zatca-qr{text-align:center;padding:8px 0 4px;}
+.change-row span:last-child{direction:ltr;font-weight:700;}
+.car-box{margin:8px 0 4px;background:#fef9c3;border:1px solid #fbbf24;border-radius:6px;padding:6px 10px;font-size:11.5px;font-weight:700;text-align:center;}
+.notes-box{margin:8px 0 4px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;font-size:11.5px;line-height:1.7;}
+.loyalty-box{margin:8px 0 4px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:6px 10px;text-align:center;font-size:11px;color:#166534;font-weight:700;}
+.qr-container{text-align:center;margin-top:10px;}
+.footer{text-align:center;margin-top:12px;font-size:11px;color:#666;}
 @media print{
   @page{size:80mm auto;margin:0;}
   body{background:#fff!important;padding:0!important;display:block!important;}
-  .paper{width:80mm!important;box-shadow:none!important;border-radius:0!important;}
+  .paper{width:80mm!important;box-shadow:none!important;}
 }
 </style></head><body><div class="paper">
 
   <!-- ══ رأس الفاتورة ══ -->
-  <div class="header-bar">
-    <div class="brand">${COMPANY_NAME}</div>
-    <div class="sub">${data.branchName || ''}${data.branchAddress ? ' · ' + data.branchAddress : ''}</div>
+  <div class="header">
+    <div class="label">إيصال العميل (فاتورة ضريبية)</div>
+    ${clunyHeaderHtml}
+    <div class="website">${brand.website}</div>
+    <div class="head-line">الرقم الضريبي: ${data.vatNumber || VAT_NUMBER}</div>
+    <div class="order-line">رقم الطلب: #${orderNumDisplay}</div>
+    <div class="head-line" style="direction:ltr;">${fmtDate} ${fmtTime}</div>
   </div>
 
-  <!-- ══ رقم الطلب ══ -->
-  <div class="order-num">#${orderNumDisplay}</div>
-  <div class="order-meta">
-    <div class="type-badge">${orderTypeLabel || 'طلب'}${data.tableNumber ? ' · طاولة ' + data.tableNumber : ''}</div><br/>
-    <span style="direction:ltr">${fmtDate} ${fmtTime}</span><br/>
-    <span style="direction:ltr;font-size:10px;color:#bbb;">${data.vatNumber || VAT_NUMBER}</span>
+  <!-- ══ بيانات الطلب ══ -->
+  <div class="info-block">
+    <div>${orderTypeLabel ? `نوع الطلب: ${orderTypeLabel}` : ''}</div>
+    ${data.tableNumber ? `<div>طاولة: ${data.tableNumber}</div>` : ''}
+    ${data.employeeName ? `<div>الموظف: ${data.employeeName}</div>` : ''}
   </div>
-
-  <!-- ══ الفاصل ══ -->
-  <div style="border-top:2px dashed #e0e0e0;margin:0 8px 0;"></div>
-
-  <!-- ══ عناوين الأصناف ══ -->
-  <div class="sect-head"><span>السعر</span><span>الصنف</span></div>
-  <div style="border-top:1px solid #eee;"></div>
 
   <!-- ══ الأصناف ══ -->
   ${data.items.map(item => {
@@ -1186,39 +1189,28 @@ body{font-family:Tahoma,Arial,'Segoe UI',sans-serif;direction:rtl;background:#d6
     const sz = getItemSelectedSize(item);
     const extra = [sz ? `الحجم: ${sz}` : '', addons ? `+ ${addons}` : ''].filter(Boolean).join(' · ');
     return `<div class="item-row">
-      <div class="item-main">
-        <span style="direction:ltr;white-space:nowrap;">﷼ ${lineTotal.toFixed(2)}</span>
-        <span style="text-align:right;">${item.coffeeItem.nameAr} &times;${item.quantity}</span>
+      <div class="item-name">
+        ${item.coffeeItem.nameAr} &times;${item.quantity}
+        ${extra ? `<div class="item-extra">${extra}</div>` : ''}
+        ${itemDisc > 0 ? `<div class="item-disc">خصم -﷼${itemDisc.toFixed(2)}</div>` : ''}
       </div>
-      ${extra ? `<div class="item-extra" style="text-align:right;">${extra}</div>` : ''}
-      ${itemDisc > 0 ? `<div class="item-disc" style="text-align:right;">خصم -﷼${itemDisc.toFixed(2)}</div>` : ''}
+      <div class="item-price">${lineTotal.toFixed(2)}</div>
     </div>`;
   }).join('')}
 
-  <!-- ══ عدد المنتجات ══ -->
-  <div class="qty-count">عدد الأصناف: ${totalQty}</div>
-
-  <!-- ══ الفاصل ══ -->
-  <div style="border-top:2px dashed #e0e0e0;margin:0 8px;"></div>
-
   <!-- ══ الحساب ══ -->
   <div class="totals">
-    <div class="tot-row"><span>﷼ ${subtotalBeforeVat.toFixed(2)}</span><span>المجموع قبل الضريبة</span></div>
-    <div class="tot-row"><span>﷼ ${vat.toFixed(2)}</span><span>ضريبة القيمة المضافة 15%</span></div>
-    ${disc > 0 ? `<div class="tot-row" style="color:#16a34a;"><span>-﷼ ${disc.toFixed(2)}</span><span>الخصم</span></div>` : ''}
-    <div class="grand-row"><span>﷼ ${totalAmount.toFixed(2)}</span><span>الإجمالي</span></div>
-    <div class="pay-row">
-      <span class="pay-badge">${pmIcon} ${pmLabel}</span>
-      <span style="color:#777;font-size:11px;">طريقة الدفع</span>
-    </div>
+    <div class="row"><span>المجموع (غير شامل الضريبة):</span><span>${subtotalBeforeVat.toFixed(2)} ر.س</span></div>
+    <div class="row"><span>ضريبة القيمة المضافة (15%):</span><span>${vat.toFixed(2)} ر.س</span></div>
+    ${disc > 0 ? `<div class="row" style="color:#16a34a;"><span>الخصم:</span><span>-${disc.toFixed(2)} ر.س</span></div>` : ''}
+    <div class="row total"><span>الإجمالي شامل الضريبة:</span><span>${totalAmount.toFixed(2)} ر.س</span></div>
+    <div class="row" style="margin-top:5px;font-size:11px;"><span>طريقة الدفع:</span><span>${pmIcon} ${pmLabel}</span></div>
     ${data.splitPayment ? `
-    <div style="border-top:1px dashed #e5e7eb;margin:4px 0 2px;"></div>
-    ${data.splitPayment.cash > 0 ? `<div class="split-row"><span>﷼ ${data.splitPayment.cash.toFixed(2)}</span><span>💵 نقدي</span></div>` : ''}
-    ${data.splitPayment.card > 0 ? `<div class="split-row"><span>﷼ ${data.splitPayment.card.toFixed(2)}</span><span>💳 شبكة</span></div>` : ''}` : ''}
+    <div class="split-row row">${data.splitPayment.cash > 0 ? `<span>نقدي: ${data.splitPayment.cash.toFixed(2)}</span>` : '<span></span>'}${data.splitPayment.card > 0 ? `<span>شبكة: ${data.splitPayment.card.toFixed(2)}</span>` : ''}</div>` : ''}
     ${(data.cashReceived && data.cashReceived > 0 && !data.splitPayment) ? `
     <div class="change-box">
-      <div class="change-row"><span>﷼ ${data.cashReceived.toFixed(2)}</span><span>المبلغ المستلم</span></div>
-      <div class="change-row" style="font-weight:900;font-size:13px;margin-top:2px;"><span>﷼ ${Math.max(0, data.cashReceived - totalAmount).toFixed(2)}</span><span>↩ الباقي للعميل</span></div>
+      <div class="change-row"><span>المبلغ المستلم:</span><span>${data.cashReceived.toFixed(2)} ر.س</span></div>
+      <div class="change-row" style="font-weight:900;font-size:13px;margin-top:2px;"><span>الباقي للعميل:</span><span>${Math.max(0, data.cashReceived - totalAmount).toFixed(2)} ر.س</span></div>
     </div>` : ''}
   </div>
 
@@ -1229,19 +1221,15 @@ body{font-family:Tahoma,Arial,'Segoe UI',sans-serif;direction:rtl;background:#d6
   ${(data as any).notes ? `<div class="notes-box"><strong>ملاحظات:</strong> ${(data as any).notes}</div>` : ''}
 
   <!-- ══ كود QR ZATCA ══ -->
-  ${zatcaQrSvg ? `<div class="zatca-qr">${zatcaQrSvg}</div>` : ''}
+  ${zatcaQrSvg ? `<div class="qr-container">${zatcaQrSvg}<div style="font-size:10px;margin-top:4px;">امسح للتحقق من الفاتورة</div></div>` : ''}
 
   <!-- ══ نقاط الولاء ══ -->
-  ${loyaltyHtml}
-
-  <!-- ══ الفاصل السفلي ══ -->
-  <div style="border-top:2px dashed #e0e0e0;margin:0 8px 6px;"></div>
+  ${(data as any).loyaltyPoints ? `<div class="loyalty-box">⭐ +${(data as any).loyaltyPoints} نقطة أضيفت لرصيدك</div>` : ''}
 
   <!-- ══ التذييل ══ -->
   <div class="footer">
-    ${data.employeeName ? `<div class="cashier">تمت خدمتك من قِبل: <strong>${data.employeeName}</strong></div>` : ''}
-    <div class="tagline">"قهوة تُقال .. وورد يُهدى"</div>
-    <div class="pwby">Powered by <strong style="color:#2D9B6E;">CLUNY SYSTEMS</strong></div>
+    <div style="font-weight:bold;margin-bottom:4px;">${brand.website}</div>
+    شكراً لزيارتكم!
   </div>
 
 </div></body></html>`;
@@ -1261,89 +1249,69 @@ export function buildEmployeeReceiptPreviewHtml(data: TaxInvoiceData): string {
       : orderTypeStr === 'car_pickup' || orderTypeStr === 'car-pickup' ? 'استلام بالسيارة'
       : orderTypeStr;
 
-  const orderTypeBg =
-    orderTypeStr === 'car_pickup' || orderTypeStr === 'car-pickup' ? '#dc2626' :
-    orderTypeStr === 'delivery' ? '#2563eb' :
-    orderTypeStr === 'dine_in' || orderTypeStr === 'dine-in' ? '#7c3aed' : '#111';
-
-  const itemsHtml = data.items.map((item, idx) => {
-    const addons = getItemAddons(item).map((a: any) => a.nameAr).join('، ');
+  const itemsHtml = data.items.map((item) => {
+    const addons = getItemAddons(item).map((a: any) => a.nameAr).join(' &bull; ');
     const sz2 = getItemSelectedSize(item);
     return `
-      <div style="padding:16px 0 12px 0;${idx > 0 ? 'border-top:2px dashed #bbb;margin-top:4px;' : ''}">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;">
-          <div style="font-size:20px;font-weight:800;line-height:1.6;flex:1;">${item.coffeeItem.nameAr}</div>
-          <div style="font-size:28px;font-weight:900;background:#111;color:#fff;padding:4px 14px;border-radius:8px;flex-shrink:0;">×${item.quantity}</div>
+      <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;align-items:flex-start;">
+        <div style="flex:1;padding-left:8px;">
+          <div style="font-size:17px;font-weight:600;">${item.coffeeItem.nameAr}</div>
+          ${sz2 ? `<div style="font-size:13px;color:#2563eb;margin-top:3px;">الحجم: ${sz2}</div>` : ''}
+          ${addons ? `<div style="font-size:13px;color:#555;margin-top:3px;">+ ${addons}</div>` : ''}
         </div>
-        ${sz2 ? `<div style="font-size:16px;color:#2563eb;margin-top:8px;margin-bottom:6px;padding-right:6px;line-height:1.8;">▸ الحجم: ${sz2}</div>` : ''}
-        ${addons ? `<div style="font-size:16px;color:#444;margin-top:8px;padding-right:6px;line-height:1.8;">▸ إضافات: ${addons}</div>` : ''}
+        <div style="font-size:26px;font-weight:bold;border:2px solid #000;padding:2px 10px;border-radius:4px;flex-shrink:0;">x${item.quantity}</div>
       </div>`;
   }).join('');
 
+  const carType  = (data as any).carInfo?.carType  || '';
+  const carColor = (data as any).carInfo?.carColor || (data as any).carColor || '';
+  const carPlate = (data as any).carInfo?.plateNumber || (data as any).plateNumber || '';
+  const carParts = [carColor, carType, carPlate ? `لوحة: ${carPlate}` : ''].filter(Boolean);
+
   return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8">
 <style>
-*{margin:0;padding:0;box-sizing:border-box;border:0!important;}
-hr{display:none!important;}
-body{font-family:'Cairo',Tahoma,Arial,sans-serif;direction:rtl;background:#e8e6e0;display:flex;justify-content:center;align-items:flex-start;padding:24px 10px;min-height:100vh;}
-.paper{background:#fff;width:320px;box-shadow:0 4px 20px rgba(0,0,0,.2);}
-.tape{height:14px;background:repeating-linear-gradient(90deg,#fff 0,#fff 12px,#e8e6e0 12px,#e8e6e0 24px);}
-.body{padding:18px 16px;}
-.c{text-align:center;}
-.gap{height:10px;}
-.row{display:flex;justify-content:space-between;padding:10px 0;font-size:16px;border-bottom:1px solid #eee;line-height:1.8;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Cairo',Tahoma,Arial,sans-serif;direction:rtl;background:#d6d6d6;display:flex;justify-content:center;align-items:flex-start;padding:24px 10px;min-height:100vh;color:#000;}
+.paper{background:#fff;width:302px;padding:12px 12px 10px;box-shadow:0 2px 8px rgba(0,0,0,.18),0 8px 32px rgba(0,0,0,.12);}
+.label{color:#fff;padding:2px 8px;border-radius:4px;font-size:13px;font-weight:bold;margin-bottom:8px;display:inline-block;}
+.header{text-align:center;border-bottom:1px solid #000;padding-bottom:10px;margin-bottom:10px;}
+.order-num{font-size:28px;font-weight:bold;margin:8px 0;}
+.table-badge{font-size:16px;font-weight:bold;color:#b45309;border:2px solid #b45309;padding:3px 8px;margin-top:5px;display:inline-block;}
+.emp-line{font-size:11px;color:#555;margin-top:6px;}
+.car-box{margin:10px 0;background:#fef9c3;border:1px solid #fbbf24;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:700;text-align:center;}
+.notes-box{margin-top:12px;background:#fef3c7;border:2px solid #f59e0b;border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.7;}
+.footer-note{text-align:center;margin-top:12px;font-weight:bold;font-size:12px;border-top:1px dashed #000;padding-top:8px;}
 @media print{
   @page{size:80mm auto;margin:0;}
-  *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;border:0!important;}
-  hr{display:none!important;}
-  body{display:block!important;background:#fff!important;padding:0!important;min-height:0!important;}
-  .paper{width:76mm!important;max-width:76mm!important;margin:0!important;box-shadow:none!important;}
-  .tape{display:none!important;}
-  .body{padding:6px 4px 12px!important;}
+  body{background:#fff!important;padding:0!important;display:block!important;}
+  .paper{width:80mm!important;box-shadow:none!important;}
 }
 </style></head><body><div class="paper">
-<div class="tape"></div>
-<div class="body">
 
-  <!-- 2 blank lines at start of every invoice -->
-  <div style="height:36px;"></div>
+  <!-- ══ رأس الفاتورة ══ -->
+  <div class="header">
+    <div class="label" style="background:#444;">إيصال الموظف (التحضير)</div>
+    <div class="order-num">#${orderNumDisplay}</div>
+    ${orderTypeLabel ? `<div style="font-size:13px;font-weight:700;color:#333;">${orderTypeLabel}</div>` : ''}
+    ${data.tableNumber && !(orderTypeStr === 'dine_in' || orderTypeStr === 'dine-in') ? `<div class="table-badge">طاولة: ${data.tableNumber}</div>` : ''}
+    <div class="emp-line">الموظف: ${data.employeeName || '—'} &nbsp;|&nbsp; ${fmtTime} — ${fmtDate}</div>
+  </div>
 
-  <!-- Header -->
-  <div class="c" style="font-size:20px;font-weight:900;padding-bottom:8px;border-bottom:3px double #000;">📋 نسخة الموظف / المطبخ</div>
-  <div class="gap"></div>
-  <div class="c" style="font-size:54px;font-weight:900;letter-spacing:4px;margin:6px 0;">#${orderNumDisplay}</div>
+  <!-- ══ الأصناف ══ -->
+  <div class="items">${itemsHtml}</div>
 
-  <!-- Order type badge -->
-  ${orderTypeLabel ? `<div class="c" style="margin:6px 0;"><span style="display:inline-block;background:${orderTypeBg};color:#fff;font-size:16px;font-weight:700;padding:5px 18px;border-radius:20px;">${orderTypeLabel}</span></div>` : ''}
+  <!-- ══ بيانات السيارة ══ -->
+  ${carParts.length ? `<div class="car-box">🚗 ${carParts.join(' | ')}</div>` : ''}
 
-  <div style="height:18px;"></div>
-  <div style="border-top:2px solid #000;width:100%;height:0;"></div>
-  <div style="height:18px;"></div>
-
-  <!-- Info rows -->
-  <div class="row"><span style="color:#666;">الوقت:</span><span style="font-weight:700;">${fmtTime} — ${fmtDate}</span></div>
-  ${data.employeeName ? `<div class="row"><span style="color:#666;">الكاشير:</span><span style="font-weight:700;">${data.employeeName}</span></div>` : ''}
-  ${data.tableNumber && !(orderTypeStr === 'dine_in' || orderTypeStr === 'dine-in') ? `<div class="row"><span style="color:#666;">الطاولة:</span><span style="font-weight:900;font-size:18px;">رقم ${data.tableNumber}</span></div>` : ''}
-
-  <div style="height:18px;"></div>
-  <div style="border-top:2px solid #000;width:100%;height:0;"></div>
-  <div style="height:18px;"></div>
-
-  <!-- Items -->
-  <div style="font-size:15px;font-weight:700;color:#666;margin-bottom:4px;">الأصناف (${data.items.length} صنف):</div>
-  ${itemsHtml}
-
-  <!-- ملاحظات الطلب -->
+  <!-- ══ ملاحظات ══ -->
   ${(data as any).notes ? `
-  <div style="height:18px;"></div>
-  <div style="border-top:2px solid #000;width:100%;height:0;"></div>
-  <div style="height:14px;"></div>
-  <div style="background:#fef3c7;border:2px solid #f59e0b;border-radius:8px;padding:12px 14px;font-size:16px;line-height:1.8;">
-    <div style="font-weight:900;color:#92400e;font-size:15px;margin-bottom:4px;">⚠ ملاحظات العميل:</div>
+  <div class="notes-box">
+    <div style="font-weight:900;color:#92400e;margin-bottom:4px;">⚠ ملاحظات العميل:</div>
     <div style="font-weight:700;">${(data as any).notes}</div>
   </div>` : ''}
 
-</div>
-<div class="tape"></div>
+  <div class="footer-note">يرجى التحقق من الأصناف قبل التسليم</div>
+
 </div></body></html>`;
 }
 
