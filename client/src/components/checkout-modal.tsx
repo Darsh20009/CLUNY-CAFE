@@ -9,7 +9,7 @@ import { useCustomer } from "@/contexts/CustomerContext";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getErrorMessage } from "@/lib/queryClient";
 import PaymentMethods from "./payment-methods";
-import { generatePDF } from "@/lib/pdf-generator";
+import { prewarmZatcaQr, printTaxInvoice } from "@/lib/print-utils";
 import { saveOrderLocally } from "@/lib/local-orders";
 import { CreditCard, FileText, MessageCircle, Check, ArrowRight, Coffee, ShoppingCart, Wallet, Star, Phone, Truck, Store, MapPin, Upload, User, Loader2 } from "lucide-react";
 import type { PaymentMethodInfo, PaymentMethod, Branch } from "@shared/schema";
@@ -84,6 +84,12 @@ const CheckoutModal = memo(() => {
  return response.json();
  },
  onSuccess: async (order) => {
+  // Pre-warm ZATCA QR so printing is instant when handlePaymentConfirmed runs
+  prewarmZatcaQr({
+    orderNumber: order.orderNumber,
+    total: String(order.totalAmount || getTotalPrice()),
+    date: order.createdAt || new Date().toISOString(),
+  });
  setOrderDetails(order);
  if (!customer) saveOrderLocally(order.orderNumber);
  if (selectedPaymentMethod === 'cash') {
@@ -219,20 +225,33 @@ const CheckoutModal = memo(() => {
    setCurrentStep('success');
    toast({ title: t("checkout.order_success") });
    try {
-     const configRes = await fetch("/api/business-config");
-     const config = configRes.ok ? await configRes.json() : null;
-     if (config?.employeeInvoiceEnabled) {
-       const { printBulkEmployeeInvoices } = await import("@/lib/print-utils");
-       await printBulkEmployeeInvoices([order]);
-     } else {
-       const pdfBlob = await generatePDF(order, cartItems as any, selectedPaymentMethod as any);
-       const url = URL.createObjectURL(pdfBlob);
-       const link = document.createElement('a');
-       link.href = url;
-       link.download = `invoice-${order.orderNumber}.pdf`;
-       link.click();
-       URL.revokeObjectURL(url);
-     }
+     const total = parseFloat(String(order.totalAmount || getTotalPrice() || 0));
+     const subtotal = (total / 1.15).toFixed(2);
+     const items = (order.items?.length ? order.items : cartItems).map((item: any) => ({
+       coffeeItem: {
+         nameAr: item.name || item.coffeeItem?.nameAr || '',
+         nameEn: item.coffeeItem?.nameEn || '',
+         price: String(item.price || item.coffeeItem?.price || 0),
+       },
+       quantity: item.quantity || 1,
+       selectedSize: item.selectedSize || item.customization?.selectedSize || undefined,
+       customization: item.customization,
+     }));
+     const orderTypeStr = deliveryType === 'pickup' ? 'takeaway' : deliveryType === 'delivery' ? 'delivery' : deliveryType === 'curbside' ? 'car_pickup' : 'takeaway';
+     const orderTypeName = deliveryType === 'pickup' ? 'سفري' : deliveryType === 'delivery' ? 'توصيل' : deliveryType === 'curbside' ? 'سيارة' : 'سفري';
+     await printTaxInvoice({
+       orderNumber: order.orderNumber,
+       customerName: customerName || 'عميل نقدي',
+       customerPhone: customerPhone || '',
+       employeeName: '',
+       items,
+       subtotal,
+       total: total.toFixed(2),
+       paymentMethod: (selectedPaymentMethod as string) || 'cash',
+       date: order.createdAt || new Date().toISOString(),
+       orderType: orderTypeStr as any,
+       orderTypeName,
+     }, { autoPrint: true });
    } catch (_) {}
    setTimeout(() => {
      clearCart();

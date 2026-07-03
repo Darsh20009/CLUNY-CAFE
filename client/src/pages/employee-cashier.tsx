@@ -27,7 +27,7 @@ import QRScanner from "@/components/qr-scanner";
 import BarcodeScanner from "@/components/barcode-scanner";
 import { TableOccupancyAlerts } from "@/components/table-occupancy-alerts";
 import { ClassicCashierLayout, POSCashierLayout, SplitCashierLayout } from "@/components/cashier-layouts";
-import { printTaxInvoice, printCustomerPickupReceipt, printCashierReceipt, printAllReceipts, fmtOrderNum } from "@/lib/print-utils";
+import { printTaxInvoice, printCustomerPickupReceipt, printCashierReceipt, printAllReceipts, fmtOrderNum, prewarmZatcaQr } from "@/lib/print-utils";
 import type { Employee, CoffeeItem, PaymentMethod, LoyaltyCard } from "@shared/schema";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
 import PrinterSettingsPanel from "@/components/printer-settings-panel";
@@ -1036,6 +1036,14 @@ export default function EmployeeCashier() {
          updatePendingOrderReceiptData(order.orderNumber, receiptData);
          setPendingOrdersList(getPendingOrders());
        }
+
+       // Pre-warm ZATCA QR cache so buildReceiptPreviewHtml is instant (same approach as POS system)
+       prewarmZatcaQr({
+         orderNumber: order.orderNumber,
+         total: receiptTotal,
+         date: new Date().toISOString(),
+         vatNumber: businessConfig?.vatNumber,
+       });
 
        // Auto-print receipts
        try {
