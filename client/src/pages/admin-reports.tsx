@@ -268,7 +268,6 @@ export default function AdminReports() {
       if (!result.success) {
         toast({ title: tc('فشل الطباعة', 'Print failed'), description: result.error, variant: 'destructive' });
       }
-    };
   };
 
   // ── Trend badge ───────────────────────────────────────────────────────────

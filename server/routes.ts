@@ -3993,10 +3993,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Step 3: Process Apple Pay payment token via Geidea Direct API
+  // Endpoint per Geidea docs: /pgw/api/v2/direct/apple/pay
   app.post("/api/payments/apple-pay/process", async (req, res) => {
     try {
       const { sessionId, paymentToken, orderData } = req.body;
-      if (!sessionId || !paymentToken) return res.status(400).json({ error: "sessionId و paymentToken مطلوبان" });
+      if (!paymentToken) return res.status(400).json({ error: "paymentToken مطلوب" });
 
       const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
       const config = await BusinessConfigModel.findOne({ tenantId }).lean();
@@ -4010,16 +4011,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
 
-      // Call Geidea Direct API with Apple Pay token
+      // Build request body per Geidea Apple Pay Direct API v2 docs
+      const amount = Number(orderData?.totalAmount || 0).toFixed(2);
+      const merchantReferenceId = (orderData?.orderRef || sessionId || nanoid()).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
+      const callbackUrl = `${baseUrl.includes('ksamerchant') ? 'https://cluny.cafe' : 'https://cluny.cafe'}/api/payments/geidea/callback`;
+
       const processBody = {
-        sessionId,
-        paymentMethod: {
-          type: 'applePay',
-          tokenizationData: paymentToken,
+        Method: 'encrypted',
+        Token: {
+          PaymentData: paymentToken.paymentData,           // encrypted Apple Pay blob
+          PaymentMethod: {
+            DisplayName: paymentToken.paymentMethod?.displayName || 'Apple Pay',
+            Network:     paymentToken.paymentMethod?.network     || 'Visa',
+            Type:        paymentToken.paymentMethod?.type        || 'credit',
+          },
+        },
+        Amount: parseFloat(amount),
+        Currency: 'SAR',
+        MerchantReferenceId: merchantReferenceId,
+        CallbackUrl: callbackUrl,
+        InitiatedBy: 'internet',
+        CardOnFile: false,
+        DeviceIdentification: {
+          UserAgent: req.get('user-agent') || 'Web/1.0',
+          Language: 'ar',
         },
       };
-      console.log('[Apple Pay] Processing payment, sessionId:', sessionId);
-      const processRes = await fetch(`${baseUrl}/payment-intent/api/v2/direct`, {
+
+      console.log('[Apple Pay] Processing payment via /pgw/api/v2/direct/apple/pay, ref:', merchantReferenceId);
+      const processRes = await fetch(`${baseUrl}/pgw/api/v2/direct/apple/pay`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
         body: JSON.stringify(processBody),
@@ -4037,7 +4057,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const transactionId = processData?.transaction?.transactionId || processData?.order?.orderId || sessionId;
+      const transactionId = processData?.transaction?.transactionId || processData?.order?.orderId || merchantReferenceId;
       return res.json({ success: true, transactionId, details: processData });
     } catch (err: any) {
       console.error('[Apple Pay] process error:', err);
