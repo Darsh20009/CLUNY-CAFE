@@ -175,25 +175,98 @@ const _isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator
 // Arabic-compatible font stack — works without network (system fonts)
 const PRINT_FONT_STACK = "'Segoe UI', Tahoma, Arial, 'Helvetica Neue', sans-serif";
 
-// ── Viewport lock/restore — prevents Android Chrome from shrinking the page
-//    when an iframe inside the page calls print(). Save the current viewport
-//    content, lock it to device-width during printing, then restore afterwards.
-function _lockViewport(): string | null {
-  try {
-    const meta = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
-    if (!meta) return null;
-    const saved = meta.content;
-    meta.content = 'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1';
-    return saved;
-  } catch { return null; }
-}
+// ── Android-specific: print by injecting content into the main window ──────
+// On Android WebView/Chrome, ANY hidden iframe (even position:fixed;top:-9999px)
+// causes the browser to recalculate the page viewport based on the iframe's
+// layout width. This shrinks the entire UI to match the narrow paper width.
+// The ONLY reliable fix is to not create an iframe at all on Android.
+// Instead we inject the print content directly into the parent document and
+// call window.print() from there, using @media print CSS to isolate it.
+const _ANDROID_OVERLAY_ID = '__cluny_android_print_layer';
+const _ANDROID_STYLE_ID   = '__cluny_android_print_style';
 
-function _restoreViewport(saved: string | null): void {
-  if (!saved) return;
-  try {
-    const meta = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
-    if (meta) meta.content = saved;
-  } catch {}
+function _printAndroid(fullHtml: string): Promise<void> {
+  // Clean up any stale overlay from a previous failed print
+  document.getElementById(_ANDROID_OVERLAY_ID)?.remove();
+  document.getElementById(_ANDROID_STYLE_ID)?.remove();
+
+  // ── 1. Extract @page rules (must live at top-level, outside @media print) ──
+  const pageRuleMatches = fullHtml.match(/@page\s*\{[^}]*\}/g) || [];
+  const pageRules = pageRuleMatches.join('\n');
+
+  // ── 2. Extract all <style> content ──────────────────────────────────────────
+  const styleChunks: string[] = [];
+  const htmlNoPage = fullHtml.replace(/@page\s*\{[^}]*\}/g, '');
+  htmlNoPage.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (_m, css: string) => {
+    // strip nested @page again just in case, keep everything else
+    styleChunks.push(css.replace(/@page\s*\{[^}]*\}/g, ''));
+    return '';
+  });
+
+  // ── 3. Extract <body> content ───────────────────────────────────────────────
+  const bodyAttr = (fullHtml.match(/<body([^>]*)>/i) || ['', ''])[1];
+  const bodyContent = (fullHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i) || ['', ''])[1];
+
+  // ── 4. Inject a hidden overlay div with the print content ───────────────────
+  const overlay = document.createElement('div');
+  overlay.id = _ANDROID_OVERLAY_ID;
+  // dir/lang from body tag if present
+  if (/dir=["']?rtl/i.test(bodyAttr)) overlay.setAttribute('dir', 'rtl');
+  if (/lang=["']?ar/i.test(bodyAttr)) overlay.setAttribute('lang', 'ar');
+  overlay.innerHTML = bodyContent;
+  // Invisible on screen; revealed only by @media print below
+  overlay.style.cssText = 'display:none!important;position:absolute;top:0;left:0;z-index:-9999;';
+  document.body.appendChild(overlay);
+
+  // ── 5. Inject @media print styles that isolate the overlay ─────────────────
+  const styleEl = document.createElement('style');
+  styleEl.id = _ANDROID_STYLE_ID;
+  styleEl.textContent = `
+    /* @page outside @media so paper size applies to the print job */
+    ${pageRules}
+
+    @media print {
+      /* hide every direct child of body except our overlay */
+      body > *:not(#${_ANDROID_OVERLAY_ID}) {
+        display: none !important;
+        visibility: hidden !important;
+      }
+      /* show the overlay as if it were the body */
+      #${_ANDROID_OVERLAY_ID} {
+        display: block !important;
+        visibility: visible !important;
+        position: static !important;
+        top: auto !important;
+        left: auto !important;
+        z-index: auto !important;
+      }
+      /* apply the original body-level styles to the overlay */
+      ${styleChunks.join('\n')}
+    }
+  `;
+  document.head.appendChild(styleEl);
+
+  return new Promise<void>(resolve => {
+    let done = false;
+    const cleanup = () => {
+      if (done) return;
+      done = true;
+      document.getElementById(_ANDROID_OVERLAY_ID)?.remove();
+      document.getElementById(_ANDROID_STYLE_ID)?.remove();
+      resolve();
+    };
+    // afterprint fires when the system print dialog is dismissed
+    window.addEventListener('afterprint', cleanup, { once: true });
+    // 10 s watchdog in case afterprint never fires (some Android builds)
+    setTimeout(cleanup, 10000);
+
+    // Give the browser one paint cycle before blocking the JS thread
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        try { window.print(); } catch { cleanup(); }
+      }, 0);
+    });
+  });
 }
 
 function _buildFullDoc(html: string, paperWidth: string): string {
@@ -216,40 +289,38 @@ function _buildFullDoc(html: string, paperWidth: string): string {
 }
 
 /**
- * Direct HTML iframe print — fast, accurate, no image conversion.
+ * Direct HTML print — fast, accurate, no image conversion.
  * Uses browser's native rendering engine — Arabic text renders perfectly.
  *
- * Android fixes applied here:
- *  1. Viewport lock — prevents the parent page from shrinking when print() fires.
- *  2. Iframe uses window.innerWidth (not paper mm width) so Android does not
- *     confuse the iframe's narrow paper layout with the page's viewport.
- *  3. requestAnimationFrame → setTimeout(0) chain yields to the browser paint
- *     cycle before blocking the JS thread, reducing perceived lag.
+ * Android strategy (NO iframe):
+ *   On Android WebView/Chrome any hidden iframe — even one at top:-9999px —
+ *   triggers a viewport recalculation that shrinks the parent page to the
+ *   iframe's content width (~220–302 px). There is no CSS workaround.
+ *   Solution: inject print content directly into the main document as a hidden
+ *   div, reveal it only with @media print, and call window.print() from the
+ *   parent. Zero iframes → zero viewport disturbance.
+ *
+ * Desktop/iOS strategy (iframe):
+ *   Still uses a hidden iframe so desktop printing is completely isolated.
  */
 async function _printDirectAsync(html: string, paperWidth: string, isFullDoc: boolean): Promise<void> {
   const fullHtml = isFullDoc ? html : _buildFullDoc(html, paperWidth);
 
-  // Lock viewport BEFORE creating iframe to prevent Android resize
-  const savedViewport = _isAndroid ? _lockViewport() : null;
+  // ── Android: use no-iframe approach ─────────────────────────────────────────
+  if (_isAndroid) {
+    return _printAndroid(fullHtml);
+  }
 
+  // ── Desktop / iOS: hidden iframe approach ───────────────────────────────────
   const iframe = document.createElement('iframe');
   iframe.setAttribute('aria-hidden', 'true');
-
-  // Use the device's logical pixel width (not paper mm) so Android does not
-  // try to scale the parent page to match a 220px "paper-width" document.
-  // The actual paper dimensions are controlled by @page CSS inside the iframe.
-  const deviceWidth = (typeof window !== 'undefined' ? (window.innerWidth || 390) : 390);
-  const renderWidth = _isAndroid ? deviceWidth : (paperWidth === '58mm' ? 220 : 302);
-
-  // Keep iframe truly off-screen and invisible; do NOT use display:none as
-  // some browsers skip printing hidden iframes entirely.
-  iframe.style.cssText = `position:fixed;top:-9999px;left:-9999px;width:${renderWidth}px;height:1px;border:none;opacity:0;pointer-events:none;overflow:hidden;contain:layout style;`;
+  const renderWidth = paperWidth === '58mm' ? 220 : 302;
+  iframe.style.cssText = `position:fixed;top:-9999px;left:-9999px;width:${renderWidth}px;height:1px;border:none;opacity:0;pointer-events:none;overflow:hidden;`;
   document.body.appendChild(iframe);
 
   const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
   if (!iframeDoc) {
     try { iframe.remove(); } catch {}
-    if (savedViewport !== null) _restoreViewport(savedViewport);
     _isPrinting = false;
     setTimeout(_drainPrintQueue, 300);
     return;
@@ -262,39 +333,24 @@ async function _printDirectAsync(html: string, paperWidth: string, isFullDoc: bo
   const iframeWin = iframe.contentWindow;
   if (!iframeWin) {
     try { iframe.remove(); } catch {}
-    if (savedViewport !== null) _restoreViewport(savedViewport);
     _isPrinting = false;
     setTimeout(_drainPrintQueue, 300);
     return;
   }
 
-  // On Android give an extra tick for layout to settle before blocking the thread
-  const layoutDelay = _isAndroid ? 60 : 20;
-  await new Promise(r => setTimeout(r, layoutDelay));
+  await new Promise(r => setTimeout(r, 20));
 
   return new Promise<void>(resolve => {
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
-      // Restore viewport ASAP after print dialog closes
-      if (savedViewport !== null) _restoreViewport(savedViewport);
-      setTimeout(() => {
-        try { iframe.remove(); } catch {}
-        resolve();
-      }, 200);
+      setTimeout(() => { try { iframe.remove(); } catch {} resolve(); }, 200);
     };
-
     iframeWin.addEventListener('afterprint', finish, { once: true });
-    // Android print dialog can stay open longer — give 8 s before giving up
-    setTimeout(finish, _isAndroid ? 8000 : 2000);
-
-    // Yield one animation frame so the UI can repaint (show any loading state)
-    // before print() blocks the JS thread. This dramatically reduces perceived lag.
+    setTimeout(finish, 2000);
     requestAnimationFrame(() => {
-      setTimeout(() => {
-        try { iframeWin.print(); } catch { finish(); }
-      }, 0);
+      setTimeout(() => { try { iframeWin.print(); } catch { finish(); } }, 0);
     });
   });
 }
@@ -388,35 +444,41 @@ export function printHtmlInPage(html: string, paperWidth: string = '80mm'): void
  * Shared helper for shift reports and refund receipts.
  */
 function _printCanvasImage(imgSrc: string, paperWidth: '58mm' | '80mm' = '80mm'): void {
-  const savedViewport = _isAndroid ? _lockViewport() : null;
-  const printFrame = document.createElement('iframe');
-  printFrame.setAttribute('aria-hidden', 'true');
-  printFrame.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none;opacity:0;pointer-events:none;';
-  document.body.appendChild(printFrame);
-  const pdoc = printFrame.contentDocument || printFrame.contentWindow?.document;
-  if (!pdoc) { try { printFrame.remove(); } catch {} if (savedViewport !== null) _restoreViewport(savedViewport); return; }
-  pdoc.open();
-  pdoc.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><style>
+  const fullHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><style>
     @page { size: ${paperWidth} auto; margin: 0; }
     html,body { margin:0; padding:0; background:#fff; }
     img { width: ${paperWidth}; display: block; margin: 0; padding: 0; }
-  </style></head><body><img src="${imgSrc}" /></body></html>`);
+  </style></head><body><img src="${imgSrc}" /></body></html>`;
+
+  // On Android: use the no-iframe path to avoid viewport shrinkage.
+  // We need to wait for the image inside the overlay to load first.
+  if (_isAndroid) {
+    _printAndroid(fullHtml).catch(() => {});
+    return;
+  }
+
+  // Desktop / iOS: hidden iframe
+  const printFrame = document.createElement('iframe');
+  printFrame.setAttribute('aria-hidden', 'true');
+  printFrame.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:302px;height:1px;border:none;opacity:0;pointer-events:none;';
+  document.body.appendChild(printFrame);
+  const pdoc = printFrame.contentDocument || printFrame.contentWindow?.document;
+  if (!pdoc) { try { printFrame.remove(); } catch {} return; }
+  pdoc.open();
+  pdoc.write(fullHtml);
   pdoc.close();
   const img = pdoc.querySelector('img') as HTMLImageElement | null;
   let done = false;
   const finish = () => {
     if (done) return;
     done = true;
-    if (savedViewport !== null) _restoreViewport(savedViewport);
     setTimeout(() => { try { printFrame.remove(); } catch {} }, 200);
   };
   const doPrint = () => {
     printFrame.contentWindow?.addEventListener('afterprint', finish, { once: true });
-    setTimeout(finish, _isAndroid ? 8000 : 5000);
+    setTimeout(finish, 5000);
     requestAnimationFrame(() => {
-      setTimeout(() => {
-        try { printFrame.contentWindow?.print(); } catch { finish(); }
-      }, 0);
+      setTimeout(() => { try { printFrame.contentWindow?.print(); } catch { finish(); } }, 0);
     });
   };
   if (img && !img.complete) {
