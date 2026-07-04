@@ -257,15 +257,20 @@ function _printAndroid(fullHtml: string): Promise<void> {
       document.getElementById(_ANDROID_STYLE_ID)?.remove();
       resolve();
     };
-    // afterprint fires when the system print dialog is dismissed
+    // afterprint fires on some Android builds — grab it if it fires
     window.addEventListener('afterprint', cleanup, { once: true });
-    // 10 s watchdog in case afterprint never fires (some Android builds)
-    setTimeout(cleanup, 10000);
 
-    // Give the browser one paint cycle before blocking the JS thread
+    // Give the browser one paint cycle before calling print()
     requestAnimationFrame(() => {
       setTimeout(() => {
-        try { window.print(); } catch { cleanup(); }
+        try { window.print(); } catch { cleanup(); return; }
+        // ── KEY FIX ─────────────────────────────────────────────────────────
+        // On many Android builds (including EZPOS) afterprint never fires, so
+        // waiting for it causes a 10-second hard freeze between print jobs.
+        // Instead: resolve 500 ms after window.print() returns, regardless of
+        // afterprint. If window.print() was synchronous (blocking), it has
+        // already completed by the time we reach this line.
+        setTimeout(cleanup, 500);
       }, 0);
     });
   });
@@ -972,6 +977,36 @@ export async function printReceiptSection(
   }
 
   // ── Browser HTML fallback ─────────────────────────────────────────────────
+  // On Android, merge both receipts into a single window.print() call so the
+  // user only experiences one print freeze instead of two.
+  if (_isAndroid && section === 'both') {
+    const customerHtml = await buildReceiptPreviewHtml(data);
+    const kitchenHtml  = buildEmployeeReceiptPreviewHtml(data);
+    const extractBody   = (h: string) => (h.match(/<body[^>]*>([\s\S]*?)<\/body>/i) || ['', h])[1];
+    const extractStyles = (h: string) => {
+      const chunks: string[] = [];
+      h.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (_, css: string) => { chunks.push(css); return ''; });
+      return chunks.join('\n');
+    };
+    const mergedHtml = `<!DOCTYPE html><html lang="ar" dir="rtl"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<style>
+@page { size: 80mm auto; margin: 0; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0; background: #fff; direction: rtl; font-family: 'Segoe UI', Tahoma, Arial, sans-serif; color: #000; }
+.print-page-break { page-break-after: always; break-after: page; }
+${extractStyles(customerHtml)}
+${extractStyles(kitchenHtml)}
+</style></head><body>
+<div class="print-page-break">${extractBody(customerHtml)}</div>
+<div>${extractBody(kitchenHtml)}</div>
+</body></html>`;
+    _printQueue.push({ html: mergedHtml, paperWidth: '80mm', isFullDoc: true });
+    _drainPrintQueue();
+    return;
+  }
+
   if (section === 'customer' || section === 'both') {
     const customerHtml = await buildReceiptPreviewHtml(data);
     _printQueue.push({ html: customerHtml, paperWidth: '80mm', isFullDoc: true });
@@ -1569,7 +1604,7 @@ export async function printTaxInvoice(data: TaxInvoiceData, config: PrintConfig 
   const customerHtml = await buildReceiptPreviewHtml(data);
   const employeeHtml = buildEmployeeReceiptPreviewHtml(data);
 
-  // ── Helper: print one HTML document via a hidden iframe ───────────────────
+  // ── Helper: print one HTML document ───────────────────────────────────────
   const printOneHtml = (html: string): Promise<void> => _printDirectAsync(html, '80mm', true);
 
   if (shouldAutoPrint) {
@@ -1578,12 +1613,41 @@ export async function printTaxInvoice(data: TaxInvoiceData, config: PrintConfig 
     const customerCopies = Math.max(1, Math.min(5, ps.customerCopies || 1));
     const kitchenCopies  = ps.autoKitchenCopy ? Math.max(1, Math.min(5, ps.kitchenCopies || 1)) : 0;
 
-    // Print customer copies as HTML — fast, accurate, no image conversion
+    // ── Android optimisation: merge both receipts into ONE window.print() ────
+    // Each window.print() on Android blocks the UI. By combining customer +
+    // kitchen receipts (separated by a CSS page-break) we fire print() once
+    // and the user sees only one freeze instead of two.
+    if (_isAndroid && kitchenCopies > 0 && customerCopies === 1) {
+      const extractBody = (h: string) =>
+        (h.match(/<body[^>]*>([\s\S]*?)<\/body>/i) || ['', h])[1];
+      const extractStyles = (h: string) => {
+        const chunks: string[] = [];
+        h.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (_, css: string) => { chunks.push(css); return ''; });
+        return chunks.join('\n');
+      };
+      const mergedHtml = `<!DOCTYPE html><html lang="ar" dir="rtl"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<style>
+@page { size: 80mm auto; margin: 0; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0; background: #fff; direction: rtl; font-family: 'Segoe UI', Tahoma, Arial, sans-serif; color: #000; }
+.print-page-break { page-break-after: always; break-after: page; }
+${extractStyles(customerHtml)}
+${extractStyles(employeeHtml)}
+</style></head><body>
+<div class="print-page-break">${extractBody(customerHtml)}</div>
+<div>${extractBody(employeeHtml)}</div>
+</body></html>`;
+      await _printAndroid(mergedHtml);
+      return;
+    }
+
+    // Desktop / iOS (or multi-copy): print sequentially
     for (let i = 0; i < customerCopies; i++) {
       if (i > 0) await new Promise(r => setTimeout(r, 150));
       await printOneHtml(customerHtml);
     }
-    // Print kitchen copies as HTML (different design for kitchen staff)
     for (let i = 0; i < kitchenCopies; i++) {
       await new Promise(r => setTimeout(r, 150));
       await printOneHtml(employeeHtml);
