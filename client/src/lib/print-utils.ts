@@ -157,25 +157,52 @@ function _armPrintWatchdog() {
   if (_printWatchdog) clearTimeout(_printWatchdog);
   _printWatchdog = setTimeout(() => {
     if (_isPrinting) {
-      console.warn('[Print] Watchdog: print job stuck >6s — resetting queue');
+      console.warn('[Print] Watchdog: print job stuck >8s — resetting queue');
       _isPrinting = false;
       _printWatchdog = null;
       if (_printQueue.length > 0) setTimeout(_drainPrintQueue, 300);
     }
-  }, 6000);
+  }, 8000);
 }
 
 function _clearPrintWatchdog() {
   if (_printWatchdog) { clearTimeout(_printWatchdog); _printWatchdog = null; }
 }
 
+// Detect Android to apply Android-specific print fixes
+const _isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+
 // Arabic-compatible font stack — works without network (system fonts)
 const PRINT_FONT_STACK = "'Segoe UI', Tahoma, Arial, 'Helvetica Neue', sans-serif";
 
+// ── Viewport lock/restore — prevents Android Chrome from shrinking the page
+//    when an iframe inside the page calls print(). Save the current viewport
+//    content, lock it to device-width during printing, then restore afterwards.
+function _lockViewport(): string | null {
+  try {
+    const meta = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
+    if (!meta) return null;
+    const saved = meta.content;
+    meta.content = 'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1';
+    return saved;
+  } catch { return null; }
+}
+
+function _restoreViewport(saved: string | null): void {
+  if (!saved) return;
+  try {
+    const meta = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
+    if (meta) meta.content = saved;
+  } catch {}
+}
+
 function _buildFullDoc(html: string, paperWidth: string): string {
+  // The iframe document gets its own viewport meta so Android treats it
+  // as a device-width document and does NOT resize the parent page's viewport.
   return `<!DOCTYPE html><html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <style>
     @page { size: ${paperWidth} auto; margin: 0; }
     * { box-sizing: border-box; }
@@ -191,20 +218,38 @@ function _buildFullDoc(html: string, paperWidth: string): string {
 /**
  * Direct HTML iframe print — fast, accurate, no image conversion.
  * Uses browser's native rendering engine — Arabic text renders perfectly.
+ *
+ * Android fixes applied here:
+ *  1. Viewport lock — prevents the parent page from shrinking when print() fires.
+ *  2. Iframe uses window.innerWidth (not paper mm width) so Android does not
+ *     confuse the iframe's narrow paper layout with the page's viewport.
+ *  3. requestAnimationFrame → setTimeout(0) chain yields to the browser paint
+ *     cycle before blocking the JS thread, reducing perceived lag.
  */
 async function _printDirectAsync(html: string, paperWidth: string, isFullDoc: boolean): Promise<void> {
   const fullHtml = isFullDoc ? html : _buildFullDoc(html, paperWidth);
 
+  // Lock viewport BEFORE creating iframe to prevent Android resize
+  const savedViewport = _isAndroid ? _lockViewport() : null;
+
   const iframe = document.createElement('iframe');
   iframe.setAttribute('aria-hidden', 'true');
-  // Give it a realistic width so layout matches paper — hidden off-screen
-  const renderWidth = paperWidth === '58mm' ? 220 : 302;
-  iframe.style.cssText = `position:fixed;top:-9999px;left:-9999px;width:${renderWidth}px;height:1px;border:none;visibility:hidden;pointer-events:none;`;
+
+  // Use the device's logical pixel width (not paper mm) so Android does not
+  // try to scale the parent page to match a 220px "paper-width" document.
+  // The actual paper dimensions are controlled by @page CSS inside the iframe.
+  const deviceWidth = (typeof window !== 'undefined' ? (window.innerWidth || 390) : 390);
+  const renderWidth = _isAndroid ? deviceWidth : (paperWidth === '58mm' ? 220 : 302);
+
+  // Keep iframe truly off-screen and invisible; do NOT use display:none as
+  // some browsers skip printing hidden iframes entirely.
+  iframe.style.cssText = `position:fixed;top:-9999px;left:-9999px;width:${renderWidth}px;height:1px;border:none;opacity:0;pointer-events:none;overflow:hidden;contain:layout style;`;
   document.body.appendChild(iframe);
 
   const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
   if (!iframeDoc) {
     try { iframe.remove(); } catch {}
+    if (savedViewport !== null) _restoreViewport(savedViewport);
     _isPrinting = false;
     setTimeout(_drainPrintQueue, 300);
     return;
@@ -217,20 +262,23 @@ async function _printDirectAsync(html: string, paperWidth: string, isFullDoc: bo
   const iframeWin = iframe.contentWindow;
   if (!iframeWin) {
     try { iframe.remove(); } catch {}
+    if (savedViewport !== null) _restoreViewport(savedViewport);
     _isPrinting = false;
     setTimeout(_drainPrintQueue, 300);
     return;
   }
 
-  // No image waiting — receipts are image-free (SVG inline, text logo)
-  // Brief layout settle only
-  await new Promise(r => setTimeout(r, 20));
+  // On Android give an extra tick for layout to settle before blocking the thread
+  const layoutDelay = _isAndroid ? 60 : 20;
+  await new Promise(r => setTimeout(r, layoutDelay));
 
   return new Promise<void>(resolve => {
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
+      // Restore viewport ASAP after print dialog closes
+      if (savedViewport !== null) _restoreViewport(savedViewport);
       setTimeout(() => {
         try { iframe.remove(); } catch {}
         resolve();
@@ -238,10 +286,16 @@ async function _printDirectAsync(html: string, paperWidth: string, isFullDoc: bo
     };
 
     iframeWin.addEventListener('afterprint', finish, { once: true });
-    setTimeout(finish, 2000); // safety fallback — reduced from 10s to prevent 30s freeze
+    // Android print dialog can stay open longer — give 8 s before giving up
+    setTimeout(finish, _isAndroid ? 8000 : 2000);
 
-    // Do NOT call focus() before print — it causes UI freeze in Chromium
-    try { iframeWin.print(); } catch { finish(); }
+    // Yield one animation frame so the UI can repaint (show any loading state)
+    // before print() blocks the JS thread. This dramatically reduces perceived lag.
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        try { iframeWin.print(); } catch { finish(); }
+      }, 0);
+    });
   });
 }
 
@@ -334,14 +388,15 @@ export function printHtmlInPage(html: string, paperWidth: string = '80mm'): void
  * Shared helper for shift reports and refund receipts.
  */
 function _printCanvasImage(imgSrc: string, paperWidth: '58mm' | '80mm' = '80mm'): void {
+  const savedViewport = _isAndroid ? _lockViewport() : null;
   const printFrame = document.createElement('iframe');
   printFrame.setAttribute('aria-hidden', 'true');
   printFrame.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none;opacity:0;pointer-events:none;';
   document.body.appendChild(printFrame);
   const pdoc = printFrame.contentDocument || printFrame.contentWindow?.document;
-  if (!pdoc) { try { printFrame.remove(); } catch {} return; }
+  if (!pdoc) { try { printFrame.remove(); } catch {} if (savedViewport !== null) _restoreViewport(savedViewport); return; }
   pdoc.open();
-  pdoc.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+  pdoc.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><style>
     @page { size: ${paperWidth} auto; margin: 0; }
     html,body { margin:0; padding:0; background:#fff; }
     img { width: ${paperWidth}; display: block; margin: 0; padding: 0; }
@@ -349,11 +404,20 @@ function _printCanvasImage(imgSrc: string, paperWidth: '58mm' | '80mm' = '80mm')
   pdoc.close();
   const img = pdoc.querySelector('img') as HTMLImageElement | null;
   let done = false;
-  const finish = () => { if (done) return; done = true; setTimeout(() => { try { printFrame.remove(); } catch {} }, 200); };
+  const finish = () => {
+    if (done) return;
+    done = true;
+    if (savedViewport !== null) _restoreViewport(savedViewport);
+    setTimeout(() => { try { printFrame.remove(); } catch {} }, 200);
+  };
   const doPrint = () => {
-    try { printFrame.contentWindow?.print(); } catch {}
     printFrame.contentWindow?.addEventListener('afterprint', finish, { once: true });
-    setTimeout(finish, 5000);
+    setTimeout(finish, _isAndroid ? 8000 : 5000);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        try { printFrame.contentWindow?.print(); } catch { finish(); }
+      }, 0);
+    });
   };
   if (img && !img.complete) {
     img.onload = () => setTimeout(doPrint, 100);
@@ -498,6 +562,7 @@ export async function printEmployeeCard(data: EmployeePrintData): Promise<void> 
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <title>بطاقة الموظف - ${data.employeeName}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -555,6 +620,7 @@ export async function printKitchenOrder(data: KitchenOrderData): Promise<void> {
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <title>طلب المطبخ - ${data.orderNumber}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -959,6 +1025,7 @@ export async function printBulkEmployeeInvoices(orders: any[]): Promise<void> {
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <style>
     body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; direction: rtl; }
     .invoice-page { width: 80mm; padding: 10px; border-bottom: 2px dashed #000; page-break-after: always; }
@@ -1127,6 +1194,7 @@ export async function buildReceiptPreviewHtml(data: TaxInvoiceData): Promise<str
     </div>`;
 
   return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:'Cairo',Tahoma,Arial,sans-serif;direction:rtl;background:#d6d6d6;display:flex;justify-content:center;align-items:flex-start;padding:24px 10px;min-height:100vh;color:#000;}
@@ -1269,6 +1337,7 @@ export function buildEmployeeReceiptPreviewHtml(data: TaxInvoiceData): string {
   const carParts = [carColor, carType, carPlate ? `لوحة: ${carPlate}` : ''].filter(Boolean);
 
   return `<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:'Cairo',Tahoma,Arial,sans-serif;direction:rtl;background:#d6d6d6;display:flex;justify-content:center;align-items:flex-start;padding:24px 10px;min-height:100vh;color:#000;}
@@ -1538,6 +1607,7 @@ export async function printCustomerPickupReceipt(data: TaxInvoiceData & { delive
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <title>إيصال استلام - ${data.orderNumber}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1636,6 +1706,7 @@ export async function printCashierReceipt(data: TaxInvoiceData & { deliveryType?
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <title>نسخة الكاشير - ${data.orderNumber}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1824,6 +1895,7 @@ export async function printSimpleReceipt(data: TaxInvoiceData): Promise<void> {
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <title>إيصال - ${data.orderNumber}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
