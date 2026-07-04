@@ -52,6 +52,7 @@ import {
   printReceiptSection,
   openReceiptPreviewWindow,
   prewarmZatcaQr,
+  isAndroidDevice,
 } from "@/lib/print-utils";
 import { preRenderReceiptPng } from "@/lib/receipt-png-cache";
 import { QuickSidebar } from "@/components/quick-sidebar";
@@ -1785,6 +1786,10 @@ export default function PosSystem() {
   }, [receiptPreviewHtml, showReceiptDialog]);
 
   useEffect(() => {
+    // Android: never create a staged iframe — any iframe in the DOM causes
+    // Android Chrome/WebView to recalculate the viewport to the iframe's
+    // narrow paper width, shrinking the entire POS UI.
+    if (isAndroidDevice) return;
     if (!showReceiptDialog || !receiptPreviewHtml) return;
     if (stagedPrintIframeRef.current) return;
 
@@ -1796,7 +1801,6 @@ export default function PosSystem() {
     iframe.addEventListener('load', () => { stagedPrintReadyRef.current = true; });
     const doc = iframe.contentDocument || iframe.contentWindow?.document;
     if (!doc) {
-      // Browser refused us a document — bail out gracefully; fallback path will be used.
       try { iframe.remove(); } catch {}
       return;
     }
@@ -1805,7 +1809,6 @@ export default function PosSystem() {
       doc.write(receiptPreviewHtml);
       doc.close();
       stagedPrintIframeRef.current = iframe;
-      // Mark ready once the document has fully parsed (covers browsers that don't fire load for srcdoc-less iframes)
       if (doc.readyState === 'complete') {
         stagedPrintReadyRef.current = true;
       } else {
@@ -1820,8 +1823,9 @@ export default function PosSystem() {
   }, [showReceiptDialog, receiptPreviewHtml]);
 
   // Helper: fast-path print only when staged iframe is truly ready & populated.
-  // NOTE: Do NOT call focus() before print — it causes UI freeze + viewport shrink in Chromium.
+  // Android always returns false — we use the no-iframe path (printTaxInvoice).
   const tryStagedPrint = (): boolean => {
+    if (isAndroidDevice) return false;
     const staged = stagedPrintIframeRef.current;
     if (!staged || !staged.contentWindow) return false;
     if (!stagedPrintReadyRef.current) return false;

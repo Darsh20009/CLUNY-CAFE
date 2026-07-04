@@ -4,7 +4,7 @@ import type { Order } from "@shared/schema";
 import { brand } from "@/lib/brand";
 import { useRef, useState, useEffect } from "react";
 import QRCode from "qrcode";
-import { fmtOrderNum } from "@/lib/print-utils";
+import { fmtOrderNum, printHtmlInPage, isAndroidDevice } from "@/lib/print-utils";
 import { useTranslate } from "@/lib/useTranslate";
 
 interface ReceiptInvoiceProps {
@@ -126,12 +126,17 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
 </style></head><body>${clone.outerHTML}</body></html>`;
   };
 
-  // ── Pre-rendered hidden print iframe — kept ready so the click handler
-  //    can call print() synchronously with zero perceived delay. ────────────
+  // ── Pre-rendered hidden print iframe — desktop/iOS only.
+  //    On Android we NEVER create a staged iframe because any iframe in the DOM
+  //    (even hidden at top:-9999px) causes Android Chrome/WebView to recalculate
+  //    the page viewport to match the iframe's narrow paper width, shrinking the
+  //    entire UI. Android uses window.print() via printHtmlInPage() instead.
   const printIframeRef = useRef<HTMLIFrameElement | null>(null);
   const [printReady, setPrintReady] = useState(false);
 
   useEffect(() => {
+    // Skip staged iframe on Android — we use the no-iframe path
+    if (isAndroidDevice) { setPrintReady(true); return; }
     // Wait until both QR codes are generated before staging the iframe
     if (!trackingQrUrl || !zatcaQrUrl || !invoiceRef.current) return;
     if (printIframeRef.current) return; // already staged
@@ -176,9 +181,7 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
       setPrintReady(true);
     })();
 
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackingQrUrl, zatcaQrUrl]);
 
@@ -190,17 +193,25 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
     };
   }, []);
 
-  // Synchronous print — uses the pre-staged iframe so the dialog opens
-  // immediately on click. Falls back to on-demand build if not ready yet.
+  // Print handler:
+  //   Android → no-iframe path via printHtmlInPage (avoids viewport shrinkage)
+  //   Desktop/iOS → staged iframe for zero-delay synchronous print
   const printReceipt = async (): Promise<void> => {
+    const html = buildPrintDoc();
+    if (!html) return;
+
+    // Android: inject into main document and call window.print() — no iframe
+    if (isAndroidDevice) {
+      printHtmlInPage(html, '80mm');
+      return;
+    }
+
+    // Desktop / iOS: use staged iframe if ready, else build on demand
     const staged = printIframeRef.current;
     if (staged && staged.contentWindow) {
       try { staged.contentWindow.focus(); staged.contentWindow.print(); } catch {}
       return;
     }
-    // Fallback: not staged yet — build & print on demand
-    const html = buildPrintDoc();
-    if (!html) return;
     const iframe = document.createElement("iframe");
     iframe.setAttribute("aria-hidden", "true");
     iframe.style.cssText =

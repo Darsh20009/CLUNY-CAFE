@@ -171,6 +171,8 @@ function _clearPrintWatchdog() {
 
 // Detect Android to apply Android-specific print fixes
 const _isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+/** Export for components that need to skip iframe creation on Android */
+export const isAndroidDevice = _isAndroid;
 
 // Arabic-compatible font stack — works without network (system fonts)
 const PRINT_FONT_STACK = "'Segoe UI', Tahoma, Arial, 'Helvetica Neue', sans-serif";

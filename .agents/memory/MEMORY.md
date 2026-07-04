@@ -1,2 +1,3 @@
 - [Reference migration](reference-migration.md) — migrating from reference ZIP (Black Rose) to CLUNY: brand.ts is single source of truth; mass sed for brand strings; @assets alias = attached_assets/ dir.
 - [VAT-inclusive financial calcs](vat-inclusive-financial-calcs.md) — order/menu totals are VAT-inclusive; always divide by (1+VAT_RATE) before comparing revenue to COGS in profit/margin math.
+- [Android print — no iframe rule](android-print-no-iframe.md) — ANY iframe in the DOM on Android WebView shrinks viewport; fix is zero iframes + window.print() via @media print injection.
