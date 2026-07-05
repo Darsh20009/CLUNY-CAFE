@@ -57,7 +57,6 @@ import {
   printHtmlInPage,
 } from "@/lib/print-utils";
 import { enableKioskLock } from "@/lib/kiosk-lock";
-import { preRenderReceiptPng } from "@/lib/receipt-png-cache";
 import { QuickSidebar } from "@/components/quick-sidebar";
 import QrPayModal from "@/components/qr-pay-modal";
 import { QrCode } from "lucide-react";
@@ -1643,28 +1642,15 @@ export default function PosSystem() {
         vatNumber: businessConfig?.vatNumber,
       });
 
-      // ── Pre-render receipt PNG immediately so print is instant when user clicks ──
-      preRenderReceiptPng({
-        orderNumber: orderNumForPrint,
-        createdAt: new Date().toISOString(),
-        tableNumber: orderType === "dine_in" ? tableNumber : undefined,
-        totalAmount: total,
-        paymentMethod: PAYMENT_METHOD_LABELS[paymentMethod] || paymentMethod,
-        employeeName: employee?.fullName || t('pos.employee_fallback'),
-        deliveryType: orderType,
-        orderType: orderType,
-        customerName,
-        customerPhone,
-        notes: orderNote || undefined,
-        items: orderItems.map(item => ({
-          nameAr: item.coffeeItem?.nameAr || '',
-          nameEn: item.coffeeItem?.nameEn || '',
-          quantity: item.quantity,
-          price: getPosItemUnitPrice(item),
-          selectedSize: item.selectedSize || undefined,
-          customization: item.customization,
-        })),
-      });
+      // NOTE: a receipt PNG pre-render step used to run here on every single
+      // order via html2canvas. Its output was never actually consumed
+      // anywhere in the app (dead code), and html2canvas internally creates
+      // a temporary iframe to clone the DOM for rendering — ANY iframe
+      // appearing in the DOM on Android WebView forces a viewport
+      // recalculation that visibly shrinks the whole POS screen for a
+      // moment. That is what caused "the screen shrinks right after
+      // completing a new order." Removed entirely — see
+      // .agents/memory/pos-html2canvas-iframe-shrink.md for details.
 
       setLastOrder({
         orderNumber: orderNumForPrint,
