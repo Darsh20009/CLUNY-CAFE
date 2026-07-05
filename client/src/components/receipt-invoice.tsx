@@ -236,6 +236,11 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
   useEffect(() => {
     if (variant !== "auto" || !(order?.id || order?.orderNumber)) return;
     if (!printReady) return;
+    // On Android the thermal printer already handled the customer receipt.
+    // Calling window.print() here would freeze the entire POS UI for the
+    // duration of the print job (synchronous blocking on Android WebView).
+    // Skip auto-print on Android — the user can press the Print button manually.
+    if (isAndroidDevice) return;
     const t = setTimeout(() => { printReceipt(); }, 50);
     return () => clearTimeout(t);
   }, [variant, order?.id, order?.orderNumber, printReady]);
