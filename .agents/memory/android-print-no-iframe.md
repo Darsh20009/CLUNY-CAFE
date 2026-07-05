@@ -1,9 +1,9 @@
 ---
 name: Android print — no iframe + no auto window.print() rule
-description: On Android WebView, iframes shrink viewport AND window.print() blocks the JS thread. Both are forbidden for auto-print paths.
+description: On Android WebView, iframes shrink viewport AND window.print() blocks the JS thread. Both are forbidden for auto-print paths. Popup windows containing iframes (window.open + srcdoc) are also unsafe on Android, even for manual/user-initiated preview flows.
 ---
 
-## Two separate Android print bugs
+## Three separate Android print bugs
 
 ### Bug 1 — Viewport shrink (iframes)
 Any hidden iframe in the DOM (even 1px, opacity:0) causes Android to recalculate viewport width, shrinking the entire app UI.
@@ -12,6 +12,10 @@ Any hidden iframe in the DOM (even 1px, opacity:0) causes Android to recalculate
 ### Bug 2 — UI freeze (window.print() on auto-print paths)
 `window.print()` on Android WebView is SYNCHRONOUS and blocks the JS thread entirely for 3-8 seconds.
 **Fix**: NEVER call `window.print()` from ANY auto-triggered print path on Android.
+
+### Bug 3 — Popup windows with iframes inside (preview windows)
+`window.open()` popups that inject iframes via `srcdoc` (e.g. side-by-side customer/kitchen receipt preview windows) are unreliable on Android WebView — the popup itself can render blank/frozen, independent of whether the print was auto or manual triggered.
+**Fix**: even for manual/user-initiated preview actions, skip the popup+iframe UI entirely on Android — print each receipt directly via `_printDirectAsync` (which internally routes through `_printAndroid()`, no iframe, no popup). Applies to `print-utils.ts`: `openReceiptPreviewWindow` and `printTaxInvoice`'s manual-preview (`shouldAutoPrint=false`) branch.
 
 ## Auto-print vs manual-print distinction (critical)
 

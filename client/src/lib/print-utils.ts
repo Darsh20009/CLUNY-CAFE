@@ -999,6 +999,19 @@ export async function openReceiptPreviewWindow(data: TaxInvoiceData): Promise<vo
   const kitchenHtml = buildEmployeeReceiptPreviewHtml(data);
   const orderNumDisplay = fmtOrderNum(data.orderNumber);
 
+  // ── Android: NEVER open a popup window with iframes ─────────────────────
+  // window.open() + iframes inside it are unreliable on Android WebView
+  // (blank/frozen popup, or the popup itself triggers the same viewport-shrink
+  // bug as a normal iframe). Print both receipts directly instead — this is a
+  // user-initiated action (preview button), so window.print() is acceptable,
+  // it just must go through the no-iframe _printAndroid() path.
+  if (_isAndroid) {
+    await _printDirectAsync(customerHtml, '80mm', true);
+    await new Promise(r => setTimeout(r, 300));
+    await _printDirectAsync(kitchenHtml, '80mm', true);
+    return;
+  }
+
   const win = window.open('', '_blank', 'width=900,height=900,scrollbars=yes,resizable=yes');
   if (!win) {
     // Popup blocked — fall back to printing both
@@ -1615,6 +1628,15 @@ export async function printTaxInvoice(data: TaxInvoiceData, config: PrintConfig 
       await new Promise(r => setTimeout(r, 150));
       await printOneHtml(employeeHtml);
     }
+  } else if (_isAndroid) {
+    // ── Android: NEVER open a popup window with iframes ────────────────────
+    // window.open() + iframes inside it are unreliable on Android WebView
+    // (blank/frozen popup, or the same viewport-shrink bug as a normal
+    // iframe). This is a user-initiated preview/print action, so printing
+    // both receipts directly (no popup) is the safe equivalent here.
+    await printOneHtml(customerHtml);
+    await new Promise(r => setTimeout(r, 300));
+    await printOneHtml(employeeHtml);
   } else {
     // Manual preview window — shows both receipts side by side
     const win = window.open('', '_blank', 'width=820,height=860,scrollbars=yes,resizable=yes');
