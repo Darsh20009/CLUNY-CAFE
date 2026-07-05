@@ -13,6 +13,18 @@ function fmtOrderNum(n: string | number): string {
   return `#${digits.padStart(4, '0')}`;
 }
 
+/**
+ * Hard-cap any hardware/driver promise (USB/BLE) so a stuck device.open(),
+ * gatt.connect(), or interface claim can NEVER freeze the UI indefinitely.
+ * Rejects with the given Arabic message if the promise doesn't settle in time.
+ */
+function _withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(message)), timeoutMs)),
+  ]);
+}
+
 const CMD = {
   INIT:          [ESC, 0x40],
   ALIGN_LEFT:    [ESC, 0x61, 0x00],
@@ -228,7 +240,7 @@ export async function reconnectSavedUSBPrinter(): Promise<USBDevice | null> {
       _usbLastError = 'الطابعة غير موجودة — تأكد من توصيل كابل USB وتشغيل الطابعة';
       return null;
     }
-    await _openDevice(device); // May throw if interface cannot be claimed
+    await _withTimeout(_openDevice(device), 6000, 'انتهت مهلة الاتصال بالطابعة USB — تحقق من توصيل الكابل'); // May throw if interface cannot be claimed
     _usbDevice = device;
     return device;
   } catch (e: any) {
@@ -348,7 +360,11 @@ async function _sendToUSB(data: Uint8Array): Promise<boolean> {
   // Helper: try transferOut on a specific endpoint, returns true on success
   const tryTransfer = async (epNum: number): Promise<boolean> => {
     try {
-      await _usbDevice!.transferOut(epNum, data as unknown as BufferSource);
+      await _withTimeout(
+        _usbDevice!.transferOut(epNum, data as unknown as BufferSource),
+        5000,
+        'انتهت مهلة إرسال البيانات إلى طابعة USB',
+      );
       return true;
     } catch {
       return false;
@@ -2362,8 +2378,8 @@ export async function connectBluetoothPrinter(): Promise<string> {
 
   if (!device.gatt) throw new Error('GATT غير متوفر لهذا الجهاز');
 
-  const server = await device.gatt.connect();
-  const characteristic = await _findWriteCharacteristic(server);
+  const server = await _withTimeout(device.gatt.connect(), 5000, 'انتهت مهلة الاتصال بطابعة البلوتوث');
+  const characteristic = await _withTimeout(_findWriteCharacteristic(server), 5000, 'انتهت مهلة البحث عن قناة الطباعة');
   if (!characteristic) throw new Error('لم يُعثر على طابعة BLE متوافقة — تأكد من دعم الطابعة لـ ESC/POS');
 
   _btDevice = device;
