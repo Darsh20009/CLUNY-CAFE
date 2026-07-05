@@ -973,40 +973,26 @@ export async function printReceiptSection(
       return; // thermal done ✓
     }
   } catch (e) {
-    console.warn('[printReceiptSection] Thermal error, falling back to browser:', e);
+    console.warn('[printReceiptSection] Thermal error:', e);
+    if (_isAndroid) {
+      window.dispatchEvent(new CustomEvent('qirox:print-error', {
+        detail: { error: 'فشل الاتصال بالطابعة — تحقق من إعدادات الطابعة الحرارية', mode: 'thermal' }
+      }));
+      return;
+    }
   }
 
   // ── Browser HTML fallback ─────────────────────────────────────────────────
-  // On Android, merge both receipts into a single window.print() call so the
-  // user only experiences one print freeze instead of two.
-  if (_isAndroid && section === 'both') {
-    const customerHtml = await buildReceiptPreviewHtml(data);
-    const kitchenHtml  = buildEmployeeReceiptPreviewHtml(data);
-    const extractBody   = (h: string) => (h.match(/<body[^>]*>([\s\S]*?)<\/body>/i) || ['', h])[1];
-    const extractStyles = (h: string) => {
-      const chunks: string[] = [];
-      h.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (_, css: string) => { chunks.push(css); return ''; });
-      return chunks.join('\n');
-    };
-    const mergedHtml = `<!DOCTYPE html><html lang="ar" dir="rtl"><head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<style>
-@page { size: 80mm auto; margin: 0; }
-* { box-sizing: border-box; }
-body { margin: 0; padding: 0; background: #fff; direction: rtl; font-family: 'Segoe UI', Tahoma, Arial, sans-serif; color: #000; }
-.print-page-break { page-break-after: always; break-after: page; }
-${extractStyles(customerHtml)}
-${extractStyles(kitchenHtml)}
-</style></head><body>
-<div class="print-page-break">${extractBody(customerHtml)}</div>
-<div>${extractBody(kitchenHtml)}</div>
-</body></html>`;
-    _printQueue.push({ html: mergedHtml, paperWidth: '80mm', isFullDoc: true });
-    _drainPrintQueue();
+  // On Android, window.print() blocks the UI thread entirely — never use it.
+  // If we reach here on Android it means thermal failed or is not configured.
+  if (_isAndroid) {
+    window.dispatchEvent(new CustomEvent('qirox:print-error', {
+      detail: { error: 'يرجى ضبط الطابعة الحرارية في إعدادات الطباعة', mode: 'browser' }
+    }));
     return;
   }
 
+  // Desktop / iOS: queue sequential prints
   if (section === 'customer' || section === 'both') {
     const customerHtml = await buildReceiptPreviewHtml(data);
     _printQueue.push({ html: customerHtml, paperWidth: '80mm', isFullDoc: true });
@@ -1595,6 +1581,14 @@ export async function printTaxInvoice(data: TaxInvoiceData, config: PrintConfig 
       }
     } catch (e) {
       console.warn('[PrintTaxInvoice] Thermal print error:', e);
+      // On Android, window.print() blocks the entire UI thread — NEVER use it
+      // as a fallback. Dispatch an error event so the POS can show a toast.
+      if (_isAndroid) {
+        window.dispatchEvent(new CustomEvent('qirox:print-error', {
+          detail: { error: 'فشل الاتصال بالطابعة — تحقق من إعدادات الطابعة الحرارية', mode: 'thermal' }
+        }));
+        return;
+      }
     }
   }
 
@@ -1608,42 +1602,25 @@ export async function printTaxInvoice(data: TaxInvoiceData, config: PrintConfig 
   const printOneHtml = (html: string): Promise<void> => _printDirectAsync(html, '80mm', true);
 
   if (shouldAutoPrint) {
+    // ── Android guard ────────────────────────────────────────────────────────
+    // window.print() on Android WebView blocks the JS thread synchronously,
+    // freezing the entire POS UI for the duration of the print job.
+    // All Android printing MUST go through the thermal ESC/POS path above.
+    // If we reach here on Android it means thermal failed or is not configured —
+    // dispatch an error instead of freezing the screen.
+    if (_isAndroid) {
+      window.dispatchEvent(new CustomEvent('qirox:print-error', {
+        detail: { error: 'يرجى ضبط الطابعة الحرارية في إعدادات الطباعة', mode: 'browser' }
+      }));
+      return;
+    }
+
     const { loadPrinterSettings } = await import('./thermal-printer');
     const ps = loadPrinterSettings();
     const customerCopies = Math.max(1, Math.min(5, ps.customerCopies || 1));
     const kitchenCopies  = ps.autoKitchenCopy ? Math.max(1, Math.min(5, ps.kitchenCopies || 1)) : 0;
 
-    // ── Android optimisation: merge both receipts into ONE window.print() ────
-    // Each window.print() on Android blocks the UI. By combining customer +
-    // kitchen receipts (separated by a CSS page-break) we fire print() once
-    // and the user sees only one freeze instead of two.
-    if (_isAndroid && kitchenCopies > 0 && customerCopies === 1) {
-      const extractBody = (h: string) =>
-        (h.match(/<body[^>]*>([\s\S]*?)<\/body>/i) || ['', h])[1];
-      const extractStyles = (h: string) => {
-        const chunks: string[] = [];
-        h.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (_, css: string) => { chunks.push(css); return ''; });
-        return chunks.join('\n');
-      };
-      const mergedHtml = `<!DOCTYPE html><html lang="ar" dir="rtl"><head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<style>
-@page { size: 80mm auto; margin: 0; }
-* { box-sizing: border-box; }
-body { margin: 0; padding: 0; background: #fff; direction: rtl; font-family: 'Segoe UI', Tahoma, Arial, sans-serif; color: #000; }
-.print-page-break { page-break-after: always; break-after: page; }
-${extractStyles(customerHtml)}
-${extractStyles(employeeHtml)}
-</style></head><body>
-<div class="print-page-break">${extractBody(customerHtml)}</div>
-<div>${extractBody(employeeHtml)}</div>
-</body></html>`;
-      await _printAndroid(mergedHtml);
-      return;
-    }
-
-    // Desktop / iOS (or multi-copy): print sequentially
+    // Desktop / iOS: print sequentially
     for (let i = 0; i < customerCopies; i++) {
       if (i > 0) await new Promise(r => setTimeout(r, 150));
       await printOneHtml(customerHtml);
