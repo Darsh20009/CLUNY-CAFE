@@ -137,3 +137,50 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
     }
   });
 }
+
+// ── Deploy-detection heartbeat (independent of the service worker) ─────────
+// sw.js only re-installs when ITS OWN file bytes change — an ordinary code
+// deploy (new POS/print fixes etc.) only changes the hashed JS/CSS bundle,
+// which never touches sw.js. That means the SW's controllerchange reload
+// above does NOT fire for most deploys. A POS tablet that stays open for
+// days would then silently keep running the OLD bundle forever, even though
+// the fix was shipped — this is a known trust-breaking failure mode for
+// always-on devices. This heartbeat detects a new build directly (by
+// comparing the hashed main script src referenced by the live index.html
+// against the one this page actually loaded) and force-reloads regardless
+// of service worker state.
+if (import.meta.env.PROD) {
+  const getCurrentBundleSrc = () =>
+    Array.from(document.scripts)
+      .map((s) => s.src)
+      .find((src) => /\/assets\/.*\.js(\?|$)/.test(src)) || null;
+
+  const currentBundleSrc = getCurrentBundleSrc();
+
+  let reloadScheduled = false;
+  const checkForNewDeploy = async () => {
+    if (reloadScheduled || !currentBundleSrc) return;
+    try {
+      const res = await fetch('/', { cache: 'no-store' });
+      if (!res.ok) return;
+      const html = await res.text();
+      const match = html.match(/src="(\/assets\/[^"]+\.js)"/);
+      const latestSrc = match?.[1];
+      if (latestSrc && !currentBundleSrc.endsWith(latestSrc)) {
+        reloadScheduled = true;
+        window.dispatchEvent(new CustomEvent('sw-update-available'));
+        // Give the cashier a brief window to notice/finish an in-flight tap,
+        // then reload automatically — this MUST self-heal without requiring
+        // anyone to remember to refresh the POS device.
+        setTimeout(() => window.location.reload(), 10_000);
+      }
+    } catch {
+      // Offline or request failed — try again on the next tick.
+    }
+  };
+
+  setInterval(checkForNewDeploy, 2 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkForNewDeploy();
+  });
+}
