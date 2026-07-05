@@ -162,7 +162,9 @@ export default function PrinterSettingsPanel() {
     setLoading(true);
     const s = await getPrinterStatus();
     setStatus(s);
-    setSettings(s.settings);
+    // Re-read settings fresh AFTER the async call so any concurrent
+    // updateSetting() calls made while awaiting aren't overwritten.
+    setSettings(loadPrinterSettings());
     setLoading(false);
   }
 

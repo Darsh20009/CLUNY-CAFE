@@ -906,6 +906,10 @@ export async function printReceiptSection(
       const receiptProfiles = getProfilesForRole('receipt');
       const kitchenProfiles = getProfilesForRole('kitchen');
 
+      // Track whether thermal printing actually succeeded so we can fall
+      // back to browser printing if it fails silently (success: false without throw).
+      let thermalSucceeded = false;
+
       // ── Customer copy — Canvas 2D bitmap (instant, same engine as kitchen tickets) ──
       if (section === 'customer' || section === 'both') {
         const escData = await _buildFastCustomerEscPos(data, orderTypeThermal, ps.paperWidth as '58mm' | '80mm', ps.feedLines ?? 4);
@@ -914,8 +918,10 @@ export async function printReceiptSection(
           for (const profile of receiptProfiles) {
             await thermalPrintWithProfile(escData, profile);
           }
+          thermalSucceeded = true;
         } else {
-          await thermalPrint(escData, '', ps.paperWidth);
+          const r = await thermalPrint(escData, '', ps.paperWidth);
+          if (r.success) thermalSucceeded = true;
         }
       }
 
@@ -944,12 +950,15 @@ export async function printReceiptSection(
           for (const profile of kitchenProfiles) {
             await thermalPrintWithProfile(kitchenEsc, profile);
           }
+          thermalSucceeded = true;
         } else {
-          await thermalPrint(kitchenEsc, '', ps.paperWidth);
+          const r = await thermalPrint(kitchenEsc, '', ps.paperWidth);
+          if (r.success) thermalSucceeded = true;
         }
       }
 
-      return; // thermal done ✓
+      // Only skip browser fallback when thermal actually worked
+      if (thermalSucceeded) return;
     }
   } catch (e) {
     console.warn('[printReceiptSection] Thermal error, falling back to browser:', e);
