@@ -6,3 +6,9 @@ id = "1TFKeEAKKewGsoPi2wIgT"
 uri = "file://apple-domain-association-upload-to-cpanel.txt"
 type = "text"
 title = "ارفع هذا الملف على cPanel (بدون امتداد .txt)"
+
+[[outputs]]
+id = "baWuX8V7Er22pL8jUXU5i"
+uri = "file://attached_assets/pos-and-print-files.zip"
+type = "unspecified"
+title = "POS & Print Files - للمشاركة"
