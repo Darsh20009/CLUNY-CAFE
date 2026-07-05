@@ -56,6 +56,7 @@ import {
   isAndroidDevice,
   printHtmlInPage,
 } from "@/lib/print-utils";
+import { enableKioskLock } from "@/lib/kiosk-lock";
 import { preRenderReceiptPng } from "@/lib/receipt-png-cache";
 import { QuickSidebar } from "@/components/quick-sidebar";
 import QrPayModal from "@/components/qr-pay-modal";
@@ -391,6 +392,15 @@ export default function PosSystem() {
   useEffect(() => {
     localStorage.setItem("pos-terminal-connected", String(posTerminalConnected));
   }, [posTerminalConnected]);
+
+  // Kiosk lock: keeps the POS in fullscreen and re-asserts it whenever an OS
+  // gesture (e.g. Android's edge-swipe "recent apps" preview) briefly kicks
+  // the page out — this is what causes the screen to appear to "shrink into
+  // a corner" for a moment and then snap back; it is a system-level gesture,
+  // not a POS rendering bug, so it cannot be fixed by changing page layout.
+  useEffect(() => {
+    return enableKioskLock();
+  }, []);
 
   // Close category dropdown when clicking outside
   useEffect(() => {
