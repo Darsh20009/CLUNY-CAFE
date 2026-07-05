@@ -4075,9 +4075,38 @@ export default function PosSystem() {
                   </div>
                 )}
 
-                {/* ── New-design receipt iframe ── */}
+                {/* ── Receipt preview ── */}
+                {/* Android: NO iframe — any iframe in DOM shrinks entire viewport on WebView */}
                 <div className="flex-1 overflow-y-auto bg-[#e0ddd8]" data-testid="text-receipt-order-number">
-                  {receiptPreviewHtml ? (
+                  {isAndroidDevice ? (
+                    /* Android: show a simple order summary card — no iframe */
+                    <div className="flex flex-col items-center justify-center gap-4 py-8 px-4 text-center" dir="rtl">
+                      <CheckCircle className="w-12 h-12 text-green-500" />
+                      <div>
+                        <p className="text-lg font-bold text-foreground">{lastOrder?.orderNumber}</p>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          {tc('اضغط زر الطباعة لطباعة الفاتورة', 'Tap the print button to print the receipt')}
+                        </p>
+                      </div>
+                      {lastOrder && (
+                        <div className="w-full bg-background rounded-xl border border-border p-4 text-right space-y-2">
+                          {lastOrder.items?.slice(0, 5).map((item: any, i: number) => (
+                            <div key={i} className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">{item.quantity}×</span>
+                              <span className="flex-1 text-right mr-2">{item.coffeeItem?.nameAr || item.name}</span>
+                            </div>
+                          ))}
+                          {(lastOrder.items?.length ?? 0) > 5 && (
+                            <p className="text-xs text-muted-foreground text-center">+{lastOrder.items.length - 5} {tc('منتجات أخرى', 'more items')}</p>
+                          )}
+                          <div className="border-t border-border pt-2 flex justify-between font-bold text-base">
+                            <span>{tc('الإجمالي', 'Total')}</span>
+                            <span>{Number(lastOrder.total || 0).toFixed(2)} {tc('ر.س', 'SAR')}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : receiptPreviewHtml ? (
                     <iframe
                       srcDoc={receiptPreviewHtml}
                       title="customer-receipt"
