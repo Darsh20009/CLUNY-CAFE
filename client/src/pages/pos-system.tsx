@@ -1841,7 +1841,7 @@ export default function PosSystem() {
     }
   };
 
-  const handlePrintReceipt = () => {
+  const handlePrintReceipt = async () => {
     const data = buildLastOrderInvoiceData();
     if (!data) return;
     const ps = loadPrinterSettings();
@@ -1852,7 +1852,14 @@ export default function PosSystem() {
     }
     // Fast path: if we have a staged iframe truly ready, print synchronously
     if (tryStagedPrint()) return;
-    // Fallback to full thermal/HTML pipeline
+    // Android: build HTML and call printHtmlInPage directly — user pressed the
+    // button intentionally so window.print() is acceptable here (not auto-print).
+    if (isAndroidDevice) {
+      const html = await buildReceiptPreviewHtml(data);
+      printHtmlInPage(html, '80mm');
+      return;
+    }
+    // Desktop / iOS fallback
     printTaxInvoice(data, { autoPrint: true });
   };
 

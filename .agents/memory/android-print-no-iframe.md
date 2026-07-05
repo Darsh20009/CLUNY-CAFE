@@ -1,27 +1,46 @@
 ---
-name: Android print — no iframe rule
-description: On Android WebView/Chrome, any hidden iframe in the DOM (even at top:-9999px) causes viewport recalculation that shrinks the entire app UI.
+name: Android print — no iframe + no auto window.print() rule
+description: On Android WebView, iframes shrink viewport AND window.print() blocks the JS thread. Both are forbidden for auto-print paths.
 ---
 
-## Rule
-On Android, NEVER create an iframe for printing — not hidden, not off-screen, not tiny. Even a 1px iframe with `opacity:0` is enough to trigger the bug.
+## Two separate Android print bugs
 
-## Why
-Android Chrome/WebView measures ALL iframes in the DOM to calculate the page's minimum viewport width. A 302px-wide iframe (80mm paper) tells Android the page should be ~302px wide, so it zooms/shrinks the entire UI to match.
+### Bug 1 — Viewport shrink (iframes)
+Any hidden iframe in the DOM (even 1px, opacity:0) causes Android to recalculate viewport width, shrinking the entire app UI.
+**Fix**: NEVER create an iframe on Android. Use `_printAndroid()` (inject into main DOM, @media print CSS).
 
-## The Fix (implemented in this codebase)
-1. **`_printAndroid()` in `print-utils.ts`**: Parses fullHtml, injects body content as a hidden `<div>` in the main document, uses `@media print` CSS to show only that div, calls `window.print()` on the parent window. Zero iframes.
-2. **`_printDirectAsync()`**: Routes to `_printAndroid()` when `_isAndroid` is true; desktop/iOS still use the hidden iframe path.
-3. **`receipt-invoice.tsx`**: Skips staged iframe creation on Android (`isAndroidDevice` guard); `printReceipt()` calls `printHtmlInPage()` instead.
-4. **`pos-system.tsx`**: Skips staged iframe creation on Android (`isAndroidDevice` guard); `tryStagedPrint()` returns false on Android.
-5. **`_printCanvasImage()`**: Routes to `_printAndroid()` on Android.
+### Bug 2 — UI freeze (window.print() on auto-print paths)
+`window.print()` on Android WebView is SYNCHRONOUS and blocks the JS thread entirely for 3-8 seconds.
+**Fix**: NEVER call `window.print()` from ANY auto-triggered print path on Android.
 
-## There were THREE sources of iframes — all must be guarded
-- `_printDirectAsync` (central queue engine)
-- `receipt-invoice.tsx` staged iframe (pre-staged for fast sync click)
-- `pos-system.tsx` staged iframe (pre-staged when receipt dialog opens)
+## Auto-print vs manual-print distinction (critical)
 
-Fixing only one source leaves the others still shrinking the viewport.
+- **Auto-print** = triggered without user gesture (after payment, online order arrival, etc.)
+  → `window.print()` is FORBIDDEN on Android. Dispatch `qirox:print-error` event instead.
+- **Manual-print** = user explicitly pressed a print button
+  → `window.print()` is acceptable (user consciously triggered it).
+
+## Where the Android guards live (definitive map)
+
+| Location | Type | Guard |
+|---|---|---|
+| `receipt-invoice.tsx` useEffect (variant="auto") | auto | `if (isAndroidDevice) return;` AFTER thermalConfigured check |
+| `printTaxInvoice` thermal catch block | auto | dispatches error event + returns on Android |
+| `printTaxInvoice` shouldAutoPrint browser fallback | auto | `if (_isAndroid)` dispatches error + returns |
+| `printReceiptSection` browser fallback | manual only | NO Android guard — user initiated |
+| `handlePrintReceipt` (pos-system.tsx) | manual | uses `buildReceiptPreviewHtml` + `printHtmlInPage` on Android without thermal |
+
+## Key insight: printReceiptSection is manual-only
+`printReceiptSection` is ONLY called from user-initiated button handlers.
+Do NOT add Android guards to its browser fallback — it would block legitimate user prints.
+Auto-print goes through `printTaxInvoice(data, { autoPrint: true })`, not `printReceiptSection`.
+
+## The three iframe sources (all guarded)
+- `_printDirectAsync` → routes to `_printAndroid()` on Android
+- `receipt-invoice.tsx` staged iframe → skipped on Android
+- `pos-system.tsx` staged iframe → `tryStagedPrint()` returns false on Android
 
 ## How to apply
-Any new print feature that creates an iframe must check `isAndroidDevice` (exported from `print-utils.ts`) and route to `printHtmlInPage()` or `_printAndroid()` instead.
+- New auto-print feature → add `if (_isAndroid) { dispatch error; return; }` before any `window.print()`
+- New manual print button → use `printHtmlInPage()` directly on Android (no iframe), allow brief freeze
+- New print function → check if it can be called from auto-print path; if yes, add Android guard

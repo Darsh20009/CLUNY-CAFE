@@ -251,6 +251,12 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
       } catch { return false; }
     })();
     if (thermalConfigured) return;
+    // On Android WebView, window.print() blocks the entire JS thread
+    // synchronously — NEVER call it automatically. The thermal printer is
+    // the only non-blocking print path on Android.  If thermal is not
+    // configured, the cashier must press the print button manually or
+    // configure a thermal printer in settings.
+    if (isAndroidDevice) return;
     const t = setTimeout(() => { printReceipt(); }, 50);
     return () => clearTimeout(t);
   }, [variant, order?.id, order?.orderNumber, printReady]);

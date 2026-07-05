@@ -973,26 +973,12 @@ export async function printReceiptSection(
       return; // thermal done ✓
     }
   } catch (e) {
-    console.warn('[printReceiptSection] Thermal error:', e);
-    if (_isAndroid) {
-      window.dispatchEvent(new CustomEvent('qirox:print-error', {
-        detail: { error: 'فشل الاتصال بالطابعة — تحقق من إعدادات الطابعة الحرارية', mode: 'thermal' }
-      }));
-      return;
-    }
+    console.warn('[printReceiptSection] Thermal error, falling back to browser:', e);
   }
 
   // ── Browser HTML fallback ─────────────────────────────────────────────────
-  // On Android, window.print() blocks the UI thread entirely — never use it.
-  // If we reach here on Android it means thermal failed or is not configured.
-  if (_isAndroid) {
-    window.dispatchEvent(new CustomEvent('qirox:print-error', {
-      detail: { error: 'يرجى ضبط الطابعة الحرارية في إعدادات الطباعة', mode: 'browser' }
-    }));
-    return;
-  }
-
-  // Desktop / iOS: queue sequential prints
+  // printReceiptSection is only called from user-initiated button presses,
+  // never from auto-print. Browser print is acceptable here (user accepted it).
   if (section === 'customer' || section === 'both') {
     const customerHtml = await buildReceiptPreviewHtml(data);
     _printQueue.push({ html: customerHtml, paperWidth: '80mm', isFullDoc: true });
