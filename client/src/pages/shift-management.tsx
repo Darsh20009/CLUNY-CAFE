@@ -825,28 +825,22 @@ export default function ShiftManagement() {
     CLUNY SYSTEMS — ${new Date().toLocaleString('ar-SA')}
   </div>
 </div>`;
-    const win = window.open('', '_blank', 'width=400,height=700');
-    if (!win) { alert('يرجى السماح بالنوافذ المنبثقة لطباعة التقرير'); return; }
-    win.document.write(`<!DOCTYPE html><html lang="ar"><head><meta charset="UTF-8">
+    // MANDATORY: printing must always happen silently in the background —
+    // never open a popup window or visible print dialog around the POS/kiosk screen.
+    const fullHtml = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>تقرير Z — ${shift.shiftNumber}</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'Cairo', Arial, sans-serif; font-size: 13px; direction: rtl; color: #000; background: #fff; padding: 16px; max-width: 320px; margin: 0 auto; }
   @media print {
     body { max-width: 100%; padding: 4px; font-size: 12px; }
-    .no-print { display: none !important; }
     @page { margin: 6mm; size: 80mm auto; }
   }
 </style></head><body>
 ${html}
-<div class="no-print" style="margin-top:20px;text-align:center;display:flex;gap:8px;justify-content:center;">
-  <button onclick="window.print()" style="background:#2D9B6E;color:#fff;border:none;padding:10px 28px;border-radius:8px;font-size:14px;font-family:Cairo,Arial,sans-serif;font-weight:bold;cursor:pointer;">طباعة / حفظ PDF</button>
-  <button onclick="window.close()" style="background:#eee;color:#333;border:none;padding:10px 20px;border-radius:8px;font-size:14px;font-family:Cairo,Arial,sans-serif;cursor:pointer;">إغلاق</button>
-</div>
-</body></html>`);
-    win.document.close();
-    setTimeout(() => { try { win.focus(); } catch(_) {} }, 300);
+</body></html>`;
+    printHtmlInPage(fullHtml, '80mm');
   }, []);
 
   if (loadingShift) {

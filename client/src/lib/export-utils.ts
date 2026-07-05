@@ -2,6 +2,7 @@
  * Export utility functions for CSV and PDF exports
  */
 import { brand } from "./brand";
+import { printHtmlInPage } from "./print-utils";
 
 /**
  * Sanitize data for export by removing MongoDB internal fields
@@ -149,17 +150,9 @@ export function exportToPDF(
     </html>
   `;
 
-  const printWindow = window.open("", "", "height=400,width=800");
-  if (printWindow) {
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
-    printWindow.print();
-
-    // Save as PDF by opening print dialog
-    setTimeout(() => {
-      printWindow.close();
-    }, 250);
-  }
+  // MANDATORY: printing must always happen silently in the background —
+  // never open a popup window or visible print dialog around the POS/kiosk screen.
+  printHtmlInPage(htmlContent, '80mm');
 }
 
 export function exportOrdersToCSV(orders: any[], filename: string = "orders.csv") {

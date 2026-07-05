@@ -2,6 +2,7 @@ import { useState, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { getQueryFn } from "@/lib/queryClient";
+import { printHtmlInPage } from "@/lib/print-utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -98,12 +99,12 @@ function ProductDetailView({ itemId, year, onBack }: { itemId: string; year: num
 
   const handlePrint = () => {
     if (!printRef.current || !data) return;
-    const printWin = window.open("", "_blank", "width=900,height=700");
-    if (!printWin) return;
     const content = printRef.current.innerHTML;
-    printWin.document.write(`
+    // MANDATORY: printing must always happen silently in the background —
+    // never open a popup window or visible print dialog around the POS/kiosk screen.
+    const html = `
       <!DOCTYPE html><html dir="rtl" lang="ar">
-      <head><meta charset="UTF-8"><title>تقرير منتج - ${data.item.nameAr}</title>
+      <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>تقرير منتج - ${data.item.nameAr}</title>
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: 'Cairo', 'Arial', sans-serif; direction: rtl; background: #fff; color: #111; padding: 24px; }
@@ -121,14 +122,9 @@ function ProductDetailView({ itemId, year, onBack }: { itemId: string; year: num
         tr:nth-child(even) td { background: #f9fafb; }
         .badge-zero { background: #fef2f2; color: #ef4444; border-radius: 6px; padding: 2px 8px; font-size: 11px; }
         .badge-ok { background: #f0fdf4; color: #16a34a; border-radius: 6px; padding: 2px 8px; font-size: 11px; }
-        @media print {
-          body { padding: 10px; }
-          .no-print { display: none !important; }
-        }
       </style></head>
-      <body>${content}</body></html>`);
-    printWin.document.close();
-    setTimeout(() => { printWin.print(); printWin.close(); }, 500);
+      <body>${content}</body></html>`;
+    printHtmlInPage(html, '80mm');
   };
 
   if (isLoading) return (

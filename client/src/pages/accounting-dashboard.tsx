@@ -1,5 +1,6 @@
 import { useTranslate, tc } from "@/lib/useTranslate";
 import { PlanGate } from "@/components/plan-gate";
+import { printHtmlInPage } from "@/lib/print-utils";
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -450,11 +451,6 @@ export default function AccountingDashboardPage() {
 
   const exportToPDF = (title: string, data: any) => {
     try {
-      const printWindow = window.open('', '_blank');
-      if (!printWindow) {
-        toast({ title: tc('فشل التصدير', 'Export failed'), variant: 'destructive' });
-        return;
-      }
       let rows = '';
       if (data.summary) {
         rows += `<tr><td>إجمالي الإيرادات</td><td>${data.summary.totalRevenue?.toFixed(2) || 0} ر.س</td></tr>`;
@@ -463,9 +459,11 @@ export default function AccountingDashboardPage() {
         rows += `<tr><td>صافي الربح</td><td>${data.summary.netProfit?.toFixed(2) || 0} ر.س</td></tr>`;
         rows += `<tr><td>هامش الربح</td><td>${data.summary.profitMargin?.toFixed(1) || 0}%</td></tr>`;
       }
-      printWindow.document.write(`<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Arial,sans-serif;padding:20px;direction:rtl}h1{text-align:center}table{width:100%;border-collapse:collapse}td,th{border:1px solid #ccc;padding:8px;text-align:right}@media print{button{display:none}}</style></head><body><h1>${title}</h1><p style="text-align:center">الفترة: ${periodLabels[period]} | التاريخ: ${format(new Date(), 'yyyy/MM/dd')}</p><table><tbody>${rows}</tbody></table><br><button onclick="window.print()">طباعة / حفظ PDF</button></body></html>`);
-      printWindow.document.close();
-      toast({ title: tc('تم تصدير التقرير بنجاح', 'Report exported successfully'), description: 'تم فتح نافذة الطباعة' });
+      // MANDATORY: printing must always happen silently in the background —
+      // never open a popup window or visible print dialog around the POS/kiosk screen.
+      const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>${title}</title><style>body{font-family:Arial,sans-serif;padding:20px;direction:rtl}h1{text-align:center}table{width:100%;border-collapse:collapse}td,th{border:1px solid #ccc;padding:8px;text-align:right}</style></head><body><h1>${title}</h1><p style="text-align:center">الفترة: ${periodLabels[period]} | التاريخ: ${format(new Date(), 'yyyy/MM/dd')}</p><table><tbody>${rows}</tbody></table></body></html>`;
+      printHtmlInPage(html, '80mm');
+      toast({ title: tc('تم تصدير التقرير بنجاح', 'Report exported successfully'), description: 'تتم الطباعة في الخلفية' });
     } catch {
       toast({ title: tc('فشل التصدير', 'Export failed'), variant: 'destructive' });
     }
@@ -1259,12 +1257,11 @@ export default function AccountingDashboardPage() {
                           variant="outline" 
                           size="sm"
                           onClick={() => {
-                            const printWin = window.open('', '_blank', 'width=800,height=600');
-                            if (printWin) {
-                              printWin.document.write(`<html><head><title>تقرير المحاسبة</title><style>body{font-family:Arial,sans-serif;padding:20px}@media print{button{display:none}}</style></head><body>${document.querySelector('.accounting-report-content')?.innerHTML || document.body.innerHTML}</body></html>`);
-                              printWin.document.close();
-                              setTimeout(() => { printWin.print(); printWin.close(); }, 500);
-                            }
+                            // MANDATORY: printing must always happen silently in the
+                            // background — never open a popup window or visible
+                            // print dialog around the POS/kiosk screen.
+                            const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"><title>تقرير المحاسبة</title><style>body{font-family:Arial,sans-serif;padding:20px}</style></head><body>${document.querySelector('.accounting-report-content')?.innerHTML || document.body.innerHTML}</body></html>`;
+                            printHtmlInPage(html, '80mm');
                           }}
                           className="border-blue-500 text-blue-700 hover:bg-blue-50"
                         >
