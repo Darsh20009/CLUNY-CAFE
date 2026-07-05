@@ -1,7 +1,11 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
   <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5, user-scalable=yes" />
+    <!-- POS/kiosk devices must NEVER allow pinch-zoom: a busy cashier's accidental
+         multi-touch (resting hand, fast double-tap) can zoom the page out and there
+         is no on-screen "reset zoom" control on Android, leaving the whole UI
+         stuck shrunk into a corner until the tab is manually reloaded. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
     <!-- Primary Meta Tags -->
     <title>CLUNY CAFE | أفضل تجربة قهوة رقمية</title>
     <meta name="title" content="CLUNY CAFE | أفضل تجربة قهوة رقمية">

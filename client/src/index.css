@@ -16,6 +16,15 @@ html, body {
   text-size-adjust: 100%;
 }
 
+/* POS/kiosk hardening: block pinch-zoom and double-tap-zoom at the CSS layer
+   too, as a second line of defense — some Android WebViews are inconsistent
+   about honoring the <meta viewport> user-scalable=no directive alone. A
+   stray pinch gesture during a busy shift must never be able to zoom the
+   whole POS UI out and strand it scrolled into a corner. */
+html, body, #root {
+  touch-action: pan-x pan-y;
+}
+
 html {
   height: 100%;
 }

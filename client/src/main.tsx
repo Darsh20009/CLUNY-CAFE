@@ -73,6 +73,37 @@ const CLIENT_RESET_VERSION = "2026-04-21-v2-logo";
   } catch {}
 })();
 
+// ── Kiosk zoom-lock safety net ──────────────────────────────────────────────
+// This is a POS/kiosk app, not a content site — pinch-zoom must never be
+// possible. The <meta viewport user-scalable=no> tag and the CSS
+// touch-action rule cover almost all cases, but some Android WebViews still
+// let a fast multi-touch (a resting hand, two accidental taps) slip through
+// and zoom the page out. When that happens there is no visible "reset zoom"
+// control on Android, so the whole POS UI stays stuck shrunk into a corner
+// until someone force-reloads the tab — this is the exact "screen shrinks"
+// bug that kept recurring regardless of any print-flow fix, because it has
+// nothing to do with printing at all.
+// Fix: actively watch the live zoom level via the visualViewport API and
+// force it back to 1 the instant it drifts, on every device (not just
+// Android) as defense in depth.
+if (window.visualViewport) {
+  const resetZoomIfDrifted = () => {
+    const vv = window.visualViewport!;
+    if (Math.abs(vv.scale - 1) > 0.01) {
+      const meta = document.querySelector('meta[name="viewport"]');
+      if (meta) {
+        const content = meta.getAttribute('content') || '';
+        // Toggling the content attribute forces WebKit/Chromium to
+        // re-apply the viewport constraints immediately.
+        meta.setAttribute('content', content + ',');
+        requestAnimationFrame(() => meta.setAttribute('content', content));
+      }
+    }
+  };
+  window.visualViewport.addEventListener('resize', resetZoomIfDrifted);
+  window.visualViewport.addEventListener('scroll', resetZoomIfDrifted);
+}
+
 // Apply brand colors from the central brand config to CSS variables
 applyBrandColors();
 
