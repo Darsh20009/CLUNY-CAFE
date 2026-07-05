@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useTranslate } from "@/lib/useTranslate";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
+import { ShadowHtml } from "@/components/shadow-html";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useRealtimeEvent, useRealtimeStatus, useRealtimeSend } from "@/hooks/useRealtimeEngine";
@@ -53,6 +54,7 @@ import {
   openReceiptPreviewWindow,
   prewarmZatcaQr,
   isAndroidDevice,
+  printHtmlInPage,
 } from "@/lib/print-utils";
 import { preRenderReceiptPng } from "@/lib/receipt-png-cache";
 import { QuickSidebar } from "@/components/quick-sidebar";
@@ -4107,12 +4109,10 @@ export default function PosSystem() {
                       )}
                     </div>
                   ) : receiptPreviewHtml ? (
-                    <iframe
-                      srcDoc={receiptPreviewHtml}
-                      title="customer-receipt"
-                      className="w-full border-0"
-                      style={{ height: '580px', minHeight: '400px' }}
-                      sandbox="allow-same-origin"
+                    <ShadowHtml
+                      html={receiptPreviewHtml}
+                      className="w-full block"
+                      style={{ height: '580px', minHeight: '400px', overflow: 'auto' }}
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground">
@@ -4310,21 +4310,17 @@ export default function PosSystem() {
             </div>
             <div className="flex-1 overflow-y-auto bg-[#f5f5f0]">
               {previewTab === 'customer' && receiptPreviewHtml && (
-                <iframe
-                  srcDoc={receiptPreviewHtml}
-                  title="receipt-preview-customer"
-                  className="w-full border-0"
-                  style={{ height: '700px', minHeight: '500px' }}
-                  sandbox="allow-same-origin"
+                <ShadowHtml
+                  html={receiptPreviewHtml}
+                  className="w-full block"
+                  style={{ height: '700px', minHeight: '500px', overflow: 'auto' }}
                 />
               )}
               {previewTab === 'employee' && employeeReceiptPreviewHtml && (
-                <iframe
-                  srcDoc={employeeReceiptPreviewHtml}
-                  title="receipt-preview-employee"
-                  className="w-full border-0"
-                  style={{ height: '700px', minHeight: '500px' }}
-                  sandbox="allow-same-origin"
+                <ShadowHtml
+                  html={employeeReceiptPreviewHtml}
+                  className="w-full block"
+                  style={{ height: '700px', minHeight: '500px', overflow: 'auto' }}
                 />
               )}
             </div>
