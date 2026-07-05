@@ -404,39 +404,18 @@ function _printInPopup(win: Window | null, html: string, delayMs: number): void 
 }
 
 function openPrintWindow(html: string, _title: string, config: PrintConfig = {}): Window | null {
-  const { paperWidth = '80mm', autoPrint = true, showPrintButton = true } = config;
+  const { paperWidth = '80mm' } = config;
 
-  if (autoPrint) {
-    // Determine if the provided HTML is a full document or a fragment
-    const isFullDoc = /<html[\s>]/i.test(html);
-    _printQueue.push({ html, paperWidth, isFullDoc });
-    _drainPrintQueue();
-    return null;
-  }
-
-  // autoPrint = false → open a popup window with a print button
-  const dynamicStyles = `<style>
-    @media print { @page { size: ${paperWidth} auto; margin: 0; } body { margin: 0; } .no-print { display: none !important; } }
-  </style>`;
-  let modifiedHtml = html.replace('</head>', `${dynamicStyles}</head>`);
-
-  const printButtonHtml = showPrintButton ? `
-    <div class="no-print" style="text-align:center;margin-top:20px;padding:20px;">
-      <button onclick="window.print()" style="padding:12px 32px;font-size:16px;background:#b45309;color:#fff;border:none;border-radius:8px;cursor:pointer;margin-left:10px;">طباعة</button>
-      <button onclick="window.close()" style="padding:12px 32px;font-size:16px;background:#6b7280;color:#fff;border:none;border-radius:8px;cursor:pointer;">إغلاق</button>
-    </div>` : '';
-
-  if (showPrintButton && !modifiedHtml.includes('<div class="no-print"')) {
-    modifiedHtml = modifiedHtml.replace('</body>', `${printButtonHtml}</body>`);
-  }
-
-  const printWindow = window.open('', '_blank', 'width=450,height=700,scrollbars=yes,resizable=yes');
-  if (printWindow) {
-    printWindow.document.write(modifiedHtml);
-    printWindow.document.close();
-    printWindow.document.title = _title;
-  }
-  return printWindow;
+  // MANDATORY on every platform: printing must always happen in the
+  // background via the print queue. A popup-window print path (with a
+  // "طباعة" button) used to exist for autoPrint=false callers, but a popup
+  // is exactly the kind of "something opens around the screen" behavior
+  // that must never happen on a POS/kiosk device — so this now always
+  // takes the background queue path regardless of the autoPrint flag.
+  const isFullDoc = /<html[\s>]/i.test(html);
+  _printQueue.push({ html, paperWidth, isFullDoc });
+  _drainPrintQueue();
+  return null;
 }
 
 // Export for direct use from manual print buttons (user gesture context)
@@ -997,110 +976,17 @@ export async function printReceiptSection(
 export async function openReceiptPreviewWindow(data: TaxInvoiceData): Promise<void> {
   const customerHtml = await buildReceiptPreviewHtml(data);
   const kitchenHtml = buildEmployeeReceiptPreviewHtml(data);
-  const orderNumDisplay = fmtOrderNum(data.orderNumber);
 
-  // ── Android: NEVER open a popup window with iframes ─────────────────────
-  // window.open() + iframes inside it are unreliable on Android WebView
-  // (blank/frozen popup, or the popup itself triggers the same viewport-shrink
-  // bug as a normal iframe). Print both receipts directly instead — this is a
-  // user-initiated action (preview button), so window.print() is acceptable,
-  // it just must go through the no-iframe _printAndroid() path.
-  if (_isAndroid) {
-    await _printDirectAsync(customerHtml, '80mm', true);
-    await new Promise(r => setTimeout(r, 300));
-    await _printDirectAsync(kitchenHtml, '80mm', true);
-    return;
-  }
-
-  const win = window.open('', '_blank', 'width=900,height=900,scrollbars=yes,resizable=yes');
-  if (!win) {
-    // Popup blocked — fall back to printing both
-    await printReceiptSection(data, 'both');
-    return;
-  }
-  // HTML-escape the order number for safe interpolation in the static shell.
-  const safeOrderNum = String(orderNumDisplay).replace(/[&<>"']/g, c => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string
-  ));
-
-  // Static shell — contains ZERO untrusted data. Receipt HTML is injected
-  // into iframe `srcdoc` from the opener side (no inline script needed).
-  const wrapperHtml = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
-<title>معاينة فواتير الطلب #${safeOrderNum}</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0;}
-  body{font-family:'Cairo',Tahoma,Arial,sans-serif;background:#e8e8e8;padding:18px;text-align:center;color:#222;}
-  .topbar{margin-bottom:18px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;align-items:center;}
-  h2{font-size:18px;font-weight:900;margin-left:auto;margin-right:auto;color:#111;}
-  .btn{padding:11px 22px;font-size:13px;border:none;border-radius:10px;cursor:pointer;font-weight:800;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(0,0,0,.1);}
-  .btn-cust{background:#1e40af;color:#fff;}
-  .btn-kit{background:#b45309;color:#fff;}
-  .btn-both{background:#111;color:#fff;}
-  .btn-close{background:#6b7280;color:#fff;}
-  .frames{display:flex;gap:24px;flex-wrap:wrap;justify-content:center;align-items:flex-start;}
-  .col{display:flex;flex-direction:column;align-items:center;gap:10px;}
-  .label{font-size:13px;font-weight:800;color:#222;background:#fff;padding:6px 18px;border-radius:20px;border:2px solid #ccc;}
-  iframe{border:none;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.18);background:#fff;}
-  @media print{
-    body{background:#fff;padding:0;}
-    .topbar,.label{display:none!important;}
-    .frames{display:block;}
-    .col{display:block;page-break-after:always;}
-    .col:last-child{page-break-after:auto;}
-    iframe{box-shadow:none;border-radius:0;width:80mm!important;height:auto!important;}
-    @page{size:80mm auto;margin:0;}
-  }
-</style></head><body>
-<div class="topbar">
-  <h2>📄 معاينة فواتير الطلب #${safeOrderNum}</h2>
-  <button class="btn btn-cust" id="btn-cust">🖨️ طباعة فاتورة العميل</button>
-  <button class="btn btn-kit"  id="btn-kit">🍳 طباعة المطبخ</button>
-  <button class="btn btn-both" id="btn-both">🖨️ طباعة الكل</button>
-  <button class="btn btn-close" id="btn-close">✕ إغلاق</button>
-</div>
-<div class="frames">
-  <div class="col">
-    <div class="label">📄 نسخة العميل</div>
-    <iframe id="cust" width="340" height="760" sandbox="allow-same-origin allow-modals"></iframe>
-  </div>
-  <div class="col">
-    <div class="label">🍳 نسخة المطبخ</div>
-    <iframe id="kit"  width="340" height="760" sandbox="allow-same-origin allow-modals"></iframe>
-  </div>
-</div>
-</body></html>`;
-
-  win.document.open();
-  win.document.write(wrapperHtml);
-  win.document.close();
-
-  // Inject receipt HTML safely via srcdoc (no script-context interpolation),
-  // and wire buttons from this side — no untrusted text touches inline JS.
-  const wireUp = () => {
-    try {
-      const doc = win.document;
-      const custEl = doc.getElementById('cust') as HTMLIFrameElement | null;
-      const kitEl  = doc.getElementById('kit')  as HTMLIFrameElement | null;
-      if (custEl) custEl.srcdoc = customerHtml;
-      if (kitEl)  kitEl.srcdoc  = kitchenHtml;
-      doc.getElementById('btn-cust')?.addEventListener('click', () => {
-        try { custEl?.contentWindow?.print(); } catch {}
-      });
-      doc.getElementById('btn-kit')?.addEventListener('click', () => {
-        try { kitEl?.contentWindow?.print(); } catch {}
-      });
-      doc.getElementById('btn-both')?.addEventListener('click', () => {
-        try { win.print(); } catch {}
-      });
-      doc.getElementById('btn-close')?.addEventListener('click', () => {
-        try { win.close(); } catch {}
-      });
-    } catch (e) {
-      console.warn('[openReceiptPreviewWindow] wireUp error:', e);
-    }
-  };
-  // Run after document.write settles
-  setTimeout(wireUp, 30);
+  // ── MANDATORY on every platform: NEVER open a popup window / visible iframe ──
+  // Any popup or on-screen iframe (Android WebView especially, but also
+  // desktop/iOS edge cases) can trigger the viewport-shrink bug or a
+  // blocked/blank window. Printing must always happen fully in the
+  // background — no new window ever opens around the POS screen. Both
+  // receipts print directly via the same no-iframe path used everywhere else.
+  await _printDirectAsync(customerHtml, '80mm', true);
+  await new Promise(r => setTimeout(r, 300));
+  await _printDirectAsync(kitchenHtml, '80mm', true);
+  return;
 }
 
 export async function printBulkEmployeeInvoices(orders: any[]): Promise<void> {
@@ -1628,75 +1514,15 @@ export async function printTaxInvoice(data: TaxInvoiceData, config: PrintConfig 
       await new Promise(r => setTimeout(r, 150));
       await printOneHtml(employeeHtml);
     }
-  } else if (_isAndroid) {
-    // ── Android: NEVER open a popup window with iframes ────────────────────
-    // window.open() + iframes inside it are unreliable on Android WebView
-    // (blank/frozen popup, or the same viewport-shrink bug as a normal
-    // iframe). This is a user-initiated preview/print action, so printing
-    // both receipts directly (no popup) is the safe equivalent here.
+  } else {
+    // MANDATORY on every platform (Android, desktop, iOS): never open a
+    // popup window or visible iframe for a manual preview/print action —
+    // a popup can be blank/blocked, or trigger the viewport-shrink bug on
+    // Android WebView. Both receipts print directly in the background;
+    // no new window is ever allowed to appear around the POS screen.
     await printOneHtml(customerHtml);
     await new Promise(r => setTimeout(r, 300));
     await printOneHtml(employeeHtml);
-  } else {
-    // Manual preview window — shows both receipts side by side
-    const win = window.open('', '_blank', 'width=820,height=860,scrollbars=yes,resizable=yes');
-    if (win) {
-      win.document.open();
-      win.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
-<title>فواتير الطلب - ${displayInvoiceNumber}</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0;}
-  body{font-family:Tahoma,Arial,sans-serif;background:#e8e8e8;padding:16px;text-align:center;}
-  .toolbar{margin-bottom:16px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
-  .btn{padding:10px 22px;font-size:14px;border:none;border-radius:8px;cursor:pointer;font-weight:700;}
-  .btn-print{background:#1a1a1a;color:#fff;}
-  .btn-cust{background:#1e40af;color:#fff;}
-  .btn-emp{background:#b45309;color:#fff;}
-  .btn-close{background:#6b7280;color:#fff;}
-  .frames{display:flex;gap:20px;flex-wrap:wrap;justify-content:center;align-items:flex-start;}
-  .col{display:flex;flex-direction:column;align-items:center;}
-  h3{font-size:12px;font-weight:700;color:#333;margin-bottom:8px;background:#fff;padding:4px 14px;border-radius:20px;border:1px solid #ccc;}
-  iframe{border:none;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.15);}
-  @media print{
-    body{background:#fff;padding:0;}
-    .toolbar,.no-print,h3{display:none!important;}
-    .frames{display:block;}
-    .col{display:block;page-break-after:always;}
-    .col:last-child{page-break-after:auto;}
-    iframe{box-shadow:none;border-radius:0;width:80mm!important;}
-    @page{size:80mm auto;margin:0;}
-  }
-</style></head><body>
-  <div class="toolbar no-print">
-    <button class="btn btn-print" onclick="window.print()">طباعة النسختين</button>
-    <button class="btn btn-cust" onclick="printOne('cust')">فاتورة العميل فقط</button>
-    <button class="btn btn-emp" onclick="printOne('emp')">نسخة الموظف فقط</button>
-    <button class="btn btn-close" onclick="window.close()">اغلاق</button>
-  </div>
-  <div class="frames">
-    <div class="col" id="col-cust">
-      <h3>فاتورة العميل</h3>
-      <iframe id="fr-cust" width="320" height="700" srcdoc="${customerHtml.replace(/"/g, '&quot;').replace(/'/g, '&#39;')}"></iframe>
-    </div>
-    <div class="col" id="col-emp">
-      <h3>نسخة الموظف</h3>
-      <iframe id="fr-emp" width="320" height="700" srcdoc="${employeeHtml.replace(/"/g, '&quot;').replace(/'/g, '&#39;')}"></iframe>
-    </div>
-  </div>
-  <script>
-    function printOne(which){
-      var hideId=which==='cust'?'col-emp':'col-cust';
-      var el=document.getElementById(hideId);
-      var prev=el.style.display;
-      el.style.display='none';
-      window.print();
-      setTimeout(function(){el.style.display=prev;},500);
-    }
-  </script>
-</body></html>`);
-      win.document.close();
-    }
-    return;
   }
 }
 
