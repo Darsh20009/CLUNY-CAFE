@@ -610,6 +610,27 @@ app.use(
   })
 );
 
+// ─── Session version guard ────────────────────────────────────────────────────
+// Bump this string whenever you want to force-logout every device that still
+// carries an old cookie (e.g. after a major update). Old sessions are destroyed
+// server-side and the cookie is cleared, so the user lands on the login screen.
+const SESSION_VERSION = '2026-07-06-v1';
+
+app.use((req, res, next) => {
+  // Skip non-session paths
+  if (!req.path.startsWith('/api') && !req.path.startsWith('/employee') && !req.path.startsWith('/pos')) {
+    return next();
+  }
+  const sess = req.session as any;
+  if (sess && sess.employee && sess._sv !== SESSION_VERSION) {
+    // Old session — destroy it and clear the cookie
+    req.session.destroy(() => {});
+    res.clearCookie('cluny.sid', { path: '/' });
+    return res.status(401).json({ error: 'session_expired', message: 'جلسة منتهية — يرجى تسجيل الدخول مجدداً' });
+  }
+  next();
+});
+
 // Session debug middleware — only active in development
 app.use((req, res, next) => {
   if (process.env.NODE_ENV !== 'production' && process.env.DEBUG_SESSION === 'true') {

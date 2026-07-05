@@ -3,6 +3,9 @@ import mongoose from "mongoose";
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+
+// Must match SESSION_VERSION in server/index.ts — bump both together to force re-login on all devices
+const SESSION_VERSION = '2026-07-06-v1';
 import { cache, cacheKey, CACHE_TTL } from "./cache";
 import { 
   insertOrderSchema, 
@@ -6414,6 +6417,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         fullName: employee.fullName,
         tenantId: employee.tenantId
       } as any;
+      (req.session as any)._sv = SESSION_VERSION;
 
       const restoreKey = crypto.randomBytes(32).toString('hex');
       req.session.restoreKey = restoreKey;
@@ -6594,6 +6598,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         fullName: employee.fullName,
         tenantId: employee.tenantId
       } as any;
+      (req.session as any)._sv = SESSION_VERSION;
 
       const restoreKey = crypto.randomBytes(32).toString('hex');
       req.session.restoreKey = restoreKey;
@@ -6667,6 +6672,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       req.session.employee = sessionEmployee;
       req.session.restoreKey = newRestoreKey;
+      (req.session as any)._sv = SESSION_VERSION;
       
       res.json({ success: true, employee: sessionEmployee, restoreKey: newRestoreKey });
     } catch (error) {
