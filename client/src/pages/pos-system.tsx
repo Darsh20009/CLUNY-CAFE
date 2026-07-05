@@ -158,6 +158,8 @@ export default function PosSystem() {
   const [carPreparationAlerts, setCarPreparationAlerts] = useState<any[]>([]);
   const [showCarOrdersPanel, setShowCarOrdersPanel] = useState(false);
   const [showReceiptDialog, setShowReceiptDialog] = useState(false);
+  const [showQuickPrintBar, setShowQuickPrintBar] = useState(false);
+  const [quickPrintCountdown, setQuickPrintCountdown] = useState(0);
   const [qrPayOpen, setQrPayOpen] = useState(false);
   const [qrPayOrder, setQrPayOrder] = useState<{ id: string; orderNumber: string; amount: number } | null>(null);
   const [creatingQrPay, setCreatingQrPay] = useState(false);
@@ -455,13 +457,26 @@ export default function PosSystem() {
   useEffect(() => { localStorage.setItem("pos-zoom", String(posZoom)); }, [posZoom]);
   useEffect(() => { if (orderItems.length === 0 && showOrderReview) setShowOrderReview(false); }, [orderItems.length, showOrderReview]);
 
+  // Auto-close quick print bar after 10 seconds
+  useEffect(() => {
+    if (!showQuickPrintBar) { setQuickPrintCountdown(0); return; }
+    setQuickPrintCountdown(10);
+    const interval = setInterval(() => {
+      setQuickPrintCountdown(prev => {
+        if (prev <= 1) { clearInterval(interval); setShowQuickPrintBar(false); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [showQuickPrintBar]);
+
   // Auto-close receipt dialog after 12 seconds with countdown
   useEffect(() => {
     if (!showReceiptDialog) { setReceiptCountdown(0); return; }
     setReceiptCountdown(12);
     const interval = setInterval(() => {
       setReceiptCountdown(prev => {
-        if (prev <= 0) { clearInterval(interval); return 0; }       // manually paused
+        if (prev <= 0) { clearInterval(interval); return 0; }
         if (prev <= 1) { clearInterval(interval); setShowReceiptDialog(false); return 0; }
         return prev - 1;
       });
@@ -471,7 +486,7 @@ export default function PosSystem() {
 
   // Auto-generate new-design receipt HTML whenever an order completes
   useEffect(() => {
-    if (!lastOrder || !showReceiptDialog) return;
+    if (!lastOrder || (!showReceiptDialog && !showQuickPrintBar)) return;
     setReceiptPreviewHtml('');
     const previewData = {
       orderNumber: lastOrder.orderNumber,
@@ -1576,11 +1591,11 @@ export default function PosSystem() {
           }
         }
 
-        // Show the receipt dialog
+        // Show quick print bar (POS stays open for next order)
         setLastPrintFailed(false);
-        setShowReceiptDialog(true);
+        setShowQuickPrintBar(true);
 
-        // Clear cart
+        // Clear cart immediately so POS is ready for next order
         setOrderItems([]);
         setSplitCashAmount("");
         setCustomerName("");
@@ -1721,7 +1736,7 @@ export default function PosSystem() {
       }
 
       setLastPrintFailed(false);
-      setShowReceiptDialog(true);
+      setShowQuickPrintBar(true);
 
       setOrderItems([]);
       setSplitCashAmount("");
@@ -4161,6 +4176,86 @@ export default function PosSystem() {
             )}
           </DialogContent>
         </Dialog>
+
+        {/* ── Quick Print Bar — slides in after payment, POS stays ready ─────── */}
+        {showQuickPrintBar && lastOrder && (
+          <div
+            className="fixed bottom-5 right-5 z-50 bg-background border border-border rounded-2xl shadow-2xl p-4 w-72 flex flex-col gap-3"
+            style={{ animation: 'slideInFromBottom 0.3s ease-out' }}
+            dir="rtl"
+          >
+            <style>{`
+              @keyframes slideInFromBottom {
+                from { opacity: 0; transform: translateY(24px); }
+                to   { opacity: 1; transform: translateY(0); }
+              }
+            `}</style>
+
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-5 h-5 text-green-500 shrink-0" />
+                <div>
+                  <p className="text-xs text-muted-foreground leading-none mb-0.5">{tc('تم إتمام الطلب', 'Order complete')}</p>
+                  <p className="font-bold text-base text-primary leading-none">{lastOrder.orderNumber}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {quickPrintCountdown > 0 && (
+                  <span className="text-xs text-muted-foreground tabular-nums bg-muted px-1.5 py-0.5 rounded-full">{quickPrintCountdown}</span>
+                )}
+                <button
+                  onClick={() => setShowQuickPrintBar(false)}
+                  className="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded-full hover:bg-muted"
+                  data-testid="button-close-quick-bar"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Print error banner */}
+            {lastPrintFailed && (
+              <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg px-2.5 py-1.5 text-xs text-red-700 dark:text-red-400">
+                <span>⚠️</span>
+                <span>{tc('لم تتم الطباعة — اضغط "طباعة" لإعادة المحاولة', 'Print failed — tap Print to retry')}</span>
+              </div>
+            )}
+
+            {/* Quick action buttons */}
+            <div className="flex flex-col gap-2">
+              <Button
+                className={`w-full gap-2 h-11 text-sm font-bold ${lastPrintFailed ? 'bg-red-600 hover:bg-red-700' : 'bg-primary hover:bg-primary/90'}`}
+                onClick={() => { setLastPrintFailed(false); setQuickPrintCountdown(0); handlePrintCustomerOnly(); }}
+                data-testid="button-qb-print-customer"
+              >
+                <Printer className="w-4 h-4" />
+                {lastPrintFailed ? tc('إعادة الطباعة', 'Retry Print') : tc('طباعة فاتورة العميل', 'Print Customer Receipt')}
+              </Button>
+
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 gap-1.5 text-xs h-9 border-amber-300 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+                  onClick={() => { setQuickPrintCountdown(0); handlePrintKitchenOnly(); }}
+                  data-testid="button-qb-print-kitchen"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  {tc('نسخة المطبخ', 'Kitchen Copy')}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1 gap-1.5 text-xs h-9"
+                  onClick={() => { setShowQuickPrintBar(false); setShowReceiptDialog(true); }}
+                  data-testid="button-qb-view-receipt"
+                >
+                  <Receipt className="w-3.5 h-3.5" />
+                  {tc('عرض الفاتورة', 'View Receipt')}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Receipt visual preview modal ──────────────────────────────────── */}
         <Dialog open={showReceiptPreview} onOpenChange={setShowReceiptPreview}>
