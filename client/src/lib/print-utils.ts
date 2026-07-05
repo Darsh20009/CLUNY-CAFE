@@ -1466,12 +1466,14 @@ export async function printTaxInvoice(data: TaxInvoiceData, config: PrintConfig 
       }
     } catch (e) {
       console.warn('[PrintTaxInvoice] Thermal print error:', e);
+      // Always surface a toast — silently swallowing this left auto-print
+      // failures completely invisible to the cashier on some platforms.
+      window.dispatchEvent(new CustomEvent('qirox:print-error', {
+        detail: { error: (e as any)?.message || 'فشل الاتصال بالطابعة — تحقق من إعدادات الطابعة الحرارية', mode: 'thermal' }
+      }));
       // On Android, window.print() blocks the entire UI thread — NEVER use it
-      // as a fallback. Dispatch an error event so the POS can show a toast.
+      // as a fallback.
       if (_isAndroid) {
-        window.dispatchEvent(new CustomEvent('qirox:print-error', {
-          detail: { error: 'فشل الاتصال بالطابعة — تحقق من إعدادات الطابعة الحرارية', mode: 'thermal' }
-        }));
         return;
       }
     }

@@ -185,11 +185,10 @@ export default function PosSystem() {
   const [showPrinterSettings, setShowPrinterSettings] = useState(false);
   const [showSoundSettings, setShowSoundSettings] = useState(false);
   const [printerMode] = useState(() => loadPrinterSettings().mode);
-  const [autoPrint, setAutoPrint] = useState(() => {
-    const stored = localStorage.getItem("pos-auto-print");
-    if (stored !== null) return stored === "true";
-    return loadPrinterSettings().autoPrint; // fall back to printer settings (default ON)
-  });
+  // Single source of truth: printer settings ("qirox-printer-settings").
+  // The legacy "pos-auto-print" key is no longer read to avoid it going stale
+  // and silently overriding whatever the user just set in Printer Settings.
+  const [autoPrint, setAutoPrint] = useState(() => loadPrinterSettings().autoPrint);
   const [showVatLabel, setShowVatLabel] = useState(() => localStorage.getItem("pos-show-vat-label") === "true");
   const [posCustomizationItem, setPosCustomizationItem] = useState<{ item: CoffeeItem; group: CoffeeItem[]; initialCustomization?: DrinkCustomization } | null>(null);
   const [showOrderReview, setShowOrderReview] = useState(false);
@@ -322,9 +321,9 @@ export default function PosSystem() {
           date: order.createdAt || new Date().toISOString(),
         };
         setTimeout(() => {
-          try { printTaxInvoice(printData, { autoPrint: true }); } catch (e) {
-            console.warn('[POS] Online order auto-print failed silently:', e);
-          }
+          printTaxInvoice(printData, { autoPrint: true }).catch((e) => {
+            console.warn('[POS] Online order auto-print failed:', e);
+          });
         }, 500);
       }
     } else {
@@ -442,9 +441,17 @@ export default function PosSystem() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("pos-auto-print", String(autoPrint));
     savePrinterSettings({ autoPrint });
   }, [autoPrint]);
+
+  // Re-sync from printer settings whenever the Printer Settings dialog closes,
+  // so a change made there (e.g. toggling "طباعة تلقائية") is reflected here
+  // immediately instead of only after a full page refresh.
+  useEffect(() => {
+    if (!showPrinterSettings) {
+      setAutoPrint(loadPrinterSettings().autoPrint);
+    }
+  }, [showPrinterSettings]);
 
   // Show toast when thermal printing fails (USB/BT/Network error dispatched by print-utils)
   useEffect(() => {
@@ -1597,9 +1604,9 @@ export default function PosSystem() {
             branchAddress: currentBranch?.address || undefined,
             notes: orderNote || undefined,
           };
-          try { printTaxInvoice(printSnapshot, { autoPrint: true }); } catch (e) {
-            console.warn('[POS] Offline auto-print failed silently:', e);
-          }
+          printTaxInvoice(printSnapshot, { autoPrint: true }).catch((e) => {
+            console.warn('[POS] Offline auto-print failed:', e);
+          });
         }
 
         // Show quick print bar (POS stays open for next order)
@@ -1715,12 +1722,12 @@ export default function PosSystem() {
             : undefined,
           notes: orderNote || undefined,
         };
-        // Fire immediately — thermal path is instant, HTML fallback uses pre-warmed ZATCA QR cache
-        try {
-          printTaxInvoice(printSnapshot, { autoPrint: true });
-        } catch (e) {
-          console.warn('[POS] Auto-print failed silently:', e);
-        }
+        // Fire immediately — thermal path is instant, HTML fallback uses pre-warmed ZATCA QR cache.
+        // NOTE: printTaxInvoice is async — a synchronous try/catch around an
+        // un-awaited call cannot catch its rejections, so use .catch() instead.
+        printTaxInvoice(printSnapshot, { autoPrint: true }).catch((e) => {
+          console.warn('[POS] Auto-print failed:', e);
+        });
       }
       broadcastToDisplay("payment_success", {
         orderNumber: result.orderNumber || result.dailyNumber || '',
@@ -4326,7 +4333,11 @@ export default function PosSystem() {
                 onClick={() => {
                   setShowReceiptPreview(false);
                   setLastPrintFailed(false);
-                  handlePrintReceipt();
+                  if (previewTab === 'employee') {
+                    handlePrintKitchenOnly();
+                  } else {
+                    handlePrintReceipt();
+                  }
                 }}
                 data-testid="button-preview-print"
               >
