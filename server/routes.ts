@@ -3153,8 +3153,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const geideaApiPassword = pg.geidea?.apiPassword;
         if (geideaPublicKey && geideaApiPassword) {
           allMethods.push({ id: 'geidea', nameAr: 'بطاقة بنكية', nameEn: 'Card Payment', details: 'مدى، فيزا، ماستر كارد', icon: 'fas fa-credit-card', gateway: 'geidea' });
-          // Apple Pay routes through Geidea HPP — show unless explicitly disabled
-          if (pg.applePayEnabled !== false) {
+          // Apple Pay — only show if explicitly enabled (requires Geidea to activate on merchant account)
+          if (pg.applePayEnabled === true) {
             allMethods.push({ id: 'apple_pay', nameAr: 'Apple Pay', nameEn: 'Apple Pay', details: 'ادفع بسرعة عبر Apple Pay', icon: 'fas fa-mobile-alt', gateway: 'geidea' });
           }
         }
