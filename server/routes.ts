@@ -3323,7 +3323,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           secretKey: maskSecret(pg.paymob?.secretKey),
           publicKey: pg.paymob?.publicKey || '',
           baseUrl: pg.paymob?.baseUrl || 'https://ksa.paymob.com',
-          integrationId: pg.paymob?.integrationId || '',
         },
       });
     } catch (error) {

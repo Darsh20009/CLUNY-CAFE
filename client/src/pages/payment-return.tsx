@@ -19,6 +19,8 @@ export default function PaymentReturnPage() {
   const [status, setStatus] = useState<PaymentStatus>("loading");
   const [displayOrderNumber, setDisplayOrderNumber] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  // Read provider from URL at component level so it's available in JSX
+  const provider = new URLSearchParams(window.location.search).get("provider") || "paymob";
   const retryCount = useRef(0);
   const maxRetries = 8;
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

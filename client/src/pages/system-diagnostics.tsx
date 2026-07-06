@@ -3,7 +3,7 @@ import {
   CheckCircle2, XCircle, AlertCircle, Loader2, Play, RotateCcw,
   Download, ChevronDown, ChevronRight, Filter, Search, Clock,
   Shield, ShoppingCart, FileText, Package, Users, Truck,
-  BarChart3, Printer, CreditCard, RefreshCw, Settings, Lock
+  BarChart3, Printer, CreditCard, RefreshCw, Settings, Lock, Ban
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";

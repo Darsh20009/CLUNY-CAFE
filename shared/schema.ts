@@ -777,6 +777,7 @@ export interface IPaymentGatewayConfig {
   bankIban?: string;
   bankName?: string;
   bankAccountHolder?: string;
+  applePayEnabled?: boolean;
   cashEnabled: boolean;
   cashMaxDistance?: number;
   storeLocation?: { lat?: number; lng?: number };
