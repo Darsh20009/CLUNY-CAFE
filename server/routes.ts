@@ -3934,7 +3934,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           initiativeDomain = parsed.hostname;
         }
       } catch {}
-      const domainName = configDomain;
+      // domainName must match the domain Apple is actually validating (the request origin)
+      const domainName = initiativeDomain;
       const displayName = (pg.geidea?.displayName || 'CLUNY CAFE').slice(0, 64);
 
       if (!publicKey || !apiPassword) return res.status(400).json({ error: "بيانات جيديا غير مكتملة" });
@@ -4019,15 +4020,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const merchantReferenceId = (orderData?.orderRef || sessionId || nanoid()).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
       const callbackUrl = `${baseUrl.includes('ksamerchant') ? 'https://cluny.cafe' : 'https://cluny.cafe'}/api/payments/geidea/callback`;
 
+      // Apple Pay JS returns camelCase keys; Geidea Direct API requires PascalCase.
+      // Also: PaymentMethod must be at the TOP LEVEL — NOT inside Token.
+      const pd = paymentToken.paymentData || {};
+      const hdr = pd.header || pd.Header || {};
       const processBody = {
         Method: 'encrypted',
         Token: {
-          PaymentData: paymentToken.paymentData,           // encrypted Apple Pay blob
-          PaymentMethod: {
-            DisplayName: paymentToken.paymentMethod?.displayName || 'Apple Pay',
-            Network:     paymentToken.paymentMethod?.network     || 'Visa',
-            Type:        paymentToken.paymentMethod?.type        || 'credit',
+          PaymentData: {
+            Version:   pd.version   || pd.Version   || 'EC_v1',
+            Data:      pd.data      || pd.Data      || '',
+            Signature: pd.signature || pd.Signature || '',
+            Header: {
+              EphemeralPublicKey: hdr.ephemeralPublicKey || hdr.EphemeralPublicKey || '',
+              PublicKeyHash:      hdr.publicKeyHash      || hdr.PublicKeyHash      || '',
+              TransactionId:      hdr.transactionId      || hdr.TransactionId      || '',
+            },
           },
+        },
+        // PaymentMethod is at the TOP LEVEL per Geidea Direct API v2 spec
+        PaymentMethod: {
+          DisplayName: paymentToken.paymentMethod?.displayName || paymentToken.paymentMethod?.DisplayName || 'Apple Pay',
+          Network:     paymentToken.paymentMethod?.network     || paymentToken.paymentMethod?.Network     || 'Visa',
+          Type:        paymentToken.paymentMethod?.type        || paymentToken.paymentMethod?.Type        || 'credit',
         },
         Amount: parseFloat(amount),
         Currency: 'SAR',
