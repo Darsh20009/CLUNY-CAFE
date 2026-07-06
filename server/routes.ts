@@ -3551,8 +3551,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             signature,
             language: 'ar',
             paymentOperation: 'Pay',
-            // Tell Geidea HPP to offer Apple Pay as an express checkout option
-            expressCheckouts: ['APPLE_PAY'],
           };
 
           if (callbackBase) {
