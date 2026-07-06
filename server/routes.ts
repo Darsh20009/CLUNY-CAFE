@@ -3153,8 +3153,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const geideaApiPassword = pg.geidea?.apiPassword;
         if (geideaPublicKey && geideaApiPassword) {
           allMethods.push({ id: 'geidea', nameAr: 'بطاقة بنكية', nameEn: 'Card Payment', details: 'مدى، فيزا، ماستر كارد', icon: 'fas fa-credit-card', gateway: 'geidea' });
-          // Apple Pay — only show if explicitly enabled (requires Geidea to activate on merchant account)
-          if (pg.applePayEnabled === true) {
+          // Apple Pay — show by default with Geidea (falls back to HPP when Direct API unavailable)
+          if (pg.applePayEnabled !== false) {
             allMethods.push({ id: 'apple_pay', nameAr: 'Apple Pay', nameEn: 'Apple Pay', details: 'ادفع بسرعة عبر Apple Pay', icon: 'fas fa-mobile-alt', gateway: 'geidea' });
           }
         }
@@ -3551,6 +3551,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             signature,
             language: 'ar',
             paymentOperation: 'Pay',
+            // Tell Geidea HPP to offer Apple Pay as an express checkout option
+            expressCheckouts: ['APPLE_PAY'],
           };
 
           if (callbackBase) {
