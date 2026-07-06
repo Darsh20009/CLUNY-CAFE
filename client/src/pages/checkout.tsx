@@ -892,6 +892,14 @@ export default function CheckoutPage() {
           if (data.success && data.merchantSession) {
             pendingApplePaySessionId.current = data.sessionId;
             session.completeMerchantValidation(data.merchantSession);
+          } else if (res.status === 401 || (data.geidea_status === 401)) {
+            // Apple Pay Direct API not enabled on Geidea account yet.
+            // Abort native session and redirect to Geidea HPP silently —
+            // Geidea HPP has Apple Pay built-in so the user can still pay.
+            session.abort();
+            setIsVerifyingPayment(false);
+            toast({ title: "Apple Pay", description: "سيتم فتح بوابة الدفع حيث يمكنك استخدام Apple Pay" });
+            setTimeout(() => goToGeideaHPP(orderData), 600);
           } else {
             toast({ variant: "destructive", title: "خطأ Apple Pay", description: data.error || "فشل التحقق من المتجر" });
             session.abort();
@@ -1025,6 +1033,67 @@ export default function CheckoutPage() {
     }
 
     return { orderData, activeCustomerId };
+  };
+
+  // ── Geidea HPP fallback (state-independent — can be called from anywhere) ───
+  // Used when Apple Pay Direct API is unavailable (401) so user still gets
+  // routed to Geidea HPP which has Apple Pay built-in.
+  const goToGeideaHPP = async (overrideOrderData?: any) => {
+    setIsVerifyingPayment(true);
+    try {
+      let orderData = overrideOrderData;
+      let activeCustomerId = customer?.id;
+      if (!orderData) {
+        const built = await buildOrderData();
+        orderData = built.orderData;
+        activeCustomerId = built.activeCustomerId;
+      }
+
+      const tokenRes = await fetch("/api/payments/create-session-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          customerPhone: orderData.customerPhone || customerPhone,
+          customerId: customer?.id || activeCustomerId || null,
+          customerName: orderData.customerName || customerName,
+          orderData,
+        }),
+      });
+      const tokenData = await tokenRes.json();
+      if (!tokenData.token) throw new Error("فشل إنشاء رمز الدفع الآمن");
+
+      const paymentToken = tokenData.token;
+      const returnUrl = `${window.location.origin}/payment-return?pt=${paymentToken}&provider=geidea`;
+
+      sessionStorage.setItem('pendingOrderData', JSON.stringify(orderData));
+      sessionStorage.setItem('paymentProvider', 'geidea');
+      sessionStorage.setItem('paymentSessionToken', paymentToken);
+
+      const payRes = await apiRequest("POST", "/api/payments/init", {
+        orderId: `CLN-${Date.now()}`,
+        amount: orderData.totalAmount,
+        currency: "SAR",
+        paymentMethod: 'geidea',  // always 'geidea', state-independent
+        customerName: orderData.customerName || customerName,
+        customerPhone: orderData.customerPhone || customerPhone,
+        customerEmail: orderData.customerEmail || customerEmail,
+        returnUrl,
+      });
+      const payData = await payRes.json();
+
+      if (payData.success && payData.redirectUrl) {
+        window.location.href = payData.redirectUrl;
+      } else {
+        throw new Error(payData.error || payData.details || 'فشل تهيئة بوابة جيديا');
+      }
+    } catch (err: any) {
+      sessionStorage.removeItem('pendingOrderData');
+      sessionStorage.removeItem('paymentProvider');
+      sessionStorage.removeItem('paymentSessionToken');
+      setIsVerifyingPayment(false);
+      toast({ variant: "destructive", title: "خطأ في الدفع", description: err.message });
+    }
   };
 
   const initiateGeideaDirect = async () => {
@@ -2248,6 +2317,7 @@ export default function CheckoutPage() {
                 )}
 
                 {/* ── Apple Pay inside Geidea card section (Safari/Apple devices only) ── */}
+                {/* Routes to Geidea HPP which has Apple Pay built-in (Direct API requires separate Geidea activation) */}
                 {!showSimulatedCard && !showPaymobCheckout &&
                   isOnlinePaymentMethod(selectedPaymentMethod) &&
                   typeof window !== 'undefined' &&
@@ -2256,7 +2326,7 @@ export default function CheckoutPage() {
                   <div className="space-y-2">
                     <button
                       type="button"
-                      onClick={initiateApplePayNative}
+                      onClick={confirmAndCreateOrder}
                       disabled={isVerifyingPayment}
                       style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
