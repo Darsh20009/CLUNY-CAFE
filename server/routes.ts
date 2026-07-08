@@ -3906,92 +3906,122 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ─── Apple Pay Direct API (Geidea) ───────────────────────────────────────
-  // Step 1+2: Create Geidea session → validate merchant with Apple via Geidea
+  // Merchant validation is performed DIRECTLY with Apple using mTLS (Merchant Identity Certificate).
+  // Geidea does NOT provide a merchant-session proxy endpoint — per their docs the merchant
+  // must validate with Apple themselves and then submit the encrypted token to Geidea.
   app.post("/api/payments/apple-pay/validate-merchant", async (req, res) => {
     try {
-      const { validationUrl, amount = 1, currency = 'SAR', orderRef, customerPhone, customerName } = req.body;
+      const { validationUrl, amount = 1, currency = 'SAR', orderRef } = req.body;
       if (!validationUrl) return res.status(400).json({ error: "validationUrl مطلوب" });
 
       const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
       const config = await BusinessConfigModel.findOne({ tenantId }).lean();
       const pg = (config as any)?.paymentGateway;
-
       if (!pg || pg.provider !== 'geidea') return res.status(400).json({ error: "جيديا غير مفعّلة" });
 
-      const publicKey = pg.geidea?.publicKey;
-      const apiPassword = pg.geidea?.apiPassword;
-      const baseUrl = (pg.geidea?.baseUrl || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
-      const merchantIdentifier = pg.geidea?.applePayMerchantId || 'merchant.cluny.cafe';
-      const configDomain = pg.geidea?.applePayDomain || 'cluny.cafe';
-      // Use the actual domain the browser is on (from Origin/Host) so Apple Pay
-      // merchant validation matches the initiating domain. Fall back to config.
-      const requestOrigin = req.get('origin') || req.get('referer') || '';
-      let initiativeDomain = configDomain;
-      try {
-        if (requestOrigin) {
-          const parsed = new URL(requestOrigin);
-          initiativeDomain = parsed.hostname;
-        }
-      } catch {}
-      // domainName must match the domain Apple is actually validating (the request origin)
-      const domainName = initiativeDomain;
-      const displayName = (pg.geidea?.displayName || 'CLUNY CAFE').slice(0, 64);
+      // ── Load Merchant Identity Certificate (.p12) ──────────────────────────
+      // This is the certificate from Apple Developer → Merchant IDs →
+      // merchant.cluny.cafe → Merchant Identity Certificate.
+      // Export from Keychain Access as .p12, then base64-encode and store as
+      // APPLE_PAY_MERCHANT_CERT_P12_B64 secret.
+      const certP12B64 =
+        process.env.APPLE_PAY_MERCHANT_CERT_P12_B64 ||
+        (pg.geidea as any)?.applePayMerchantCertP12B64 ||
+        '';
+      const certPassword =
+        process.env.APPLE_PAY_MERCHANT_CERT_PASSWORD ||
+        (pg.geidea as any)?.applePayMerchantCertPassword ||
+        '';
 
-      if (!publicKey || !apiPassword) return res.status(400).json({ error: "بيانات جيديا غير مكتملة" });
-
-      const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
-      const merchantReferenceId = (orderRef || nanoid()).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
-
-      // Build HMAC signature
-      const now = new Date();
-      const pad = (n: number) => String(n).padStart(2, '0');
-      const timestamp = `${now.getFullYear()}/${pad(now.getMonth()+1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-      const { createHmac } = await import('crypto');
-      const amountStr = Number(Number(amount).toFixed(2)).toFixed(2);
-      const sigData = `${publicKey}${amountStr}${currency}${merchantReferenceId}${timestamp}`;
-      const signature = createHmac('sha256', apiPassword).update(sigData).digest('base64');
-
-      // Step 1: Create Geidea session
-      const sessionBody: any = { amount: amountStr, currency, merchantReferenceId, timestamp, signature, language: 'ar', paymentOperation: 'Pay' };
-      const sessionRes = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
-        body: JSON.stringify(sessionBody),
-      });
-      const sessionData = await sessionRes.json() as any;
-      const sessionId = sessionData?.session?.id;
-
-      if (!sessionRes.ok || !sessionId) {
-        console.error('[Apple Pay] Session creation failed:', sessionData);
-        return res.status(400).json({ error: "فشل إنشاء جلسة الدفع", details: sessionData?.detailedResponseMessage || sessionData });
-      }
-      console.log('[Apple Pay] Session created:', sessionId);
-
-      // Step 2: Validate merchant with Apple via Geidea
-      const merchantBody = { sessionId, validationUrl, merchantIdentifier, domainName, displayName, initiative: 'web', initiativeContext: initiativeDomain };
-      console.log('[Apple Pay] Validating merchant:', merchantBody);
-      const merchantRes = await fetch(`${baseUrl}/payment/api/v1/direct/apple/merchant-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
-        body: JSON.stringify(merchantBody),
-      });
-      const merchantData = await merchantRes.json() as any;
-
-      if (!merchantRes.ok) {
-        console.error('[Apple Pay] Merchant validation failed:', merchantRes.status, merchantData);
-        return res.status(merchantRes.status).json({
-          error: merchantRes.status === 401
-            ? "Apple Pay غير مفعّل على حساب جيديا — تواصل مع دعم جيديا لتفعيله"
-            : "فشل التحقق من المتجر مع Apple",
-          details: merchantData?.message || merchantData,
-          geidea_status: merchantRes.status,
+      if (!certP12B64) {
+        console.error('[Apple Pay] Merchant Identity Certificate not configured');
+        return res.status(500).json({
+          error: "Merchant Identity Certificate not configured. Export from Keychain Access as .p12, base64-encode it, and set APPLE_PAY_MERCHANT_CERT_P12_B64.",
+          setup_required: true,
         });
       }
 
-      return res.json({ success: true, sessionId, merchantSession: merchantData });
+      const merchantIdentifier =
+        pg.geidea?.applePayMerchantId ||
+        process.env.APPLE_PAY_MERCHANT_ID ||
+        'merchant.cluny.cafe';
+      const configDomain =
+        pg.geidea?.applePayDomain ||
+        process.env.APPLE_PAY_DOMAIN ||
+        'cluny.cafe';
+      const displayName = ((pg.geidea as any)?.displayName || 'CLUNY CAFE').slice(0, 64);
+
+      // Use the actual domain the browser is on so Apple validates the right domain
+      const requestOrigin = req.get('origin') || req.get('referer') || '';
+      let initiativeDomain = configDomain;
+      try {
+        if (requestOrigin) initiativeDomain = new URL(requestOrigin).hostname;
+      } catch {}
+
+      // ── Call Apple's validation URL directly with mTLS ─────────────────────
+      const https = await import('node:https');
+      const p12Buffer = Buffer.from(certP12B64, 'base64');
+
+      const validationBody = JSON.stringify({
+        merchantIdentifier,
+        domainName: initiativeDomain,
+        displayName,
+        initiative: 'web',
+        initiativeContext: initiativeDomain,
+      });
+
+      console.log('[Apple Pay] Validating merchant directly with Apple:', {
+        validationUrl, merchantIdentifier, initiativeDomain,
+      });
+
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(validationUrl);
+      } catch {
+        return res.status(400).json({ error: "validationUrl غير صالح" });
+      }
+
+      const merchantSession = await new Promise<any>((resolve, reject) => {
+        const options: import('https').RequestOptions = {
+          hostname: parsedUrl.hostname,
+          port: 443,
+          path: parsedUrl.pathname + parsedUrl.search,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(validationBody),
+          },
+          pfx: p12Buffer,
+          passphrase: certPassword,
+        };
+
+        const appleReq = https.request(options, (appleRes) => {
+          let data = '';
+          appleRes.on('data', (chunk) => { data += chunk; });
+          appleRes.on('end', () => {
+            try {
+              const parsed = JSON.parse(data);
+              if (appleRes.statusCode && appleRes.statusCode >= 400) {
+                reject(new Error(`Apple validation failed (${appleRes.statusCode}): ${data}`));
+              } else {
+                resolve(parsed);
+              }
+            } catch {
+              reject(new Error(`Apple returned invalid JSON (${appleRes.statusCode}): ${data}`));
+            }
+          });
+        });
+
+        appleReq.on('error', reject);
+        appleReq.write(validationBody);
+        appleReq.end();
+      });
+
+      console.log('[Apple Pay] Merchant validated successfully with Apple');
+      return res.json({ success: true, merchantSession });
     } catch (err: any) {
       console.error('[Apple Pay] validate-merchant error:', err);
-      return res.status(500).json({ error: "خطأ في التحقق من المتجر", details: err.message });
+      return res.status(500).json({ error: "خطأ في التحقق من المتجر مع Apple", details: err.message });
     }
   });
 
