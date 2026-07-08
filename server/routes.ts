@@ -3919,26 +3919,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const pg = (config as any)?.paymentGateway;
       if (!pg || pg.provider !== 'geidea') return res.status(400).json({ error: "جيديا غير مفعّلة" });
 
-      // ── Load Merchant Identity Certificate (.p12) ──────────────────────────
+      // ── Load Merchant Identity Certificate ──────────────────────────────────
       // This is the certificate from Apple Developer → Merchant IDs →
       // merchant.cluny.cafe → Merchant Identity Certificate.
-      // Export from Keychain Access as .p12, then base64-encode and store as
-      // APPLE_PAY_MERCHANT_CERT_P12_B64 secret.
-      const certP12B64 =
-        process.env.APPLE_PAY_MERCHANT_CERT_P12_B64 ||
-        (pg.geidea as any)?.applePayMerchantCertP12B64 ||
-        '';
-      const certPassword =
-        process.env.APPLE_PAY_MERCHANT_CERT_PASSWORD ||
-        (pg.geidea as any)?.applePayMerchantCertPassword ||
-        '';
+      //
+      // Preferred: PEM cert + key checked into server/certs/ (already provisioned
+      // for merchant.cluny.cafe, valid Apr 2026 – May 2028).
+      // Fallback: a base64-encoded .p12 via APPLE_PAY_MERCHANT_CERT_P12_B64 (+
+      // optional APPLE_PAY_MERCHANT_CERT_PASSWORD), for environments that don't
+      // ship the PEM files.
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const certPemPath = path.join(process.cwd(), 'server', 'certs', 'applepay_merchant_id.pem');
+      const certKeyPath = path.join(process.cwd(), 'server', 'certs', 'applepay_merchant_id.key');
 
-      if (!certP12B64) {
-        console.error('[Apple Pay] Merchant Identity Certificate not configured');
-        return res.status(500).json({
-          error: "Merchant Identity Certificate not configured. Export from Keychain Access as .p12, base64-encode it, and set APPLE_PAY_MERCHANT_CERT_P12_B64.",
-          setup_required: true,
-        });
+      let tlsCert: Buffer | undefined;
+      let tlsKey: Buffer | undefined;
+      let pfx: Buffer | undefined;
+      let passphrase: string | undefined;
+
+      if (fs.existsSync(certPemPath) && fs.existsSync(certKeyPath)) {
+        tlsCert = fs.readFileSync(certPemPath);
+        tlsKey = fs.readFileSync(certKeyPath);
+      } else {
+        const certP12B64 =
+          process.env.APPLE_PAY_MERCHANT_CERT_P12_B64 ||
+          (pg.geidea as any)?.applePayMerchantCertP12B64 ||
+          '';
+        const certPassword =
+          process.env.APPLE_PAY_MERCHANT_CERT_PASSWORD ||
+          (pg.geidea as any)?.applePayMerchantCertPassword ||
+          '';
+
+        if (!certP12B64) {
+          console.error('[Apple Pay] Merchant Identity Certificate not configured');
+          return res.status(500).json({
+            error: "Merchant Identity Certificate not configured. Export from Keychain Access as .p12, base64-encode it, and set APPLE_PAY_MERCHANT_CERT_P12_B64.",
+            setup_required: true,
+          });
+        }
+        pfx = Buffer.from(certP12B64, 'base64');
+        passphrase = certPassword;
       }
 
       const merchantIdentifier =
@@ -3960,7 +3981,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // ── Call Apple's validation URL directly with mTLS ─────────────────────
       const https = await import('node:https');
-      const p12Buffer = Buffer.from(certP12B64, 'base64');
 
       const validationBody = JSON.stringify({
         merchantIdentifier,
@@ -3991,8 +4011,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             'Content-Type': 'application/json',
             'Content-Length': Buffer.byteLength(validationBody),
           },
-          pfx: p12Buffer,
-          passphrase: certPassword,
+          ...(pfx ? { pfx, passphrase } : { cert: tlsCert, key: tlsKey }),
         };
 
         const appleReq = https.request(options, (appleRes) => {
