@@ -20,11 +20,13 @@ Starts the Express server (port 5000) with Vite middleware for hot-reloading the
 
 ## Required environment variables
 
-| Variable | Description |
-|---|---|
-| `MONGODB_URI` | MongoDB connection string (Atlas or local) |
-| `SESSION_SECRET` | Secret for express-session cookie signing |
-| `MONGODB_URI_2` | (Optional) Secondary DB for auto-rotation |
+| Variable | Description | Status |
+|---|---|---|
+| `MONGODB_URI` | MongoDB connection string (Atlas or local) | ✅ Set (Atlas) |
+| `SESSION_SECRET` | Secret for express-session cookie signing | ✅ Set |
+| `MONGODB_URI_2` | (Optional) Secondary DB for auto-rotation | Not set |
+
+`npm install` was run to populate `node_modules` (missing after import). The `Start application` workflow (`npm run dev`) runs the Express server with Vite middleware on port 5000.
 
 ## Project structure
 
