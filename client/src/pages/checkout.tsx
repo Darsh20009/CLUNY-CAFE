@@ -892,23 +892,22 @@ export default function CheckoutPage() {
           if (data.success && data.merchantSession) {
             pendingApplePaySessionId.current = data.sessionId;
             session.completeMerchantValidation(data.merchantSession);
-          } else if (res.status === 401 || (data.geidea_status === 401)) {
-            // Apple Pay Direct API not enabled on Geidea account yet.
-            // Abort native session and redirect to Geidea HPP silently —
-            // Geidea HPP has Apple Pay built-in so the user can still pay.
+          } else {
+            // Apple Pay Direct failed for any reason (domain not registered with Apple,
+            // Geidea Direct API not enabled, cert mismatch, etc.).
+            // Always fall back silently to Geidea HPP — which has Apple Pay built-in,
+            // so the user can still pay with Apple Pay through Geidea's checkout page.
             session.abort();
             setIsVerifyingPayment(false);
             toast({ title: "Apple Pay", description: "سيتم فتح بوابة الدفع حيث يمكنك استخدام Apple Pay" });
             setTimeout(() => goToGeideaHPP(orderData), 600);
-          } else {
-            toast({ variant: "destructive", title: "خطأ Apple Pay", description: data.error || "فشل التحقق من المتجر" });
-            session.abort();
-            setIsVerifyingPayment(false);
           }
         } catch (e: any) {
-          toast({ variant: "destructive", title: "خطأ Apple Pay", description: e.message });
+          // Network/parsing error — same fallback to Geidea HPP
           session.abort();
           setIsVerifyingPayment(false);
+          toast({ title: "Apple Pay", description: "سيتم فتح بوابة الدفع حيث يمكنك استخدام Apple Pay" });
+          setTimeout(() => goToGeideaHPP(orderData), 600);
         }
       };
 
