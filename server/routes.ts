@@ -4166,18 +4166,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const merchantReferenceId = (orderData?.orderRef || sessionId || nanoid()).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
       const callbackUrl = 'https://cluny.cafe/api/payments/geidea/callback';
 
-      // Apple Pay JS returns camelCase; Geidea Direct API v2 requires PascalCase.
-      // PaymentMethod and TransactionIdentifier belong INSIDE Token.
-      const pd = paymentToken.paymentData || {};
+      // Build body exactly per Geidea Apple Pay Direct API docs:
+      // https://docs.geidea.net/docs/apple-pay-direct-api
+      // Key rules:
+      //   1. "Method": "encrypted" at top level (required)
+      //   2. "PaymentMethod" at top level — NOT inside Token
+      //   3. "InitiatedBy": "internet" (all lowercase)
+      //   4. "DeviceIdentification" at top level
+      //   5. Token contains ONLY PaymentData (no TransactionIdentifier, no PaymentMethod)
+      //
+      // Normalise both possible input shapes:
+      //   Shape A (JS Apple Pay API): { paymentData: {...}, paymentMethod: {...}, transactionIdentifier: "..." }
+      //   Shape B (raw paymentData root passed directly): { version, data, signature, header }
+      const hasNestedPaymentData = !!(paymentToken.paymentData && (paymentToken.paymentData.data || paymentToken.paymentData.Data));
+      const pd  = hasNestedPaymentData ? paymentToken.paymentData : paymentToken;
       const hdr = pd.header || pd.Header || {};
-      const pm  = paymentToken.paymentMethod || {};
-      const processBody = {
-        Amount: parseFloat(amount),
-        Currency: orderData?.currency || 'SAR',
-        MerchantReferenceId: merchantReferenceId,
-        CallbackUrl: callbackUrl,
-        InitiatedBy: 'Internet',
-        CardOnFile: false,
+      const pm  = paymentToken.paymentMethod || paymentToken.PaymentMethod || {};
+
+      // Preflight: reject before hitting Geidea if critical fields are missing
+      const missingFields: string[] = [];
+      if (!(pd.data || pd.Data))                                               missingFields.push('paymentData.data');
+      if (!(pd.signature || pd.Signature))                                     missingFields.push('paymentData.signature');
+      if (!(hdr.ephemeralPublicKey || hdr.EphemeralPublicKey))                 missingFields.push('paymentData.header.ephemeralPublicKey');
+      if (!(hdr.publicKeyHash || hdr.PublicKeyHash))                           missingFields.push('paymentData.header.publicKeyHash');
+      if (!(hdr.transactionId || hdr.TransactionId))                           missingFields.push('paymentData.header.transactionId');
+      if (missingFields.length > 0) {
+        console.error('[Apple Pay] Preflight failed — missing fields:', missingFields);
+        return res.status(400).json({ error: 'Apple Pay token ناقص — الحقول المفقودة: ' + missingFields.join(', '), missingFields });
+      }
+      const processBody: Record<string, any> = {
+        Method: 'encrypted',
         Token: {
           PaymentData: {
             Version:   pd.version   || pd.Version   || 'EC_v1',
@@ -4189,12 +4207,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
               TransactionId:      hdr.transactionId      || hdr.TransactionId      || '',
             },
           },
-          PaymentMethod: {
-            DisplayName: pm.displayName || pm.DisplayName || 'Apple Pay',
-            Network:     pm.network     || pm.Network     || 'Visa',
-            Type:        pm.type        || pm.Type        || 'credit',
-          },
-          TransactionIdentifier: paymentToken.transactionIdentifier || paymentToken.TransactionIdentifier || '',
+        },
+        PaymentMethod: {
+          DisplayName: pm.displayName || pm.DisplayName || 'Apple Pay',
+          Network:     pm.network     || pm.Network     || 'Visa',
+          Type:        pm.type        || pm.Type        || 'credit',
+        },
+        Amount: parseFloat(amount),
+        Currency: orderData?.currency || 'SAR',
+        MerchantReferenceId: merchantReferenceId,
+        CallbackUrl: callbackUrl,
+        InitiatedBy: 'internet',
+        CardOnFile: false,
+        DeviceIdentification: {
+          UserAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+          Language: 'en',
         },
       };
 
