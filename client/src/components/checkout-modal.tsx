@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import GeideaCheckoutWidget from "./geidea-checkout";
+import ExpressCheckoutWallet from "./express-checkout-wallet";
 import PaymobCheckoutWidget from "./paymob-checkout";
 import SarIcon from "@/components/sar-icon";
 
@@ -419,6 +420,28 @@ const CheckoutModal = memo(() => {
  {currentStep === 'payment' && (
  <div className="space-y-6 animate-in fade-in duration-500">
   {showGeideaWidget && orderDetails ? (
+     selectedPaymentMethod === 'apple_pay' ? (
+       <ExpressCheckoutWallet
+         amount={getTotalPrice()}
+         orderId={orderDetails.orderNumber}
+         wallet="apple-pay"
+         customerName={customerName}
+         customerPhone={customerPhone}
+         customerEmail={customer?.email}
+         containerId={`apple-pay-express-${orderDetails.orderNumber}`}
+         onSuccess={() => {
+           setShowGeideaWidget(false);
+           handlePaymentConfirmed(orderDetails);
+         }}
+         onError={(msg) => {
+           setShowGeideaWidget(false);
+           toast({ variant: "destructive", title: "فشل الدفع", description: msg });
+         }}
+         onCancel={() => {
+           setShowGeideaWidget(false);
+         }}
+       />
+     ) : (
      <GeideaCheckoutWidget
        orderNumber={orderDetails.orderNumber}
        amount={getTotalPrice()}
@@ -438,6 +461,7 @@ const CheckoutModal = memo(() => {
          setShowGeideaWidget(false);
        }}
      />
+     )
    ) : (
      <>
        <div className="bg-card/50 rounded-xl p-6 border border-primary/20">

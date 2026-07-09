@@ -3909,6 +3909,100 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ─── Geidea Express Checkout — Apple Pay session init ────────────────────
+  // Used by ExpressCheckoutWallet component (Geidea JS SDK approach).
+  // Creates a Geidea session with expressCheckouts: ['ApplePay'] and returns sessionId.
+  app.post("/api/payments/express-checkout/init-session", async (req, res) => {
+    try {
+      const {
+        amount, orderId, currency = 'SAR',
+        customerEmail, customerPhone, customerName, returnUrl,
+        wallet = 'apple-pay',
+      } = req.body;
+
+      if (!amount || amount <= 0) {
+        return res.status(400).json({ error: "المبلغ مطلوب" });
+      }
+
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const config = await BusinessConfigModel.findOne({ tenantId }).lean();
+      const pg = (config as any)?.paymentGateway;
+
+      if (!pg || pg.provider !== 'geidea') {
+        return res.status(400).json({ error: "بوابة Geidea غير مكوّنة" });
+      }
+
+      const publicKey = pg.geidea?.publicKey;
+      const apiPassword = pg.geidea?.apiPassword;
+      const baseUrl = (pg.geidea?.baseUrl || 'https://api.merchant.geidea.net').replace(/\/$/, '');
+
+      if (!publicKey || !apiPassword) {
+        return res.status(400).json({ error: "بيانات اعتماد جيديا غير مكتملة" });
+      }
+
+      const { createHmac } = await import('crypto');
+      const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
+      const merchantReferenceId = (orderId || nanoid()).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const timestamp = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+      const amountStr = Number(Number(amount).toFixed(2)).toFixed(2);
+      const sigData = `${publicKey}${amountStr}${currency}${merchantReferenceId}${timestamp}`;
+      const signature = createHmac('sha256', apiPassword).update(sigData).digest('base64');
+
+      // Map wallet name to Geidea's expressCheckouts value
+      const expressCheckoutMap: Record<string, string> = {
+        'apple-pay': 'ApplePay',
+        'google-pay': 'GooglePay',
+        'samsung-pay': 'SamsungPay',
+      };
+      const expressCheckoutName = expressCheckoutMap[wallet] || 'ApplePay';
+
+      const geideaCustomer: any = {};
+      if (customerEmail) geideaCustomer.email = customerEmail;
+      if (customerPhone) {
+        const clean = customerPhone.replace(/\D/g, '').replace(/^00966/, '').replace(/^\+?966/, '').replace(/^0/, '').slice(-9);
+        if (clean) { geideaCustomer.phoneNumber = clean; geideaCustomer.phonecountrycode = '+966'; }
+      }
+      if (customerName) {
+        const parts = customerName.trim().split(/\s+/);
+        geideaCustomer.firstName = parts[0] || customerName;
+        geideaCustomer.lastName = parts.slice(1).join(' ') || parts[0] || customerName;
+      }
+
+      const callbackUrl = returnUrl || pg.geidea?.callbackUrl || '';
+      const body: any = {
+        amount: amountStr, currency, merchantReferenceId, timestamp, signature,
+        language: 'ar', paymentOperation: 'Pay',
+        expressCheckouts: [expressCheckoutName],
+      };
+      if (callbackUrl) { body.callbackUrl = callbackUrl; body.returnUrl = callbackUrl; }
+      if (Object.keys(geideaCustomer).length > 0) body.customer = geideaCustomer;
+
+      console.log(`[Geidea Express] Creating ${expressCheckoutName} session for order ${merchantReferenceId}`);
+
+      const geideaRes = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const geideaData = await geideaRes.json() as any;
+      console.log(`[Geidea Express] Session response code: ${geideaData?.responseCode}, expressCheckouts: ${JSON.stringify(geideaData?.session?.expressCheckouts)}`);
+
+      const sessionId = geideaData?.session?.id;
+      if (!geideaRes.ok || !sessionId) {
+        const errMsg = geideaData?.detailedResponseMessage || geideaData?.responseMessage || 'فشل إنشاء جلسة Express';
+        console.error('[Geidea Express] Failed:', errMsg);
+        return res.status(400).json({ error: errMsg, raw: geideaData });
+      }
+
+      return res.json({ success: true, sessionId, merchantReferenceId });
+    } catch (err: any) {
+      console.error('[Geidea Express] Error:', err.message);
+      return res.status(500).json({ error: "خطأ في الاتصال بجيديا", details: err.message });
+    }
+  });
+
   // ─── Apple Pay Direct API (Geidea) ───────────────────────────────────────
   // Merchant validation is performed DIRECTLY with Apple using mTLS (Merchant Identity Certificate).
   // Geidea does NOT provide a merchant-session proxy endpoint — per their docs the merchant
