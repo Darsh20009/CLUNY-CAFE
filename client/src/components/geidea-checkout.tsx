@@ -258,8 +258,8 @@ export default function GeideaCheckoutWidget({
               src={hppUrl}
               className="flex-1 w-full border-none"
               title="Geidea Payment"
-              allow="payment *"
-              sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-top-navigation"
+              allow="payment *; camera *"
+              sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-top-navigation allow-top-navigation-by-user-activation allow-modals"
               onLoad={handleIframeLoad}
               data-testid="iframe-geidea-hpp"
             />
