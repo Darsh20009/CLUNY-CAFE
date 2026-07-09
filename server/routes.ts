@@ -4164,14 +4164,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Build request body per Geidea Apple Pay Direct API v2 docs
       const amount = Number(orderData?.totalAmount || 0).toFixed(2);
       const merchantReferenceId = (orderData?.orderRef || sessionId || nanoid()).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
-      const callbackUrl = `${baseUrl.includes('ksamerchant') ? 'https://cluny.cafe' : 'https://cluny.cafe'}/api/payments/geidea/callback`;
+      const callbackUrl = 'https://cluny.cafe/api/payments/geidea/callback';
 
-      // Apple Pay JS returns camelCase keys; Geidea Direct API requires PascalCase.
-      // Also: PaymentMethod must be at the TOP LEVEL — NOT inside Token.
+      // Apple Pay JS returns camelCase; Geidea Direct API v2 requires PascalCase.
+      // PaymentMethod and TransactionIdentifier belong INSIDE Token.
       const pd = paymentToken.paymentData || {};
       const hdr = pd.header || pd.Header || {};
+      const pm  = paymentToken.paymentMethod || {};
       const processBody = {
-        Method: 'encrypted',
+        Amount: parseFloat(amount),
+        Currency: orderData?.currency || 'SAR',
+        MerchantReferenceId: merchantReferenceId,
+        CallbackUrl: callbackUrl,
+        InitiatedBy: 'Internet',
+        CardOnFile: false,
         Token: {
           PaymentData: {
             Version:   pd.version   || pd.Version   || 'EC_v1',
@@ -4183,22 +4189,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               TransactionId:      hdr.transactionId      || hdr.TransactionId      || '',
             },
           },
-        },
-        // PaymentMethod is at the TOP LEVEL per Geidea Direct API v2 spec
-        PaymentMethod: {
-          DisplayName: paymentToken.paymentMethod?.displayName || paymentToken.paymentMethod?.DisplayName || 'Apple Pay',
-          Network:     paymentToken.paymentMethod?.network     || paymentToken.paymentMethod?.Network     || 'Visa',
-          Type:        paymentToken.paymentMethod?.type        || paymentToken.paymentMethod?.Type        || 'credit',
-        },
-        Amount: parseFloat(amount),
-        Currency: 'SAR',
-        MerchantReferenceId: merchantReferenceId,
-        CallbackUrl: callbackUrl,
-        InitiatedBy: 'internet',
-        CardOnFile: false,
-        DeviceIdentification: {
-          UserAgent: req.get('user-agent') || 'Web/1.0',
-          Language: 'ar',
+          PaymentMethod: {
+            DisplayName: pm.displayName || pm.DisplayName || 'Apple Pay',
+            Network:     pm.network     || pm.Network     || 'Visa',
+            Type:        pm.type        || pm.Type        || 'credit',
+          },
+          TransactionIdentifier: paymentToken.transactionIdentifier || paymentToken.TransactionIdentifier || '',
         },
       };
 
