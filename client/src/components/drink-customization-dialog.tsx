@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -44,9 +44,17 @@ export interface SelectedAddon {
   unit?: string;
 }
 
+export interface InlineAddonSelection {
+  nameAr: string;
+  nameEn?: string;
+  price: number;
+  section?: string;
+}
+
 export interface DrinkCustomization {
   selectedSize?: string;
   selectedAddons: SelectedAddon[];
+  selectedInlineAddons?: InlineAddonSelection[];
   totalAddonsPrice: number;
   notes?: string;
 }
@@ -84,6 +92,7 @@ export default function DrinkCustomizationDialog({
 }: DrinkCustomizationDialogProps) {
   const [quantity, setQuantity] = useState(initialQuantity);
   const [selectedAddons, setSelectedAddons] = useState<Map<string, SelectedAddon>>(new Map());
+  const [selectedInlineAddonIndices, setSelectedInlineAddonIndices] = useState<number[]>([]);
   const [notes, setNotes] = useState("");
   const [selectedVariant, setSelectedVariant] = useState<CoffeeItem | null>(coffeeItem);
   const activeItem = selectedVariant || coffeeItem;
@@ -92,10 +101,17 @@ export default function DrinkCustomizationDialog({
 
   const [selectedSize, setSelectedSize] = useState<string | null>(null);
 
+  // Inline addons stored directly on the product (e.g. filling options)
+  const inlineAddons: Array<{nameAr: string; nameEn?: string; price: number; section?: string; selectionType?: string}> = useMemo(
+    () => (activeItem as any)?.addons || [],
+    [activeItem]
+  );
+
   // Reset all internal state whenever the product changes (user clicks a different product)
   useEffect(() => {
     setSelectedVariant(coffeeItem);
     setSelectedAddons(new Map());
+    setSelectedInlineAddonIndices([]);
     setNotes("");
     setQuantity(initialQuantity);
     setSelectedSize(null);
@@ -106,6 +122,8 @@ export default function DrinkCustomizationDialog({
       const defaultSize = activeItem.availableSizes[0];
       setSelectedSize(defaultSize.nameAr);
     }
+    // Reset inline addon selection when variant/activeItem changes
+    setSelectedInlineAddonIndices([]);
   }, [activeItem?.id]); // Watch by ID to avoid infinite loop
 
   const { data: allAddons = [], isLoading: loadingAddons } = useQuery<ProductAddon[]>({
@@ -144,6 +162,15 @@ export default function DrinkCustomizationDialog({
       });
       setSelectedAddons(map);
       setNotes(initialCustomization.notes || "");
+      // Restore inline addon selections from initialCustomization
+      if (initialCustomization.selectedInlineAddons && inlineAddons.length > 0) {
+        const restoredIndices: number[] = [];
+        initialCustomization.selectedInlineAddons.forEach(saved => {
+          const idx = inlineAddons.findIndex(a => a.nameAr === saved.nameAr && a.section === saved.section);
+          if (idx !== -1) restoredIndices.push(idx);
+        });
+        setSelectedInlineAddonIndices(restoredIndices);
+      }
     } else if (coffeeAddons.length > 0 && allAddons.length > 0) {
       const map = new Map<string, SelectedAddon>();
       coffeeAddons.forEach(link => {
@@ -244,6 +271,10 @@ export default function DrinkCustomizationDialog({
     selectedAddons.forEach(addon => {
       total += addon.price * addon.quantity;
     });
+    // Include inline addons price
+    selectedInlineAddonIndices.forEach(idx => {
+      total += Number(inlineAddons[idx]?.price || 0);
+    });
     return total;
   };
 
@@ -252,9 +283,18 @@ export default function DrinkCustomizationDialog({
   };
 
   const handleConfirm = () => {
+    // Guard: filter out any stale indices before mapping
+    const safeIndices = selectedInlineAddonIndices.filter(idx => idx >= 0 && idx < inlineAddons.length);
+    const selectedInlineAddons: InlineAddonSelection[] = safeIndices.map(idx => ({
+      nameAr: inlineAddons[idx].nameAr,
+      nameEn: inlineAddons[idx].nameEn,
+      price: Number(inlineAddons[idx].price || 0),
+      section: inlineAddons[idx].section,
+    }));
     const customization: DrinkCustomization = {
       selectedSize: selectedSize || undefined,
       selectedAddons: Array.from(selectedAddons.values()),
+      selectedInlineAddons: selectedInlineAddons.length > 0 ? selectedInlineAddons : undefined,
       totalAddonsPrice: calculateAddonsPrice(),
       notes: notes.trim() || undefined,
     };
@@ -290,6 +330,7 @@ export default function DrinkCustomizationDialog({
       }
     });
     setSelectedAddons(map);
+    setSelectedInlineAddonIndices([]);
     setNotes("");
   };
 
@@ -301,13 +342,14 @@ export default function DrinkCustomizationDialog({
 
   const isLoading = loadingAddons || loadingCoffeeAddons;
 
-  // Auto-confirm if product has no sizes and no add-ons after loading
+  // Auto-confirm if product has no sizes, no add-ons, and no inline addons after loading
   useEffect(() => {
     if (!open || isLoading || !activeItem) return;
     const hasSizes = activeItem.availableSizes && activeItem.availableSizes.length > 0;
     const hasVariants = variants && variants.length > 1;
     const hasAddons = availableAddons.length > 0;
-    if (!hasSizes && !hasVariants && !hasAddons) {
+    const hasInlineAddons = inlineAddons.length > 0;
+    if (!hasSizes && !hasVariants && !hasAddons && !hasInlineAddons) {
       const customization: DrinkCustomization = {
         selectedAddons: [],
         totalAddonsPrice: 0,
@@ -405,6 +447,73 @@ export default function DrinkCustomizationDialog({
                   <Separator className="mt-3" />
                 </div>
               )}
+
+              {/* Inline addons (e.g. filling options stored directly on the product) */}
+              {(() => {
+                if (inlineAddons.length === 0) return null;
+                // Group by section
+                const sections: Record<string, number[]> = {};
+                inlineAddons.forEach((addon, idx) => {
+                  const sec = addon.section || '';
+                  if (!sections[sec]) sections[sec] = [];
+                  sections[sec].push(idx);
+                });
+                return Object.entries(sections).map(([sec, indices]) => {
+                  const isSingleSelect = indices.some(i => inlineAddons[i].selectionType === 'single');
+                  return (
+                    <div key={sec} className="space-y-2">
+                      <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                        <Plus className="w-4 h-4" />
+                        <span>{sec || (isAr ? "الإضافات" : "Extras")}</span>
+                        {isSingleSelect && (
+                          <Badge variant="outline" className="text-xs">{isAr ? "اختر واحد" : "Select one"}</Badge>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {indices.map(idx => {
+                          const addon = inlineAddons[idx];
+                          const isSelected = selectedInlineAddonIndices.includes(idx);
+                          return (
+                            <div
+                              key={idx}
+                              className={`relative rounded-md border p-3 cursor-pointer transition-all ${
+                                isSelected
+                                  ? 'border-primary bg-primary/10'
+                                  : 'border-border hover-elevate'
+                              }`}
+                              onClick={() => {
+                                if (isSingleSelect) {
+                                  // single-select: deselect all in this section, then select this one
+                                  setSelectedInlineAddonIndices(prev => {
+                                    const withoutSection = prev.filter(i => !indices.includes(i));
+                                    return isSelected ? withoutSection : [...withoutSection, idx];
+                                  });
+                                } else {
+                                  setSelectedInlineAddonIndices(prev =>
+                                    isSelected ? prev.filter(i => i !== idx) : [...prev, idx]
+                                  );
+                                }
+                              }}
+                              data-testid={`inline-addon-${idx}`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex-1">
+                                  <p className="text-sm font-medium">{isAr ? addon.nameAr : (addon.nameEn || addon.nameAr)}</p>
+                                  {addon.price > 0 && (
+                                    <p className="text-xs text-primary">+{addon.price} <SarIcon /></p>
+                                  )}
+                                </div>
+                                {isSelected && <Check className="w-4 h-4 text-primary" />}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <Separator className="mt-3" />
+                    </div>
+                  );
+                });
+              })()}
 
               {Object.entries(groupedAddons).map(([category, addons]) => {
                 const categoryInfo = CATEGORY_INFO[category] || CATEGORY_INFO.other;

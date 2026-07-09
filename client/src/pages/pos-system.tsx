@@ -2415,7 +2415,8 @@ export default function PosSystem() {
                         const hasVariants = group.length > 1;
                         const hasSizes = item.availableSizes && item.availableSizes.length > 0;
                         const hasAddons = itemsWithAddonsSet.has(item.id);
-                        if (!hasVariants && !hasSizes && !hasAddons) {
+                        const hasInlineAddons = Array.isArray((item as any).addons) && (item as any).addons.length > 0;
+                        if (!hasVariants && !hasSizes && !hasAddons && !hasInlineAddons) {
                           addToOrder(item);
                         } else {
                           const existingCartItem = orderItems.find((oi: any) => oi.coffeeItem.id === item.id);
@@ -4377,11 +4378,17 @@ export default function PosSystem() {
           onConfirm={(customization: DrinkCustomization, quantity: number, selectedVariant?: CoffeeItem) => {
             const targetItem = selectedVariant || posCustomizationItem?.item;
             if (!targetItem) return;
-            const selectedItemAddons = customization.selectedAddons.map(addon => ({
+            const regularAddons = customization.selectedAddons.map(addon => ({
               nameAr: addon.nameAr + (addon.quantity > 1 ? ` ×${addon.quantity}` : ''),
               nameEn: addon.nameAr,
               price: addon.price * addon.quantity,
             }));
+            const inlineAddons = (customization.selectedInlineAddons || []).map(addon => ({
+              nameAr: addon.nameAr,
+              nameEn: addon.nameEn || addon.nameAr,
+              price: Number(addon.price || 0),
+            }));
+            const selectedItemAddons = [...regularAddons, ...inlineAddons];
             addToOrder(targetItem, selectedItemAddons.length > 0 ? { selectedItemAddons } : undefined, customization.selectedSize || null, quantity, customization);
             setPosCustomizationItem(null);
           }}
