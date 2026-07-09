@@ -470,6 +470,21 @@ setInterval(async () => {
 
 const app = express();
 
+// ─── Apple Pay domain verification — BEFORE all middleware ────────────────────
+// Must be first so Helmet, rate-limiters, and session middleware do NOT touch
+// these responses. Apple's verifier rejects files served with CSP / security
+// headers or rate-limit delays.
+app.get('/.well-known/apple-developer-merchantid-domain-association', (_req, res) => {
+  res.set('Content-Type', 'application/octet-stream');
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.sendFile(path.resolve(__dirname, '..', 'public', '.well-known', 'apple-developer-merchantid-domain-association'));
+});
+app.get('/.well-known/apple-developer-merchantid-domain-association.txt', (_req, res) => {
+  res.set('Content-Type', 'application/octet-stream');
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.sendFile(path.resolve(__dirname, '..', 'public', '.well-known', 'apple-developer-merchantid-domain-association.txt'));
+});
+
 // ─── SECURITY LAYER ────────────────────────────────────────────────────────────
 
 // 1. Helmet: Sets 14 security HTTP headers (CSP, HSTS, X-Frame-Options, etc.)
@@ -690,19 +705,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ─── Apple Pay domain verification (MUST be before any SPA/Vite middleware) ───
-// Apple sends a HEAD/GET to /.well-known/apple-developer-merchantid-domain-association
-// to verify domain ownership. Serve it with no caching so Apple always gets the latest.
-app.get('/.well-known/apple-developer-merchantid-domain-association', (_req, res) => {
-  res.set('Content-Type', 'application/octet-stream');
-  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.sendFile(path.resolve(__dirname, '..', 'public', '.well-known', 'apple-developer-merchantid-domain-association'));
-});
-app.get('/.well-known/apple-developer-merchantid-domain-association.txt', (_req, res) => {
-  res.set('Content-Type', 'text/plain; charset=utf-8');
-  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.sendFile(path.resolve(__dirname, '..', 'public', '.well-known', 'apple-developer-merchantid-domain-association'));
-});
 
 // Serve attached assets for both development and production
 app.use('/attached_assets', express.static(path.resolve(__dirname, '..', 'attached_assets'), {
