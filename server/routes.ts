@@ -4198,6 +4198,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       };
 
+      // ── Debug: log token structure (safe — Data/Signature are truncated) ──
+      console.log('[Apple Pay] Token structure received:', JSON.stringify({
+        hasPaymentData: !!paymentToken.paymentData,
+        pdVersion:      pd.version   || pd.Version,
+        pdDataLen:      (pd.data     || pd.Data     || '').length,
+        pdSigLen:       (pd.signature|| pd.Signature|| '').length,
+        hdrEphLen:      (hdr.ephemeralPublicKey || hdr.EphemeralPublicKey || '').length,
+        hdrPKH:         (hdr.publicKeyHash      || hdr.PublicKeyHash      || '').length,
+        hdrTxId:        (hdr.transactionId      || hdr.TransactionId      || '').length,
+        pmNetwork:      pm.network   || pm.Network,
+        pmType:         pm.type      || pm.Type,
+        txIdentifier:   (paymentToken.transactionIdentifier || '').slice(0, 20),
+      }));
+      console.log('[Apple Pay] Request body to Geidea (Data truncated):', JSON.stringify({
+        ...processBody,
+        Token: {
+          ...processBody.Token,
+          PaymentData: {
+            ...processBody.Token.PaymentData,
+            Data:      processBody.Token.PaymentData.Data.slice(0, 40) + '…',
+            Signature: processBody.Token.PaymentData.Signature.slice(0, 40) + '…',
+          },
+        },
+      }));
       console.log('[Apple Pay] Processing payment via /pgw/api/v2/direct/apple/pay, ref:', merchantReferenceId);
       const processRes = await fetch(`${baseUrl}/pgw/api/v2/direct/apple/pay`, {
         method: 'POST',
