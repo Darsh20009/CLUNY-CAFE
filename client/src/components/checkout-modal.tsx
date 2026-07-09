@@ -425,6 +425,7 @@ const CheckoutModal = memo(() => {
        customerName={customerName}
        customerPhone={customerPhone}
        customerEmail={customer?.email}
+       paymentMethod={selectedPaymentMethod ?? undefined}
        onSuccess={() => {
          setShowGeideaWidget(false);
          handlePaymentConfirmed(orderDetails);

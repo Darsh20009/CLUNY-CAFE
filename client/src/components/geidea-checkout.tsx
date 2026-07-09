@@ -10,6 +10,7 @@ interface GeideaCheckoutProps {
   customerPhone?: string;
   customerEmail?: string;
   customerName?: string;
+  paymentMethod?: string;
   onSuccess: () => void;
   onError: (message: string) => void;
   onCancel: () => void;
@@ -23,6 +24,7 @@ export default function GeideaCheckoutWidget({
   customerPhone,
   customerEmail,
   customerName,
+  paymentMethod,
   onSuccess,
   onError,
   onCancel,
@@ -63,6 +65,7 @@ export default function GeideaCheckoutWidget({
           customerPhone,
           customerEmail,
           returnUrl,
+          paymentMethod,
         }),
       });
 
