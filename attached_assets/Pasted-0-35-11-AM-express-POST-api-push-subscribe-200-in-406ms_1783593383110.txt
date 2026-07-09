@@ -1,0 +1,40 @@
+0:35:11 AM [express] POST /api/push/subscribe 200 in 406ms :: {"success":true}
+10:35:11 AM [express] GET /api/orders/live 304 in 1106ms :: [{"tenantId":"demo-tenant","branchId":"ga…
+10:35:12 AM [express] GET /api/shifts/auto-current 304 in 601ms :: {"isAuto":true,"windowStart":"2026…
+10:35:14 AM [express] POST /api/customer/proximity-notify 200 in 106ms :: {"triggered":false,"reason"…
+[WS] New client connected
+10:35:14 AM [express] GET /api/shifts/active 304 in 104ms
+[WS] New client connected
+[WS] New client connected
+10:35:14 AM [express] GET /api/coffee-items/with-addons 304 in 90ms :: ["m1ct7sKknY","TAV2kHfAJH"]
+10:35:14 AM [express] GET /api/notifications/unread-count 304 in 199ms :: {"count":96310}
+[WS] Client subscribed as pos userId=anon
+⚠️  SLOW API: GET /api/orders/kitchen took 2094ms (status 304)
+10:35:16 AM [express] GET /api/orders/kitchen 304 in 1994ms :: [{"customerArrived":false,"paymentStat…
+10:35:19 AM [express] GET /api/notifications/unread-count 304 in 206ms :: {"count":96310}
+10:35:19 AM [express] GET /api/public/branches 200 in 106ms :: [{"id":"gazZlcapt0_u21T2iEyZf","nameAr…
+10:35:19 AM [express] GET /api/promo-offers 200 in 102ms :: []
+10:35:19 AM [express] GET /api/coffee-items/addons-preview 200 in 200ms :: {"m1ct7sKknY":[{"nameAr":"…
+10:35:19 AM [express] GET /api/coffee-items/with-addons 200 in 195ms :: ["m1ct7sKknY","TAV2kHfAJH"]
+10:35:26 AM [express] GET /api/shifts/active 304 in 59ms
+10:35:29 AM [express] GET /api/shifts/active 304 in 59ms
+10:35:30 AM [express] POST /api/branches/gazZlcapt0_u21T2iEyZf/check-location 200 in 59ms :: {"within…
+10:35:31 AM [express] GET /api/public/settings 200 in 59ms :: {"tradeNameAr":"كلوني كافيه","tradeName…
+[Apple Pay] Validating merchant directly with Apple: {
+  validationUrl: 'https://apple-pay-gateway.apple.com/paymentservices/startSession',
+  merchantIdentifier: 'merchant.cluny.cafe',
+  initiativeDomain: 'www.cluny.cafe'
+}
+[Apple Pay] Merchant validated successfully with Apple
+10:35:33 AM [express] POST /api/payments/apple-pay/validate-merchant 200 in 585ms :: {"success":true,…
+[SCHEDULER] 🗓️ New day detected — daily tracker reset
+[Apple Pay] Token structure received: {"hasPaymentData":true,"pdVersion":"EC_v1","pdDataLen":456,"pdSigLen":2944,"hdrEphLen":124,"hdrPKH":44,"hdrTxId":64,"pmNetwork":"mada","pmType":"debit","txIdentifier":"cd923316721d8b731385"}
+[Apple Pay] Request body to Geidea (Data truncated): {"Amount":1.35,"Currency":"SAR","MerchantReferenceId":"LbAaGLUgZowf7WlRwrVlo","CallbackUrl":"https://cluny.cafe/api/payments/geidea/callback","InitiatedBy":"Internet","CardOnFile":false,"Token":{"PaymentData":{"Version":"EC_v1","Data":"Deh2vRX0WBCxSG+BlRfmC6bfHPsueRbzvHv+4wVn…","Signature":"MIAGCSqGSIb3DQEHAqCAMIACAQExDTALBglghkgB…","Header":{"EphemeralPublicKey":"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7K9wggMI9zGGpjGLetAWFrc36vxNNXI/ILDWbQlAa9hjZVsQdttFXDf8V+EKpmqeX99fvW/ZJmCemQyOhibU9g==","PublicKeyHash":"tY+QP56NnhbXWs8vLO6BWx2r4A4KcgQSxPR+pj/8xqQ=","TransactionId":"cd923316721d8b7313857dcd9c8ab6f90a982e61e1e71cc96af3bf51acd1a9d6"}},"PaymentMethod":{"DisplayName":"mada 9365","Network":"mada","Type":"debit"},"TransactionIdentifier":"cd923316721d8b7313857dcd9c8ab6f90a982e61e1e71cc96af3bf51acd1a9d6"}}
+[Apple Pay] Processing payment via /pgw/api/v2/direct/apple/pay, ref: LbAaGLUgZowf7WlRwrVlo
+[Apple Pay] Process response: {"responseMessage":"General error","detailedResponseMessage":"Internal Server Error","language":"EN","responseCode":"100","detailedResponseCode":"013"}
+⚠️  SLOW API: POST /api/payments/apple-pay/process took 1882ms (status 400)
+10:35:41 AM [express] POST /api/payments/apple-pay/process 400 in 1879ms :: {"error":"Internal Server…
+10:35:42 AM [express] GET /api/shifts/active 304 in 99ms
+10:35:45 AM [express] GET /api/shifts/active 304 in 58ms
+10:35:45 AM [express] GET /api/notifications/unread-count 304 in 184ms :: {"count":96310}
+10:35:50 AM [express] GET /api/notifications/unread-count 304 in 182ms :: {"count":96310}
