@@ -19,11 +19,11 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import GeideaCheckoutWidget from "./geidea-checkout";
-import ExpressCheckoutWallet from "./express-checkout-wallet";
 import PaymobCheckoutWidget from "./paymob-checkout";
+import ApplePayButton from "./apple-pay-button";
 import SarIcon from "@/components/sar-icon";
 
-const GEIDEA_HPP_METHODS = ['geidea', 'neoleap', 'apple_pay'];
+const GEIDEA_HPP_METHODS = ['geidea', 'neoleap'];
 const PAYMOB_METHODS = ['paymob-card', 'paymob-wallet'];
 
 type CheckoutStep = 'review' | 'delivery' | 'payment' | 'confirmation' | 'success';
@@ -66,6 +66,7 @@ const CheckoutModal = memo(() => {
  const [receiptFile, setReceiptFile] = useState<File | null>(null);
  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
  const [showGeideaWidget, setShowGeideaWidget] = useState(false);
+ const [showApplePayNative, setShowApplePayNative] = useState(false);
  const [showPaymobWidget, setShowPaymobWidget] = useState(false);
  const [paymobCheckoutUrl, setPaymobCheckoutUrl] = useState("");
   const paymentMethodForOrder = useRef<string | null>(null);
@@ -99,6 +100,9 @@ const CheckoutModal = memo(() => {
   paymentMethodForOrder.current = null; // clear after reading
   if (effectiveMethod === 'cash') {
     handlePaymentConfirmed(order);
+  } else if (effectiveMethod === 'apple_pay') {
+    // Show native Apple Pay button — user must tap it to trigger ApplePaySession from a real gesture
+    setShowApplePayNative(true);
   } else if (effectiveMethod && GEIDEA_HPP_METHODS.includes(effectiveMethod as string)) {
     setShowGeideaWidget(true);
   } else if (effectiveMethod && PAYMOB_METHODS.includes(effectiveMethod as string)) {
@@ -275,6 +279,7 @@ const CheckoutModal = memo(() => {
  setReceiptFile(null);
  setReceiptPreview(null);
  setShowGeideaWidget(false);
+ setShowApplePayNative(false);
  };
 
  const steps = [
@@ -419,29 +424,31 @@ const CheckoutModal = memo(() => {
 
  {currentStep === 'payment' && (
  <div className="space-y-6 animate-in fade-in duration-500">
-  {showGeideaWidget && orderDetails ? (
-     selectedPaymentMethod === 'apple_pay' ? (
-       <ExpressCheckoutWallet
-         amount={getTotalPrice()}
-         orderId={orderDetails.orderNumber}
-         wallet="apple-pay"
-         customerName={customerName}
-         customerPhone={customerPhone}
-         customerEmail={customer?.email}
-         containerId={`apple-pay-express-${orderDetails.orderNumber}`}
-         onSuccess={() => {
-           setShowGeideaWidget(false);
-           handlePaymentConfirmed(orderDetails);
-         }}
-         onError={(msg) => {
-           setShowGeideaWidget(false);
-           toast({ variant: "destructive", title: "فشل الدفع", description: msg });
-         }}
-         onCancel={() => {
-           setShowGeideaWidget(false);
-         }}
-       />
-     ) : (
+  {/* ── Native Apple Pay: shown after order is created ── */}
+  {showApplePayNative && orderDetails ? (
+    <div className="flex flex-col items-center gap-4 py-6">
+      <p className="text-sm text-muted-foreground text-center">اضغط على الزر أدناه لإتمام الدفع بـ Apple Pay</p>
+      <ApplePayButton
+        amount={getTotalPrice()}
+        orderRef={orderDetails.orderNumber}
+        customerName={customerName}
+        customerPhone={customerPhone}
+        className="max-w-xs"
+        onSuccess={(txId) => {
+          setShowApplePayNative(false);
+          handlePaymentConfirmed({ ...orderDetails, transactionId: txId, paymentMethod: 'apple_pay', paymentStatus: 'paid' });
+        }}
+        onError={(msg) => {
+          setShowApplePayNative(false);
+          toast({ variant: "destructive", title: "فشل الدفع", description: msg });
+        }}
+        onCancel={() => {
+          setShowApplePayNative(false);
+        }}
+      />
+      <Button variant="ghost" size="sm" onClick={() => setShowApplePayNative(false)}>إلغاء</Button>
+    </div>
+  ) : showGeideaWidget && orderDetails ? (
      <GeideaCheckoutWidget
        orderNumber={orderDetails.orderNumber}
        amount={getTotalPrice()}
@@ -461,7 +468,6 @@ const CheckoutModal = memo(() => {
          setShowGeideaWidget(false);
        }}
      />
-     )
    ) : (
      <>
        <div className="bg-card/50 rounded-xl p-6 border border-primary/20">
@@ -488,6 +494,8 @@ const CheckoutModal = memo(() => {
          >
            {createOrderMutation.isPending ? (
              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> جاري المعالجة...</>
+           ) : selectedPaymentMethod === 'apple_pay' ? (
+             t('checkout.confirm_order')
            ) : selectedPaymentMethod && GEIDEA_HPP_METHODS.includes(selectedPaymentMethod as string) ? (
              <><CreditCard className="w-4 h-4 mr-2" /> الدفع الآن</>
            ) : selectedPaymentMethod && PAYMOB_METHODS.includes(selectedPaymentMethod as string) ? (
