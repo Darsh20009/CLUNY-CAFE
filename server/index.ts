@@ -474,15 +474,23 @@ const app = express();
 // Must be first so Helmet, rate-limiters, and session middleware do NOT touch
 // these responses. Apple's verifier rejects files served with CSP / security
 // headers or rate-limit delays.
-app.get('/.well-known/apple-developer-merchantid-domain-association', (_req, res) => {
+// Serve domain-specific files: cluny.cafe / www.cluny.cafe get the cluny file,
+// all other hosts (e.g. *.onrender.com) get the render file.
+function appleWellKnownFile(req: import('express').Request, res: import('express').Response, ext: string) {
+  const host = (req.get('host') || '').replace(/:\d+$/, '');
+  const isCluny = host === 'cluny.cafe' || host === 'www.cluny.cafe';
+  const filename = isCluny
+    ? `apple-developer-merchantid-domain-association-cluny${ext}`
+    : `apple-developer-merchantid-domain-association${ext}`;
   res.set('Content-Type', 'application/octet-stream');
   res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.sendFile(path.resolve(__dirname, '..', 'public', '.well-known', 'apple-developer-merchantid-domain-association'));
+  res.sendFile(path.resolve(__dirname, '..', 'public', '.well-known', filename));
+}
+app.get('/.well-known/apple-developer-merchantid-domain-association', (req, res) => {
+  appleWellKnownFile(req, res, '');
 });
-app.get('/.well-known/apple-developer-merchantid-domain-association.txt', (_req, res) => {
-  res.set('Content-Type', 'application/octet-stream');
-  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.sendFile(path.resolve(__dirname, '..', 'public', '.well-known', 'apple-developer-merchantid-domain-association.txt'));
+app.get('/.well-known/apple-developer-merchantid-domain-association.txt', (req, res) => {
+  appleWellKnownFile(req, res, '.txt');
 });
 
 // ─── SECURITY LAYER ────────────────────────────────────────────────────────────
