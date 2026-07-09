@@ -122,8 +122,8 @@ export default function GeideaCheckoutWidget({
       if (!href || href === "about:blank") return;
       if (href.includes("/payment-return")) {
         const params = new URLSearchParams(loc.search);
-        const responseCode = params.get("responseCode") || params.get("Response") || "";
-        const status = params.get("status") || params.get("Status") || "";
+        const responseCode = params.get("geideaResponseCode") || params.get("responseCode") || params.get("Response") || "";
+        const status = params.get("geideaStatus") || params.get("status") || params.get("Status") || "";
         if (mountedRef.current) {
           if (responseCode === "000" || status.toLowerCase() === "success" || status.toLowerCase() === "paid") {
             setStage("success");

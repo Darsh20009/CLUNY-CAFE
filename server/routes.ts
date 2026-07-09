@@ -3584,7 +3584,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // api.ksamerchant.geidea.net → www.ksamerchant.geidea.net
           // api.merchant.geidea.net → www.merchant.geidea.net
           const hppBase = baseUrl.replace('https://api.', 'https://www.');
-          const geideaPaymentUrl = sessionId ? `${hppBase}/hpp/checkout/?${sessionId}` : null;
+          const geideaPaymentUrl = sessionId ? `${hppBase}/hpp/checkout/?sessionId=${sessionId}` : null;
 
           if (geideaResponse.ok && sessionId) {
             await logPayment({

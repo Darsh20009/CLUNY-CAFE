@@ -20,10 +20,9 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import GeideaCheckoutWidget from "./geidea-checkout";
 import PaymobCheckoutWidget from "./paymob-checkout";
-import ApplePayButton from "./apple-pay-button";
 import SarIcon from "@/components/sar-icon";
 
-const GEIDEA_HPP_METHODS = ['geidea', 'neoleap'];
+const GEIDEA_HPP_METHODS = ['geidea', 'neoleap', 'apple_pay'];
 const PAYMOB_METHODS = ['paymob-card', 'paymob-wallet'];
 
 type CheckoutStep = 'review' | 'delivery' | 'payment' | 'confirmation' | 'success';
@@ -98,9 +97,6 @@ const CheckoutModal = memo(() => {
   const effectiveMethod = paymentMethodForOrder.current ?? selectedPaymentMethod;
   paymentMethodForOrder.current = null; // clear after reading
   if (effectiveMethod === 'cash') {
-    handlePaymentConfirmed(order);
-  } else if (effectiveMethod === 'apple_pay') {
-    // Apple Pay was already authorised before the order was created — confirm immediately
     handlePaymentConfirmed(order);
   } else if (effectiveMethod && GEIDEA_HPP_METHODS.includes(effectiveMethod as string)) {
     setShowGeideaWidget(true);
@@ -229,47 +225,6 @@ const CheckoutModal = memo(() => {
   paymentMethodForOrder.current = selectedPaymentMethod;
  createOrderMutation.mutate(orderData);
  };
-
-  /** Apple Pay: payment is already processed before the order is created.
-   *  Build the order data here and the onSuccess handler will confirm immediately. */
-  const handleApplePaySuccess = (transactionId: string) => {
-    if (!customerName || !customerPhone) {
-      toast({ variant: 'destructive', title: 'يرجى إدخال الاسم ورقم الجوال أولاً' });
-      return;
-    }
-    const apOrderData = {
-      items: cartItems.map(item => {
-        const inlineAddons = (item as any).selectedItemAddons || [];
-        const addonsExtra = inlineAddons.reduce((s: number, a: any) => s + (Number(a.price) || 0), 0);
-        return {
-          coffeeItemId: item.coffeeItemId,
-          quantity: item.quantity,
-          price: String(Number(item.coffeeItem?.price || 0) + addonsExtra),
-          name: item.coffeeItem?.nameAr || '',
-          customization: inlineAddons.length > 0 ? { selectedItemAddons: inlineAddons } : undefined,
-        };
-      }),
-      totalAmount: getTotalPrice().toString(),
-      paymentMethod: 'apple_pay',
-      status: 'paid',
-      transactionRef: transactionId,
-      customerId: customer?.id || null,
-      customerInfo: { name: customerName, phone: customerPhone },
-      deliveryType,
-      carPickup: deliveryType === 'curbside',
-      carInfo: deliveryType === 'curbside' ? { carType, carColor, plateNumber: carPlate } : null,
-      carType: deliveryType === 'curbside' ? carType : null,
-      carColor: deliveryType === 'curbside' ? carColor : null,
-      carPlate: deliveryType === 'curbside' ? carPlate : null,
-      plateNumber: deliveryType === 'curbside' ? carPlate : null,
-      branchId: (deliveryType === 'pickup' || deliveryType === 'curbside') ? selectedBranch : null,
-      deliveryAddress: deliveryType === 'delivery' ? deliveryAddress : null,
-      deliveryNotes: deliveryNotes || null,
-      customerPhone,
-    };
-    paymentMethodForOrder.current = 'apple_pay';
-    createOrderMutation.mutate(apOrderData);
-  };
 
   const handlePaymentConfirmed = async (order: any) => {
    setCurrentStep('success');
@@ -485,22 +440,6 @@ const CheckoutModal = memo(() => {
    ) : (
      <>
        <div className="bg-card/50 rounded-xl p-6 border border-primary/20">
-          {/* ── Apple Pay express checkout ─────────────────────────── */}
-          <ApplePayButton
-            amount={getTotalPrice()}
-            orderRef={`apay-${Date.now()}`}
-            customerName={customerName}
-            customerPhone={customerPhone}
-            onSuccess={handleApplePaySuccess}
-            onError={(msg) => toast({ variant: 'destructive', title: 'فشل Apple Pay', description: msg })}
-            onCancel={() => {}}
-            className='mb-1'
-          />
-          <div className='relative flex items-center gap-3 my-1 h-5 aria-hidden'>
-            <div className='flex-1 h-px bg-border' />
-            <span className='text-xs text-muted-foreground select-none'>أو</span>
-            <div className='flex-1 h-px bg-border' />
-          </div>
          <PaymentMethods paymentMethods={paymentMethods} selectedMethod={selectedPaymentMethod} onSelectMethod={setSelectedPaymentMethod} comingSoon={false} />
          {selectedPaymentMethod && paymentMethods.find(m => m.id === selectedPaymentMethod)?.requiresReceipt && (
            <div className="mt-4 p-4 border-2 border-dashed rounded-lg text-center">
