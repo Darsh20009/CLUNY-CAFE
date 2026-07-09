@@ -1,0 +1,60 @@
+
+Search logs
+
+Last hour
+
+
+
+
+New logs in Live Tail
+
+10:57:41 AM [express] GET /api/notifications/unread-count 304 in 184ms :: {"count":96317}
+10:57:52 AM [express] GET /api/shifts/active 304 in 61ms
+10:57:54 AM [express] GET /api/shifts/active 304 in 62ms
+[Apple Pay] Validating merchant directly with Apple: {
+  validationUrl: 'https://apple-pay-gateway.apple.com/paymentservices/startSession',
+  merchantIdentifier: 'merchant.cluny.cafe',
+  initiativeDomain: 'www.cluny.cafe'
+}
+[Apple Pay] validate-merchant error: Error: Apple validation failed (400): {
+  "statusMessage": "Payment Services Exception merchantId=merchant.cluny.cafe not registered for domain=www.cluny.cafe",
+  "statusCode": "400"
+}
+    at IncomingMessage.<anonymous> (file:///opt/render/project/src/dist/index.js:574:88322)
+    at IncomingMessage.emit (node:events:530:35)
+    at endReadableNT (node:internal/streams/readable:1696:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21)
+10:57:56 AM [express] POST /api/payments/apple-pay/validate-merchant 500 in 226ms :: {"error":"خطأ في…
+[WS] New client connected
+10:57:57 AM [express] POST /api/payments/create-session-token 200 in 74ms :: {"token":"4fc1843936e4b4…
+[Geidea] Create Session request body: {"amount":"1.35","currency":"SAR","merchantReferenceId":"CLN1783594677082","timestamp":"2026/07/09 10:57:57","signature":"[HIDDEN]","language":"ar","paymentOperation":"Pay","callbackUrl":"https://www.cluny.cafe/payment-return?pt=4fc1843936e4b44f1c21281884b99654cd4ba85df6b1f734c866e21923e6e7ce&provider=geidea","returnUrl":"https://www.cluny.cafe/payment-return?pt=4fc1843936e4b44f1c21281884b99654cd4ba85df6b1f734c866e21923e6e7ce&provider=geidea","customer":{"phoneNumber":"532441566","phonecountrycode":"+966","firstName":"Youssef","lastName":"Darwish"}}
+[Geidea] Create Session response: {"session":{"id":"ad74d633-84a5-4cda-2a3c-08dedb63dc63","amount":1.35,"currency":"SAR","callbackUrl":"https://www.cluny.cafe/payment-return?pt=4fc1843936e4b44f1c21281884b99654cd4ba85df6b1f734c866e21923e6e7ce&provider=geidea","returnUrl":"https://www.cluny.cafe/payment-return?pt=4fc1843936e4b44f1c21281884b99654cd4ba85df6b1f734c866e21923e6e7ce&provider=geidea","expiryDate":"2026-07-09T11:57:58.5604806Z","status":"Initiated","merchantId":"f9931464-9a09-458f-7bd9-08de72963454","merchantPublicKey":"5bf49a11-693b-4d3c-9d85-4f757d03cc1c","language":"ar","merchantReferenceId":"CLN1783594677082","paymentIntentId":null,"paymentOperation":"Pay","cardOnFile":false,"cofAgreement":{"id":null,"type":null},"initiatedBy":"Internet","tokenId":null,"customer":{"id":null,"referenceId":null,"create":false,"setDefaultMethod":false,"email":null,"phoneNumber":"+966532441566","firstName":"Youssef","lastName":"Darwish","address":{"billing":{"country":null,"city":null,"street":null,"postalCode":null},"shipping":{"country":null,"city":null,"street":null,"postalCode":null}}},"platform":{"name":null,"version":null,"pluginVersion":null,"partnerId":null},"paymentOptions":null,"recurrence":null,"order":null,"items":null,"appearance":null,"metadata":{"custom":null},"subscription":null,"acceptTabbyPaymentMethod":false,"acceptTamaraPaymentMethod":false,"expressCheckouts":[],"hideWallets":[],"splitPayoutDetails":[],"caf":{"extraChargesLabel":null,"extraChargesType":"","extraCharges":null,"addOnFeesLabel":null,"addOnFeesType":"","addOnFees":null},"originalAmount":1.35,"addOnFeesAmount":0,"extraChargesAmount":0,"termsAndConditions":null,"token":null,"networkToken":null,"isNTPayment":false,"cardTokenId":null,"processingInformation":{"commerceIndicator":null,"feeProgramIndicator":null},"additionalData":{"isAft":false,"isHighRisk":false},"aft":null},"merchantNameEn":null,"merchantNameAr":null,"paymentIntent":null,"termsAndConditions":null,"responseMessage":"Success","detailedResponseMessage":"The operation was successful","language":"ar","responseCode":"000","detailedResponseCode":"000","signature":"FfYCnGQ0c452S8HmUyOSc4KzJwevbim3AxcpxgEn8lE="}
+10:57:59 AM [express] GET /api/branches 200 in 1ms :: [{"_id":"699521d8e2f9c24dcbcc28d6","id":"gazZlc…
+10:57:59 AM [express] GET /api/custom-banners 200 in 0ms :: []
+10:57:59 AM [express] GET /api/menu-categories 200 in 28ms :: [{"_id":"6a4ed7372d35133524e14294","id"…
+10:57:59 AM [express] GET /api/payment-methods 200 in 1ms :: [{"id":"qahwa-card","nameAr":"بطاقة كلون…
+10:57:59 AM [express] GET /api/public/loyalty-settings 200 in 1ms :: {"enabled":true,"pointsPerDrink"…
+10:57:59 AM [express] GET /api/public/settings 200 in 194ms :: {"tradeNameAr":"كلوني كافيه","tradeNam…
+10:57:59 AM [express] GET /api/cart/session-1783591530177-cxpxd4lrs 200 in 333ms :: [{"id":"EjCtnANDL…
+10:57:59 AM [express] GET /api/business-config 200 in 366ms :: {"socialLinks":{"instagram":"https://w…
+10:57:59 AM [express] GET /api/product-addons 200 in 95ms :: [{"_id":"6a4dabd5be89bb84e6836097","id":…
+10:57:59 AM [express] GET /api/coffee-items 200 in 432ms :: [{"id":"m1ct7sKknY","tenantId":"demo-tena…
+[Apple Pay] Validating merchant directly with Apple: {
+  validationUrl: 'https://apple-pay-gateway.apple.com/paymentservices/startSession',
+  merchantIdentifier: 'merchant.cluny.cafe',
+  initiativeDomain: 'www.cluny.cafe'
+}
+[Apple Pay] Merchant validated successfully with Apple
+10:58:01 AM [express] POST /api/payments/apple-pay/validate-merchant 200 in 116ms :: {"success":true,…
+10:58:02 AM [express] GET /api/notifications/unread-count 304 in 185ms :: {"count":96317}
+10:58:02 AM [express] POST /api/customer/proximity-notify 200 in 60ms :: {"triggered":false,"reason":…
+[Apple Pay] Token structure received: {"hasPaymentData":true,"pdVersion":"EC_v1","pdDataLen":428,"pdSigLen":2948,"hdrEphLen":124,"hdrPKH":44,"hdrTxId":64,"pmNetwork":"Visa","pmType":"debit","txIdentifier":"a662db1a0be69fd07109"}
+[Apple Pay] Request body to Geidea (Data truncated): {"Method":"encrypted","Token":{"PaymentData":{"Version":"EC_v1","Data":"1wW5y4zZi+5FOPfOUt4lX/OhnFORatzNAmgvV4XC…","Signature":"MIAGCSqGSIb3DQEHAqCAMIACAQExDTALBglghkgB…","Header":{"EphemeralPublicKey":"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAETnVsjWfvA+Qsf7oge/PI3ZuUg+u5ahlnU0W3NmhSyGd+LoSYQcPlnWGOJp8swDMcDzegkhHymhErBQTbD1ysmQ==","PublicKeyHash":"tY+QP56NnhbXWs8vLO6BWx2r4A4KcgQSxPR+pj/8xqQ=","TransactionId":"a662db1a0be69fd0710955897fc5210b7adc8bdeffc56e44b6c3e00bf375db71"}}},"PaymentMethod":{"DisplayName":"Visa 1598","Network":"Visa","Type":"debit"},"Amount":1.35,"Currency":"SAR","MerchantReferenceId":"ngHWjjC8VDn4oFSNyqFv","CallbackUrl":"https://cluny.cafe/api/payments/geidea/callback","InitiatedBy":"internet","CardOnFile":false,"DeviceIdentification":{"UserAgent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15","Language":"en"}}
+[Apple Pay] Processing payment via /pgw/api/v2/direct/apple/pay, ref: ngHWjjC8VDn4oFSNyqFv
+[Apple Pay] Process response: {"responseMessage":"General error","detailedResponseMessage":"Internal Server Error","language":"EN","responseCode":"100","detailedResponseCode":"013"}
+10:58:07 AM [express] POST /api/payments/apple-pay/process 400 in 927ms :: {"error":"Internal Server …
+10:58:07 AM [express] GET /api/shifts/active 304 in 60ms
+[WS] Client disconnected: 1006 
+10:58:10 AM [express] GET /api/shifts/active 304 in 62ms
+10:58:12 AM [express] GET /api/notifications/unread-count 304 in 183ms :: {"count":96317}
+10:58:22 AM [expr
