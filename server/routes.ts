@@ -3543,6 +3543,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             geideaCustomer.lastName = nameParts.slice(1).join(' ') || nameParts[0] || customerName;
           }
 
+          const isApplePaySession = reqPaymentMethod === 'apple_pay';
+
           const geideaBody: any = {
             amount: amountStr,
             currency,
@@ -3551,6 +3553,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             signature,
             language: 'ar',
             paymentOperation: 'Pay',
+            // When Apple Pay is selected, tell Geidea to enable it as an express checkout
+            ...(isApplePaySession && { expressCheckouts: ['ApplePay'] }),
           };
 
           if (callbackBase) {
