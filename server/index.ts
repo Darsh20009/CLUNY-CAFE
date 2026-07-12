@@ -727,7 +727,9 @@ app.use('/attached_assets', express.static(path.resolve(__dirname, '..', 'attach
 // Fallback: serve brand logo for any missing /attached_assets/ file instead of 404
 app.get('/attached_assets/*', (req, res) => {
   const brandLogo = path.resolve(__dirname, '..', 'public', 'images', 'brand-logo.png');
-  res.set('Cache-Control', 'public, max-age=60');
+  // Cache the fallback for a long time too — a 60s TTL meant every broken/missing
+  // image link re-downloaded the full logo on almost every page view, adding up fast.
+  res.set('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400');
   res.sendFile(brandLogo, (err) => {
     if (err) res.status(404).json({ error: 'Image not found' });
   });
