@@ -822,7 +822,9 @@ export default function CheckoutPage() {
       return;
     }
     if (selectedPaymentMethod === 'apple_pay') {
-      initiateApplePayNative();
+      // Redirect to Geidea HPP with expressCheckouts:['ApplePay']
+      // The HPP handles Apple Pay natively — no ApplePaySession needed
+      goToGeideaHPP(undefined, 'apple_pay');
       return;
     }
     if (isCardPaymentMethod(selectedPaymentMethod) || isOnlinePaymentMethod(selectedPaymentMethod)) {
@@ -1037,7 +1039,10 @@ export default function CheckoutPage() {
   // ── Geidea HPP fallback (state-independent — can be called from anywhere) ───
   // Used when Apple Pay Direct API is unavailable (401) so user still gets
   // routed to Geidea HPP which has Apple Pay built-in.
-  const goToGeideaHPP = async (overrideOrderData?: any) => {
+  // goToGeideaHPP — full-page redirect to Geidea HPP.
+  // Pass paymentMethod:'apple_pay' to include expressCheckouts:['ApplePay'] in the session,
+  // which makes the HPP show Apple Pay as the primary option on Apple devices.
+  const goToGeideaHPP = async (overrideOrderData?: any, paymentMethod: string = 'geidea') => {
     setIsVerifyingPayment(true);
     try {
       let orderData = overrideOrderData;
@@ -1073,7 +1078,7 @@ export default function CheckoutPage() {
         orderId: `CLN-${Date.now()}`,
         amount: orderData.totalAmount,
         currency: "SAR",
-        paymentMethod: 'geidea',  // always 'geidea', state-independent
+        paymentMethod,
         customerName: orderData.customerName || customerName,
         customerPhone: orderData.customerPhone || customerPhone,
         customerEmail: orderData.customerEmail || customerEmail,
@@ -2001,14 +2006,14 @@ export default function CheckoutPage() {
                   </div>
                 )}
 
-                {/* ── Apple Pay direct button — Safari/Apple devices only ── */}
+                {/* ── Apple Pay button — Safari/Apple devices only → redirects to Geidea HPP ── */}
                 {typeof window !== 'undefined' &&
                   typeof (window as any).ApplePaySession !== 'undefined' &&
                   (window as any).ApplePaySession.canMakePayments() && (
                   <div className="space-y-3">
                     <button
                       type="button"
-                      onClick={initiateApplePayNative}
+                      onClick={() => goToGeideaHPP(undefined, 'apple_pay')}
                       disabled={isVerifyingPayment}
                       style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
