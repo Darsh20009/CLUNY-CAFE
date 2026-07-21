@@ -482,9 +482,15 @@ function appleWellKnownFile(req: import('express').Request, res: import('express
   const filename = isCluny
     ? `apple-developer-merchantid-domain-association-cluny${ext}`
     : `apple-developer-merchantid-domain-association${ext}`;
-  res.set('Content-Type', 'application/octet-stream');
-  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.sendFile(path.resolve(__dirname, '..', 'public', '.well-known', filename));
+  // Apple's verifier requires text/plain — octet-stream causes "download instead of serve" error
+  res.set('Content-Type', 'text/plain; charset=utf-8');
+  res.set('Cache-Control', 'public, max-age=86400'); // 1 day cache
+  res.sendFile(path.resolve(__dirname, '..', 'public', '.well-known', filename), (err) => {
+    if (err) {
+      console.error(`[ApplePay] Missing file: ${filename}`, err.message);
+      res.status(404).send('Not found');
+    }
+  });
 }
 app.get('/.well-known/apple-developer-merchantid-domain-association', (req, res) => {
   appleWellKnownFile(req, res, '');
@@ -567,10 +573,10 @@ app.use("/api/customers/login", authLimiter);
 app.use("/api/customers/register", authLimiter);
 app.use("/api", apiLimiter);
 
-// 3. Enable gzip compression
+// 3. Enable gzip compression (level 9 = max ratio, reduces bandwidth ~60-70% on text)
 app.use(compression({
-  level: 6,
-  threshold: 1024,
+  level: 9,
+  threshold: 512, // compress anything >512 bytes (not just >1KB)
   filter: (req, res) => {
     if (req.headers['x-no-compression']) return false;
     return compression.filter(req, res);
@@ -716,8 +722,11 @@ app.use((req, res, next) => {
 
 // Serve attached assets for both development and production
 app.use('/attached_assets', express.static(path.resolve(__dirname, '..', 'attached_assets'), {
+  etag: true,
+  lastModified: true,
   setHeaders: (res, filePath) => {
-    res.set('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400'); // 7 days
+    // Long cache for images — browser won't re-download if ETag matches
+    res.set('Cache-Control', 'public, max-age=2592000, stale-while-revalidate=86400'); // 30 days
     if (filePath.endsWith('.png')) res.set('Content-Type', 'image/png');
     if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) res.set('Content-Type', 'image/jpeg');
     if (filePath.endsWith('.webp')) res.set('Content-Type', 'image/webp');
@@ -727,9 +736,7 @@ app.use('/attached_assets', express.static(path.resolve(__dirname, '..', 'attach
 // Fallback: serve brand logo for any missing /attached_assets/ file instead of 404
 app.get('/attached_assets/*', (req, res) => {
   const brandLogo = path.resolve(__dirname, '..', 'public', 'images', 'brand-logo.png');
-  // Cache the fallback for a long time too — a 60s TTL meant every broken/missing
-  // image link re-downloaded the full logo on almost every page view, adding up fast.
-  res.set('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400');
+  res.set('Cache-Control', 'public, max-age=2592000, stale-while-revalidate=86400'); // 30 days
   res.sendFile(brandLogo, (err) => {
     if (err) res.status(404).json({ error: 'Image not found' });
   });
@@ -737,12 +744,17 @@ app.get('/attached_assets/*', (req, res) => {
 
 // Serve public static files (audio, images, icons) explicitly so Vite dev middleware doesn't intercept
 app.use(express.static(path.resolve(__dirname, '..', 'public'), {
+  etag: true,
+  lastModified: true,
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.mp4') || filePath.endsWith('.mp3') || filePath.endsWith('.ogg') || filePath.endsWith('.wav')) {
       res.set('Content-Type', filePath.endsWith('.mp4') ? 'video/mp4' : 'audio/mpeg');
-      res.set('Cache-Control', 'public, max-age=604800'); // 7 days
+      res.set('Cache-Control', 'public, max-age=2592000'); // 30 days
     } else if (filePath.endsWith('.png') || filePath.endsWith('.jpg') || filePath.endsWith('.jpeg') || filePath.endsWith('.webp') || filePath.endsWith('.ico') || filePath.endsWith('.svg')) {
-      res.set('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400'); // 7 days
+      res.set('Cache-Control', 'public, max-age=2592000, stale-while-revalidate=86400'); // 30 days
+    } else if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
+      // Hashed bundles — safe to cache forever (immutable)
+      res.set('Cache-Control', 'public, max-age=31536000, immutable'); // 1 year
     }
   }
 }));
