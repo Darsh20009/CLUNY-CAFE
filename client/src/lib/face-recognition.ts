@@ -60,7 +60,7 @@ export function buildMatcher(employees: EmployeeFaceEntry[], threshold = 0.5): a
     .filter(e => e.descriptors.length > 0)
     .map(e => new faceapi.LabeledFaceDescriptors(
       e.employeeId,
-      e.descriptors.map((d: number[]) => new Float32Array(d)) as unknown as Float32Array[]
+      (e.descriptors as any[]).map((d: any) => new Float32Array(d))
     ));
   if (labeledDescriptors.length === 0) return null;
   return new faceapi.FaceMatcher(labeledDescriptors, threshold);

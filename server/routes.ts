@@ -24234,7 +24234,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
   app.get("/api/v1/menu", requireApiKey("menu:read"), async (req: any, res) => {
     try {
       const { CoffeeItemModel } = await import("@shared/schema");
-      const items = await CoffeeItemModel.find({ ...tFilter(req.tenantId), isAvailable: 1 }).limit(500).lean();
+      const items = await CoffeeItemModel.find({ ...tFilter(req.employee?.tenantId), isAvailable: 1 }).limit(500).lean();
       res.json({ data: items, count: items.length });
     } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
   });
@@ -24243,7 +24243,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
   app.get("/api/v1/menu/:id", requireApiKey("menu:read"), async (req: any, res) => {
     try {
       const { CoffeeItemModel } = await import("@shared/schema");
-      const item = await CoffeeItemModel.findOne({ ...tFilter(req.tenantId), id: req.params.id }).lean();
+      const item = await CoffeeItemModel.findOne({ ...tFilter(req.employee?.tenantId), id: req.params.id }).lean();
       if (!item) return res.status(404).json({ error: "Not found" });
       res.json({ data: item });
     } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
@@ -24256,7 +24256,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
       const limit = Math.min(parseInt(req.query.limit) || 50, 200);
       const status = req.query.status;
       const since = req.query.since ? new Date(req.query.since) : undefined;
-      const filter: any = tFilter(req.tenantId);
+      const filter: any = tFilter(req.employee?.tenantId);
       if (status) filter.status = status;
       if (since) filter.createdAt = { $gte: since };
       const orders = await OrderModel.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
@@ -24279,7 +24279,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
   // GET /api/payment-terminal/terminals — list all drivers + status
   app.get("/api/payment-terminal/terminals", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const cfg = getTerminalConfig(req.tenantId || "demo-tenant");
+      const cfg = getTerminalConfig(req.employee?.tenantId || "demo-tenant");
       paymentTerminalService.configure(cfg);
       const infos = await paymentTerminalService.getTerminalInfos();
       res.json(infos);
@@ -24290,7 +24290,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
 
   // GET /api/payment-terminal/config — get current terminal config
   app.get("/api/payment-terminal/config", requireAuth, async (req: AuthRequest, res) => {
-    const cfg = getTerminalConfig(req.tenantId || "demo-tenant");
+    const cfg = getTerminalConfig(req.employee?.tenantId || "demo-tenant");
     const safe = { ...cfg, drivers: Object.fromEntries(Object.entries(cfg.drivers || {}).map(([k, v]: any) => [k, { ...v, apiKey: v?.apiKey ? "***" : undefined, secretKey: v?.secretKey ? "***" : undefined, apiPassword: v?.apiPassword ? "***" : undefined }])) };
     res.json(safe);
   });
@@ -24299,7 +24299,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
   app.post("/api/payment-terminal/configure", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { drivers, activeDriverId } = req.body;
-      const tenantId = req.tenantId || "demo-tenant";
+      const tenantId = req.employee?.tenantId || "demo-tenant";
       const existing = getTerminalConfig(tenantId);
       // Merge — don't overwrite "***" masked secrets with the mask
       const mergedDrivers: any = { ...(existing.drivers || {}) };
@@ -24324,7 +24324,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
     try {
       const { driverId } = req.body;
       if (!driverId) return res.status(400).json({ error: "driverId required" });
-      const tenantId = req.tenantId || "demo-tenant";
+      const tenantId = req.employee?.tenantId || "demo-tenant";
       const cfg = getTerminalConfig(tenantId);
       cfg.activeDriverId = driverId;
       terminalConfigs[tenantId] = cfg;
@@ -24340,7 +24340,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
     try {
       const { amount, currency, orderId, description, callbackUrl } = req.body;
       if (!amount || Number(amount) <= 0) return res.status(400).json({ error: "مبلغ غير صالح" });
-      const tenantId = req.tenantId || "demo-tenant";
+      const tenantId = req.employee?.tenantId || "demo-tenant";
       const cfg = getTerminalConfig(tenantId);
       paymentTerminalService.configure(cfg);
       const result = await paymentTerminalService.pay({
@@ -24363,7 +24363,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
     try {
       const { transactionId, amount, reason, driverId } = req.body;
       if (!transactionId || !amount) return res.status(400).json({ error: "transactionId و amount مطلوبان" });
-      const tenantId = req.tenantId || "demo-tenant";
+      const tenantId = req.employee?.tenantId || "demo-tenant";
       paymentTerminalService.configure(getTerminalConfig(tenantId));
       const result = await paymentTerminalService.refund({ transactionId, amount: Number(amount), reason }, driverId);
       res.json(result);
@@ -24393,7 +24393,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
   app.get("/api/v1/orders/:id", requireApiKey("orders:read"), async (req: any, res) => {
     try {
       const { OrderModel } = await import("@shared/schema");
-      const baseFilter = tFilter(req.tenantId);
+      const baseFilter = tFilter(req.employee?.tenantId);
       const order = await OrderModel.findOne({ ...baseFilter, $or: [{ id: req.params.id }, { orderNumber: req.params.id }] }).lean();
       if (!order) return res.status(404).json({ error: "Not found" });
       res.json({ data: order });
@@ -24414,14 +24414,14 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
       if (!branchId) {
         try {
           const { BranchModel } = await import("@shared/schema");
-          const branch: any = await BranchModel.findOne(tFilter(req.tenantId)).lean();
+          const branch: any = await BranchModel.findOne(tFilter(req.employee?.tenantId)).lean();
           branchId = branch?.id || 'main';
         } catch { branchId = 'main'; }
       }
       const order = await OrderModel.create({
         id: nanoid(),
         orderNumber,
-        tenantId: req.tenantId || 'demo-tenant',
+        tenantId: req.employee?.tenantId || 'demo-tenant',
         branchId,
         items: orderData.items,
         totalAmount: orderData.totalAmount || orderData.items.reduce((s: number, i: any) => s + (i.price || 0) * (i.quantity || 1), 0),
@@ -24434,7 +24434,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
         deliveryMode: orderData.deliveryMode || 'delivery',
         createdAt: new Date(),
       });
-      publishEvent("order.created", { orderId: order.id, orderNumber, source: (order as any).source }, req.tenantId);
+      publishEvent("order.created", { orderId: order.id, orderNumber, source: (order as any).source }, req.employee?.tenantId);
       res.status(201).json({ data: order });
     } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
   });
@@ -24445,7 +24445,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
       const { CustomerModel } = await import("@shared/schema");
       const limit = Math.min(parseInt(req.query.limit) || 50, 200);
       const phone = req.query.phone;
-      const filter: any = tFilter(req.tenantId);
+      const filter: any = tFilter(req.employee?.tenantId);
       if (phone) filter.phone = phone;
       const customers = await CustomerModel.find(filter).limit(limit).select("-password -walletPin").lean();
       res.json({ data: customers, count: customers.length });
@@ -24456,7 +24456,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
   app.get("/api/v1/loyalty/cards/:phone", requireApiKey("loyalty:read"), async (req: any, res) => {
     try {
       const { LoyaltyCardModel } = await import("@shared/schema");
-      const card = await LoyaltyCardModel.findOne({ ...tFilter(req.tenantId), phoneNumber: req.params.phone }).lean();
+      const card = await LoyaltyCardModel.findOne({ ...tFilter(req.employee?.tenantId), phoneNumber: req.params.phone }).lean();
       if (!card) return res.status(404).json({ error: "Not found" });
       res.json({ data: card });
     } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
@@ -24469,12 +24469,12 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
       const { points, reason } = req.body;
       if (typeof points !== 'number') return res.status(400).json({ error: "points (number) required" });
       const card = await LoyaltyCardModel.findOneAndUpdate(
-        { ...tFilter(req.tenantId), phoneNumber: req.params.phone },
+        { ...tFilter(req.employee?.tenantId), phoneNumber: req.params.phone },
         { $inc: { points: points }, $set: { updatedAt: new Date() } },
         { new: true }
       ).lean();
       if (!card) return res.status(404).json({ error: "Card not found" });
-      publishEvent(points > 0 ? "loyalty.points_added" : "loyalty.points_redeemed", { phoneNumber: req.params.phone, points, reason, card }, req.tenantId);
+      publishEvent(points > 0 ? "loyalty.points_added" : "loyalty.points_redeemed", { phoneNumber: req.params.phone, points, reason, card }, req.employee?.tenantId);
       res.json({ data: card });
     } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
   });
@@ -24483,7 +24483,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
   app.get("/api/v1/inventory", requireApiKey("inventory:read"), async (req: any, res) => {
     try {
       const { RawItemModel } = await import("@shared/schema");
-      const items = await RawItemModel.find({ ...tFilter(req.tenantId), isActive: 1 }).limit(500).lean();
+      const items = await RawItemModel.find({ ...tFilter(req.employee?.tenantId), isActive: 1 }).limit(500).lean();
       res.json({ data: items, count: items.length });
     } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
   });
@@ -24494,9 +24494,9 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
       const { RawItemModel } = await import("@shared/schema");
       const { currentStock } = req.body;
       if (typeof currentStock !== 'number') return res.status(400).json({ error: "currentStock (number) required" });
-      const item = await RawItemModel.findOneAndUpdate({ ...tFilter(req.tenantId), id: req.params.id }, { $set: { currentStock, updatedAt: new Date() } }, { new: true }).lean();
+      const item = await RawItemModel.findOneAndUpdate({ ...tFilter(req.employee?.tenantId), id: req.params.id }, { $set: { currentStock, updatedAt: new Date() } }, { new: true }).lean();
       if (!item) return res.status(404).json({ error: "Not found" });
-      publishEvent("inventory.updated", { rawItemId: item.id, currentStock }, req.tenantId);
+      publishEvent("inventory.updated", { rawItemId: item.id, currentStock }, req.employee?.tenantId);
       res.json({ data: item });
     } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
   });

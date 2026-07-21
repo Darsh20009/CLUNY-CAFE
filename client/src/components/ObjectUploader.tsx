@@ -80,7 +80,7 @@ export function ObjectUploader({
         shouldUseMultipart: false,
         getUploadParameters: onGetUploadParameters,
       })
-      .on("complete", (result) => {
+      .on("complete", (result: any) => {
         onComplete?.(result);
       })
   );

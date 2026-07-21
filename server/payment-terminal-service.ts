@@ -743,14 +743,16 @@ class PaymentTerminalService extends EventEmitter {
     this.transactions.set(txnId, txn);
     this.emit("payment_started", { txnId, driverId: driver.id, amount: req.amount });
 
-    const response = await driver.pay(req).catch((err) => ({ success: false, error: err.message }));
+    const response = await driver.pay(req).catch((err): { success: false; error: string } => ({ success: false as const, error: String(err.message) }));
 
     txn.status = response.success ? "success" : "failed";
-    txn.transactionId = response.transactionId;
-    txn.authCode = response.authCode;
-    txn.cardBrand = response.cardBrand;
-    txn.last4 = response.last4;
-    txn.error = response.error;
+    if (response.success) {
+      txn.transactionId = response.transactionId;
+      txn.authCode = response.authCode;
+      txn.cardBrand = response.cardBrand;
+      txn.last4 = response.last4;
+    }
+    txn.error = (response as any).error;
     txn.completedAt = new Date();
 
     this.emit("payment_completed", { txnId, success: response.success, driverId: driver.id });

@@ -95,7 +95,7 @@ function installGeideaSessionPatch() {
     const origOpen = xhr.open.bind(xhr);
     xhr.open = function (method: string, requestUrl: string, ...rest: any[]) {
       url = requestUrl;
-      return origOpen(method, requestUrl, ...rest);
+      return (origOpen as Function)(method, requestUrl, ...rest);
     };
     let userHandler: ((this: XMLHttpRequest, ev: Event) => any) | null = null;
     Object.defineProperty(xhr, "onreadystatechange", {
