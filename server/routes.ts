@@ -3543,8 +3543,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             geideaCustomer.lastName = nameParts.slice(1).join(' ') || nameParts[0] || customerName;
           }
 
-          const isApplePaySession = reqPaymentMethod === 'apple_pay';
-
           const geideaBody: any = {
             amount: amountStr,
             currency,
@@ -3553,8 +3551,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             signature,
             language: 'ar',
             paymentOperation: 'Pay',
-            // When Apple Pay is selected, tell Geidea to enable it as an express checkout
-            ...(isApplePaySession && { expressCheckouts: ['ApplePay'] }),
+            // NOTE: Do NOT add expressCheckouts here — Geidea KSA (ksamerchant) rejects
+            // it with "Malformed or invalid JSON payload." The HPP shows Apple Pay
+            // automatically when it's enabled on the Geidea merchant account.
           };
 
           if (callbackBase) {
