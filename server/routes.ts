@@ -2356,7 +2356,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const branchName = branch ? branch.nameAr : "فرع غير معروف";
 
       // Use production domain for QR codes so they work after deployment
-      const PRODUCTION_DOMAIN = "https://www.cluny.cafe";
+      const PRODUCTION_DOMAIN = "https://cluny.cafe";
       const tableUrl = `${PRODUCTION_DOMAIN}/table-menu/${table.qrToken}`;
 
       res.json({
@@ -22159,7 +22159,7 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
   });
 
   // ─── QIROX Studio External API Proxy ───────────────────────────────────────
-  const QIROX_STUDIO_BASE = "https://www.cluny.cafe/api/v1";
+  const QIROX_STUDIO_BASE = "https://cluny.cafe/api/v1";
   const qiroxStudioHeaders = () => ({
     Authorization: `Bearer ${process.env.QIROX_STUDIO_API_KEY || ""}`,
     "Content-Type": "application/json",

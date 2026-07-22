@@ -106,7 +106,7 @@ export default function PrivacyPolicy() {
               <div className="mt-2 p-3 bg-muted rounded-lg text-muted-foreground">
                 <p>CLUNY CAFE</p>
                 <p>البريد الإلكتروني: <a href="mailto:cafe@qiroxstudio.online" className="text-primary underline">cafe@qiroxstudio.online</a></p>
-                <p>الموقع: <a href="https://www.cluny.cafe" className="text-primary underline">www.cluny.cafe</a></p>
+                <p>الموقع: <a href="https://cluny.cafe" className="text-primary underline">cluny.cafe</a></p>
               </div>
             </section>
           </div>
