@@ -482,8 +482,9 @@ function appleWellKnownFile(req: import('express').Request, res: import('express
   const filename = isCluny
     ? `apple-developer-merchantid-domain-association-cluny${ext}`
     : `apple-developer-merchantid-domain-association${ext}`;
-  // Apple's verifier requires text/plain — octet-stream causes "download instead of serve" error
-  res.set('Content-Type', 'text/plain; charset=utf-8');
+  // Apple expects the file served exactly as-is (JSON text from Apple Developer portal).
+  // No charset transformation — file is already valid UTF-8 JSON.
+  res.set('Content-Type', 'text/plain');
   res.set('Cache-Control', 'public, max-age=86400'); // 1 day cache
   res.sendFile(path.resolve(__dirname, '..', 'public', '.well-known', filename), (err) => {
     if (err) {
