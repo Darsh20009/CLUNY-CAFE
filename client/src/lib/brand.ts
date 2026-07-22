@@ -33,7 +33,7 @@ export const brand = {
   pwaDisplay: "standalone" as const,
 
   website: "cluny.cafe",
-  websiteUrl: "https://cluny.cafe",
+  websiteUrl: "https://www.cluny.cafe",
   emailNoReply: "noreply@cluny.cafe",
   emailSupport: "support@cluny.cafe",
   social: {
