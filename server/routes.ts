@@ -4069,11 +4069,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'cluny.cafe';
       const displayName = ((pg.geidea as any)?.displayName || 'CLUNY CAFE').slice(0, 64);
 
-      // Use the actual domain the browser is on so Apple validates the right domain
+      // Use the actual domain the browser is on — BUT only if it matches the
+      // registered Apple Pay domain. Blindly forwarding any origin (e.g. a
+      // Replit *.replit.dev preview URL) causes Apple to return 401 because
+      // that domain is not registered in the merchant's Apple Pay entitlements.
       const requestOrigin = req.get('origin') || req.get('referer') || '';
       let initiativeDomain = configDomain;
       try {
-        if (requestOrigin) initiativeDomain = new URL(requestOrigin).hostname;
+        if (requestOrigin) {
+          const originHost = new URL(requestOrigin).hostname;
+          // Accept origin only when it matches the registered domain (exact or www. prefix)
+          const stripped = originHost.replace(/^www\./, '');
+          const configStripped = configDomain.replace(/^www\./, '');
+          if (stripped === configStripped) {
+            initiativeDomain = originHost;
+          }
+          // else: fall back to configDomain (dev URLs, Replit previews, etc.)
+        }
       } catch {}
 
       // ── Call Apple's validation URL directly with mTLS ─────────────────────
