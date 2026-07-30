@@ -3551,9 +3551,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             signature,
             language: 'ar',
             paymentOperation: 'Pay',
-            // NOTE: Do NOT add expressCheckouts here — Geidea KSA (ksamerchant) rejects
-            // it with "Malformed or invalid JSON payload." The HPP shows Apple Pay
-            // automatically when it's enabled on the Geidea merchant account.
+            // NOTE: Geidea KSA (ksamerchant) rejects expressCheckouts with
+            // "Malformed or invalid JSON payload." — do NOT include it here.
+            // Apple Pay must be enabled at the Geidea merchant-account level,
+            // or routed through the Direct API (apple-pay-button.tsx).
           };
 
           if (callbackBase) {

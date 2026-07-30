@@ -101,32 +101,9 @@ const CheckoutModal = memo(() => {
   if (effectiveMethod === 'cash') {
     handlePaymentConfirmed(order);
   } else if (effectiveMethod === 'apple_pay') {
-    // Redirect to Geidea HPP with expressCheckouts:['ApplePay'] — the HPP handles Apple Pay natively
-    try {
-      const returnUrl = `${window.location.origin}/payment-return?provider=geidea&orderNumber=${encodeURIComponent(order.orderNumber)}`;
-      const res = await apiRequest('POST', '/api/payments/init', {
-        orderId: order.orderNumber,
-        amount: getTotalPrice(),
-        currency: 'SAR',
-        paymentMethod: 'apple_pay',
-        customerName: customerName,
-        customerPhone: customerPhone,
-        customerEmail: customer?.email,
-        returnUrl,
-      });
-      const data = await res.json();
-      if (data.success && data.redirectUrl) {
-        sessionStorage.setItem('postPaymentRedirect', customer ? '/my-orders' : `/tracking?order=${order.orderNumber}`);
-        sessionStorage.setItem('pendingOrderNumber', order.orderNumber);
-        window.location.href = data.redirectUrl;
-      } else {
-        toast({ variant: "destructive", title: "خطأ في Apple Pay", description: data.error || "فشل تهيئة بوابة الدفع" });
-        setCurrentStep('confirmation');
-      }
-    } catch {
-      toast({ variant: "destructive", title: "خطأ في الاتصال", description: "تعذر الاتصال ببوابة الدفع" });
-      setCurrentStep('confirmation');
-    }
+    // Show the native ApplePayButton — it creates ApplePaySession synchronously
+    // on the user's tap, which is the only pattern Safari accepts.
+    setShowApplePayNative(true);
   } else if (effectiveMethod && GEIDEA_HPP_METHODS.includes(effectiveMethod as string)) {
     setShowGeideaWidget(true);
   } else if (effectiveMethod && PAYMOB_METHODS.includes(effectiveMethod as string)) {
