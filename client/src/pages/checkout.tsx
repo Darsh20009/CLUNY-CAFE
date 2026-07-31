@@ -982,6 +982,20 @@ export default function CheckoutPage() {
     };
 
     session.oncancel = () => {
+      fetch('/api/payments/apple-pay/client-log', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ event: 'oncancel', error: 'User cancelled or session was aborted' }),
+      }).catch(() => {});
+      setIsVerifyingPayment(false);
+    };
+
+    session.onerror = (err: any) => {
+      const msg = err?.message || JSON.stringify(err) || 'unknown ApplePaySession error';
+      fetch('/api/payments/apple-pay/client-log', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ event: 'onerror', error: msg }),
+      }).catch(() => {});
+      session.abort();
       setIsVerifyingPayment(false);
     };
 
