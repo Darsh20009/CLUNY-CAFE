@@ -2013,14 +2013,14 @@ export default function CheckoutPage() {
                   </div>
                 )}
 
-                {/* ── Apple Pay button — Safari/Apple devices only → redirects to Geidea HPP ── */}
+                {/* ── Apple Pay button — Safari/Apple devices only → native ApplePaySession ── */}
                 {typeof window !== 'undefined' &&
                   typeof (window as any).ApplePaySession !== 'undefined' &&
                   (window as any).ApplePaySession.canMakePayments() && (
                   <div className="space-y-3">
                     <button
                       type="button"
-                      onClick={() => goToGeideaHPP(undefined, 'apple_pay')}
+                      onClick={() => initiateApplePayNative()}
                       disabled={isVerifyingPayment}
                       style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'center',

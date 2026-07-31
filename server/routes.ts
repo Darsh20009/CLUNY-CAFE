@@ -4067,7 +4067,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const configDomain =
         pg.geidea?.applePayDomain ||
         process.env.APPLE_PAY_DOMAIN ||
-        'cluny.cafe';
+        'www.cluny.cafe';
       const displayName = ((pg.geidea as any)?.displayName || 'CLUNY CAFE').slice(0, 64);
 
       // Use the actual domain the browser is on — BUT only if it matches the
@@ -4176,7 +4176,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Build request body per Geidea Apple Pay Direct API v2 docs
       const amount = Number(orderData?.totalAmount || 0).toFixed(2);
       const merchantReferenceId = (orderData?.orderRef || sessionId || nanoid()).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
-      const callbackUrl = 'https://cluny.cafe/api/payments/geidea/callback';
+      const callbackUrl = 'https://www.cluny.cafe/api/payments/geidea/callback';
 
       // Build body exactly per Geidea Apple Pay Direct API docs:
       // https://docs.geidea.net/docs/apple-pay-direct-api
