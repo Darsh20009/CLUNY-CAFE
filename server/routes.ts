@@ -4318,12 +4318,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }));
       console.log('[Apple Pay] Request body to Geidea (Data truncated):', JSON.stringify({
         ...processBody,
-        Token: {
-          ...processBody.Token,
-          PaymentData: {
-            ...processBody.Token.PaymentData,
-            Data:      processBody.Token.PaymentData.Data.slice(0, 40) + '…',
-            Signature: processBody.Token.PaymentData.Signature.slice(0, 40) + '…',
+        token: {
+          ...processBody.token,
+          paymentData: {
+            ...processBody.token.paymentData,
+            data:      (processBody.token.paymentData.data || '').slice(0, 40) + '…',
+            signature: (processBody.token.paymentData.signature || '').slice(0, 40) + '…',
           },
         },
       }));
