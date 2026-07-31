@@ -1,0 +1,13 @@
+12:08:25 AM [express] GET /api/public/settings 200 in 64ms :: {"tradeNameAr":"كلوني كافيه","tradeName…
+[Apple Pay] Validating merchant directly with Apple: {
+  validationUrl: 'https://apple-pay-gateway.apple.com/paymentservices/startSession',
+  merchantIdentifier: 'merchant.cluny.cafe',
+  initiativeDomain: 'www.cluny.cafe'
+}
+[Apple Pay] Merchant validated successfully with Apple
+12:08:26 AM [express] POST /api/payments/apple-pay/validate-merchant 200 in 217ms :: {"success":true,…
+[Apple Pay] Token structure received: {"hasPaymentData":true,"pdVersion":"EC_v1","pdDataLen":428,"pdSigLen":2948,"hdrEphLen":124,"hdrPKH":44,"hdrTxId":64,"pmNetwork":"Visa","pmType":"debit","txIdentifier":"dd3626b6879702c02dd3"}
+[Apple Pay] Request body to Geidea (Data truncated): {"Method":"encrypted","Token":{"PaymentData":{"Version":"EC_v1","Data":"eY6XsjWDKigB7LhVxy6UwR2Sk9Z3K/oq51Eziobu…","Signature":"MIAGCSqGSIb3DQEHAqCAMIACAQExDTALBglghkgB…","Header":{"EphemeralPublicKey":"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEN3qFiBpzPEshNA7Gzbr+/2daRpLsKg/7kPIhh3GTquXjsygMWln1tnJsH8aVtMUvDTSkLbTBtaBh8qLFWB24ZA==","PublicKeyHash":"tY+QP56NnhbXWs8vLO6BWx2r4A4KcgQSxPR+pj/8xqQ=","TransactionId":"dd3626b6879702c02dd3a90e42d2f5c6f88fc7eeae4a3bc214cf531d899f75a2"}}},"PaymentMethod":{"DisplayName":"Visa 1598","Network":"Visa","Type":"debit"},"Amount":1.35,"Currency":"SAR","MerchantReferenceId":"kh8mhIs6BH1Y6DS7qgr","CallbackUrl":"https://www.cluny.cafe/api/payments/geidea/callback","InitiatedBy":"internet","CardOnFile":false,"DeviceIdentification":{"UserAgent":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15","Language":"en"}}
+[Apple Pay] Processing payment via /pgw/api/v2/direct/apple/pay, ref: kh8mhIs6BH1Y6DS7qgr
+[Apple Pay] Process response: {"responseMessage":"General error","detailedResponseMessage":"Internal Server Error","language":"EN","responseCode":"100","detailedResponseCode":"013"}
+12:08:34 AM [express] POST /api/payments/apple-pay/process 400 in 1355ms :: {"error":"Internal Server…
