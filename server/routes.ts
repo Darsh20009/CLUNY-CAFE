@@ -4177,6 +4177,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             timestamp: ts, signature: sig,
             language: 'ar', paymentOperation: 'Pay',
             callbackUrl: callbackBase, returnUrl: callbackBase,
+            // Required for Geidea Direct Apple Pay API — session must declare expressCheckouts
+            expressCheckouts: ['ApplePay'],
           };
           const { customerName: cName, customerPhone: cPhone } = req.body;
           if (cName || cPhone) {
@@ -4187,12 +4189,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
               ...(cPhone ? { phoneNumber: cPhone.replace(/\D/g, '').slice(-9), phonecountrycode: '+966' } : {}),
             };
           }
-          const sessRes = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session`, {
+          let sessRes = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
             body: JSON.stringify(sessionBody),
           });
-          const sessData = await sessRes.json() as any;
+          let sessData = await sessRes.json() as any;
+          // Fallback: some Geidea KSA endpoints reject expressCheckouts — retry without it
+          if (!sessData?.session?.id && sessData?.responseCode !== '000') {
+            console.warn('[Apple Pay] Session with expressCheckouts failed, retrying without it:', sessData?.detailedResponseMessage || sessData?.responseMessage);
+            const { expressCheckouts: _ec, ...sessionBodyFallback } = sessionBody;
+            const sessRes2 = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+              body: JSON.stringify(sessionBodyFallback),
+            });
+            sessData = await sessRes2.json() as any;
+          }
           geideaSessionId = sessData?.session?.id || null;
           if (geideaSessionId) {
             console.log('[Apple Pay] Geidea session created:', geideaSessionId);
@@ -4334,7 +4347,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         body: JSON.stringify(processBody),
       });
       const processData = await processRes.json() as any;
-      console.log('[Apple Pay] Process response:', JSON.stringify(processData));
+      // ── PROMINENT LOG: show Geidea's full response so failures are easy to diagnose ──
+      const isSuccessCode = processData?.responseCode === '000' || processData?.detailedResponseCode === '000';
+      if (isSuccessCode) {
+        console.log('[Apple Pay] ✅ Geidea accepted the payment — responseCode:', processData?.responseCode);
+      } else {
+        console.error(
+          '[Apple Pay] ❌ Geidea REJECTED Apple Pay payment\n' +
+          `  HTTP status : ${processRes.status}\n` +
+          `  responseCode: ${processData?.responseCode}\n` +
+          `  detailedCode: ${processData?.detailedResponseCode}\n` +
+          `  message     : ${processData?.detailedResponseMessage || processData?.responseMessage}\n` +
+          `  full resp   : ${JSON.stringify(processData)}`
+        );
+      }
 
       const detailedCode = processData?.detailedResponseCode || processData?.responseCode;
       const isSuccess = processRes.ok && (detailedCode === '000' || detailedCode === '00' || processData?.status === 'Success');
