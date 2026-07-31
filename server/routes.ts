@@ -4147,7 +4147,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       console.log('[Apple Pay] Merchant validated successfully with Apple');
-      return res.json({ success: true, merchantSession });
+
+      // ── Create a Geidea session so we have a sessionId for the Direct API ──
+      // Geidea's Apple Pay Direct API requires a valid sessionId alongside the
+      // encrypted token. We create the session here (during merchant validation)
+      // and return it to the client so onpaymentauthorized can forward it.
+      let geideaSessionId: string | null = null;
+      try {
+        const publicKey = pg.geidea?.publicKey;
+        const apiPassword = pg.geidea?.apiPassword;
+        const baseUrl = (pg.geidea?.baseUrl || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
+        if (publicKey && apiPassword) {
+          const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
+          const { createHmac } = await import('node:crypto');
+          const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
+          const amtStr = Number(amount || 1).toFixed(2);
+          const currency2 = (req.body.currency || 'SAR').toUpperCase();
+          const ref = (req.body.orderRef || `AP${Date.now()}`).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
+          const sigStr = `${publicKey}${amtStr}${currency2}${ts}`;
+          const sig = createHmac('sha256', apiPassword).update(sigStr).digest('hex').toUpperCase();
+          const callbackBase = `https://www.cluny.cafe/payment-return`;
+          const sessionBody: any = {
+            amount: amtStr, currency: currency2,
+            merchantReferenceId: ref,
+            timestamp: ts, signature: sig,
+            language: 'ar', paymentOperation: 'Pay',
+            callbackUrl: callbackBase, returnUrl: callbackBase,
+          };
+          const { customerName: cName, customerPhone: cPhone } = req.body;
+          if (cName || cPhone) {
+            const nameParts = (cName || '').trim().split(/\s+/);
+            sessionBody.customer = {
+              firstName: nameParts[0] || cName,
+              lastName: nameParts.slice(1).join(' ') || nameParts[0] || cName,
+              ...(cPhone ? { phoneNumber: cPhone.replace(/\D/g, '').slice(-9), phonecountrycode: '+966' } : {}),
+            };
+          }
+          const sessRes = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+            body: JSON.stringify(sessionBody),
+          });
+          const sessData = await sessRes.json() as any;
+          geideaSessionId = sessData?.session?.id || null;
+          if (geideaSessionId) {
+            console.log('[Apple Pay] Geidea session created:', geideaSessionId);
+          } else {
+            console.warn('[Apple Pay] Geidea session creation failed:', JSON.stringify(sessData));
+          }
+        }
+      } catch (sessErr: any) {
+        console.warn('[Apple Pay] Non-fatal: could not create Geidea session:', sessErr.message);
+      }
+
+      return res.json({ success: true, merchantSession, sessionId: geideaSessionId });
     } catch (err: any) {
       console.error('[Apple Pay] validate-merchant error:', err);
       return res.status(500).json({ error: "خطأ في التحقق من المتجر مع Apple", details: err.message });
@@ -4206,25 +4259,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('[Apple Pay] Preflight failed — missing fields:', missingFields);
         return res.status(400).json({ error: 'Apple Pay token ناقص — الحقول المفقودة: ' + missingFields.join(', '), missingFields });
       }
+      // Build body exactly per Geidea Apple Pay Direct API docs (lowercase camelCase):
+      // https://docs.geidea.net/docs/apple-pay-integration
+      // Key rules per official sample curl:
+      //   - Top-level key is "token" (lowercase), NOT "Token"
+      //   - "paymentData" and "paymentMethod" are INSIDE "token" (not top-level)
+      //   - All sub-fields are camelCase: data, signature, version, header, ephemeralPublicKey, etc.
+      //   - "sessionId" is REQUIRED at top level (created during validate-merchant step)
       const processBody: Record<string, any> = {
         Method: 'encrypted',
-        Token: {
-          PaymentData: {
-            Version:   pd.version   || pd.Version   || 'EC_v1',
-            Data:      pd.data      || pd.Data      || '',
-            Signature: pd.signature || pd.Signature || '',
-            Header: {
-              EphemeralPublicKey: hdr.ephemeralPublicKey || hdr.EphemeralPublicKey || '',
-              PublicKeyHash:      hdr.publicKeyHash      || hdr.PublicKeyHash      || '',
-              TransactionId:      hdr.transactionId      || hdr.TransactionId      || '',
+        token: {
+          paymentData: {
+            version:   pd.version   || pd.Version   || 'EC_v1',
+            data:      pd.data      || pd.Data      || '',
+            signature: pd.signature || pd.Signature || '',
+            header: {
+              ephemeralPublicKey: hdr.ephemeralPublicKey || hdr.EphemeralPublicKey || '',
+              publicKeyHash:      hdr.publicKeyHash      || hdr.PublicKeyHash      || '',
+              transactionId:      hdr.transactionId      || hdr.TransactionId      || '',
             },
           },
+          paymentMethod: {
+            displayName: pm.displayName || pm.DisplayName || 'Apple Pay',
+            network:     pm.network     || pm.Network     || 'Visa',
+            type:        pm.type        || pm.Type        || 'credit',
+          },
+          transactionIdentifier: paymentToken.transactionIdentifier || paymentToken.TransactionIdentifier || '',
         },
-        PaymentMethod: {
-          DisplayName: pm.displayName || pm.DisplayName || 'Apple Pay',
-          Network:     pm.network     || pm.Network     || 'Visa',
-          Type:        pm.type        || pm.Type        || 'credit',
-        },
+        ...(sessionId ? { sessionId } : {}),
         Amount: parseFloat(amount),
         Currency: orderData?.currency || 'SAR',
         MerchantReferenceId: merchantReferenceId,
