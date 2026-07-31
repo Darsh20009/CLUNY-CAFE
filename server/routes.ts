@@ -3523,11 +3523,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Build the callback URL
           const callbackBase = returnUrl || pg.geidea?.callbackUrl || '';
 
-          // Build customer object — all fields are optional in HPP
+          // Build customer object — Geidea requires email in the session.
+          // If the customer hasn't provided one, generate a guest address from
+          // their phone number so the session is never rejected for missing email.
           const geideaCustomer: any = {};
-          if (customerEmail) {
-            geideaCustomer.email = customerEmail;
-          }
+          const resolvedEmail = customerEmail
+            || (customerPhone
+              ? `guest-${customerPhone.replace(/\D/g, '').slice(-9)}@cluny.cafe`
+              : `guest@cluny.cafe`);
+          geideaCustomer.email = resolvedEmail;
           if (customerPhone) {
             const cleanPhone = customerPhone.replace(/\D/g, '')
               .replace(/^00966/, '').replace(/^\+?966/, '').replace(/^0/, '').slice(-9);

@@ -482,15 +482,22 @@ function appleWellKnownFile(req: import('express').Request, res: import('express
   const filename = isCluny
     ? `apple-developer-merchantid-domain-association-cluny${ext}`
     : `apple-developer-merchantid-domain-association${ext}`;
-  // Apple expects the file served exactly as-is (JSON text from Apple Developer portal).
-  // No charset transformation — file is already valid UTF-8 JSON.
-  res.set('Content-Type', 'text/plain');
-  res.set('Cache-Control', 'public, max-age=86400'); // 1 day cache
-  res.sendFile(path.resolve(__dirname, '..', 'public', '.well-known', filename), (err) => {
-    if (err) {
-      console.error(`[ApplePay] Missing file: ${filename}`, err.message);
-      res.status(404).send('Not found');
-    }
+  const filePath = path.resolve(__dirname, '..', 'public', '.well-known', filename);
+  // Must read and send manually — res.sendFile() derives Content-Type from the
+  // file extension and falls back to application/octet-stream for extensionless
+  // files, which causes browsers to download instead of serve the content.
+  // Apple and Geidea both require the file to be publicly readable as text.
+  import('fs').then(({ readFile }) => {
+    readFile(filePath, 'utf8', (err, data) => {
+      if (err) {
+        console.error(`[ApplePay] Missing file: ${filename}`, err.message);
+        return res.status(404).send('Not found');
+      }
+      res.set('Content-Type', 'text/plain; charset=utf-8');
+      res.set('Cache-Control', 'public, max-age=86400');
+      res.set('Content-Disposition', 'inline');
+      res.send(data);
+    });
   });
 }
 app.get('/.well-known/apple-developer-merchantid-domain-association', (req, res) => {
