@@ -4160,12 +4160,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (publicKey && apiPassword) {
           const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
           const { createHmac } = await import('node:crypto');
-          const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
-          const amtStr = Number(amount || 1).toFixed(2);
+          const now2 = new Date();
+          const pad2 = (n: number) => String(n).padStart(2, '0');
+          // Geidea timestamp format: "YYYY/MM/DD HH:MM:SS" (slashes, not dashes)
+          const ts = `${now2.getFullYear()}/${pad2(now2.getMonth() + 1)}/${pad2(now2.getDate())} ${pad2(now2.getHours())}:${pad2(now2.getMinutes())}:${pad2(now2.getSeconds())}`;
           const currency2 = (req.body.currency || 'SAR').toUpperCase();
+          const amtStr = Number(Number(amount || 1).toFixed(2)).toFixed(2);
           const ref = (req.body.orderRef || `AP${Date.now()}`).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
-          const sigStr = `${publicKey}${amtStr}${currency2}${ts}`;
-          const sig = createHmac('sha256', apiPassword).update(sigStr).digest('hex').toUpperCase();
+          // Geidea signature: Base64(HMAC-SHA256(publicKey+amount+currency+merchantReferenceId+timestamp, apiPassword))
+          const sigData = `${publicKey}${amtStr}${currency2}${ref}${ts}`;
+          const sig = createHmac('sha256', apiPassword).update(sigData).digest('base64');
           const callbackBase = `https://www.cluny.cafe/payment-return`;
           const sessionBody: any = {
             amount: amtStr, currency: currency2,
