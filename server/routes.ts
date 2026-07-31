@@ -4224,6 +4224,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Apple Pay client-side diagnostic logger ──────────────────────────────
+  // Called by the browser's onpaymentauthorized handler to confirm it fired and
+  // to surface any JS-level errors that never reach the server otherwise.
+  app.post("/api/payments/apple-pay/client-log", (req, res) => {
+    const { event, error, tokenKeys, orderDataKeys } = req.body;
+    if (error) {
+      console.error(`[Apple Pay CLIENT] ❌ onpaymentauthorized ERROR — ${event || 'unknown'}: ${error}`);
+    } else {
+      console.log(`[Apple Pay CLIENT] ✅ onpaymentauthorized fired — event=${event} tokenKeys=${JSON.stringify(tokenKeys)} orderDataKeys=${JSON.stringify(orderDataKeys)}`);
+    }
+    res.json({ ok: true });
+  });
+
   // Step 3: Process Apple Pay payment token via Geidea Direct API
   // Endpoint per Geidea docs: /pgw/api/v2/direct/apple/pay
   app.post("/api/payments/apple-pay/process", async (req, res) => {

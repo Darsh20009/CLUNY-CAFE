@@ -926,14 +926,36 @@ export default function CheckoutPage() {
     };
 
     session.onpaymentauthorized = async (event: any) => {
+      // ── Diagnostic: confirm this callback fired and log token shape ──────────
+      const token = event?.payment?.token;
+      fetch('/api/payments/apple-pay/client-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          event: 'onpaymentauthorized',
+          tokenKeys: token ? Object.keys(token) : null,
+          orderDataKeys: resolvedOrderData ? Object.keys(resolvedOrderData) : null,
+        }),
+      }).catch(() => {/* non-fatal */});
+
       try {
+        if (!token) {
+          fetch('/api/payments/apple-pay/client-log', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+            body: JSON.stringify({ event: 'onpaymentauthorized', error: 'event.payment.token is missing or undefined' }),
+          }).catch(() => {});
+          session.completePayment({ status: ApplePay.STATUS_FAILURE });
+          setIsVerifyingPayment(false);
+          return;
+        }
         const processRes = await fetch('/api/payments/apple-pay/process', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           body: JSON.stringify({
             sessionId: pendingApplePaySessionId.current,
-            paymentToken: event.payment.token,
+            paymentToken: token,
             orderData: resolvedOrderData,
           }),
         });
@@ -948,6 +970,11 @@ export default function CheckoutPage() {
           setIsVerifyingPayment(false);
         }
       } catch (e: any) {
+        // Log JS-level errors to server so they appear in server logs (useful on iPhone where DevTools aren't available)
+        fetch('/api/payments/apple-pay/client-log', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+          body: JSON.stringify({ event: 'onpaymentauthorized', error: String(e?.message || e) }),
+        }).catch(() => {});
         session.completePayment({ status: ApplePay.STATUS_FAILURE });
         toast({ variant: "destructive", title: "خطأ", description: e.message });
         setIsVerifyingPayment(false);
