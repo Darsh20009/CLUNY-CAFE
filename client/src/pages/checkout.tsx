@@ -2054,14 +2054,14 @@ export default function CheckoutPage() {
                   </div>
                 )}
 
-                {/* ── Apple Pay button — Safari/Apple devices only → native ApplePaySession ── */}
+                {/* ── Apple Pay button — opens Geidea HPP (which has Apple Pay built-in) ── */}
                 {typeof window !== 'undefined' &&
                   typeof (window as any).ApplePaySession !== 'undefined' &&
                   (window as any).ApplePaySession.canMakePayments() && (
                   <div className="space-y-3">
                     <button
                       type="button"
-                      onClick={() => initiateApplePayNative()}
+                      onClick={() => goToGeideaHPP(undefined, 'apple_pay')}
                       disabled={isVerifyingPayment}
                       style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
