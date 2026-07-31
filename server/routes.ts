@@ -3555,15 +3555,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             signature,
             language: 'ar',
             paymentOperation: 'Pay',
+            // Always request Apple Pay express checkout so it works inside HPP
+            // regardless of which button the user tapped. If Geidea rejects it
+            // (older KSA merchant configs), we retry without it below.
+            expressCheckouts: ['ApplePay'],
           };
-
-          // Include expressCheckouts only when the caller explicitly requests
-          // Apple Pay — Geidea must have Apple Pay activated on the merchant
-          // account first (confirmed July 2026). Without this field the HPP
-          // shows the Apple Pay sheet but cannot authorise the payment token.
-          if (reqPaymentMethod === 'apple_pay') {
-            geideaBody.expressCheckouts = ['ApplePay'];
-          }
 
           if (callbackBase) {
             geideaBody.callbackUrl = callbackBase;
@@ -3576,18 +3572,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           console.log('[Geidea] Create Session request body:', JSON.stringify({ ...geideaBody, signature: '[HIDDEN]' }));
 
+          const geideaEndpoint = `${baseUrl}/payment-intent/api/v2/direct/session`;
+          const geideaHeaders = {
+            'Content-Type': 'application/json',
+            'Authorization': `Basic ${credentials}`,
+            'Accept': 'application/json',
+          };
+
           // Use the correct HPP Create Session endpoint (v2)
-          const geideaResponse = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session`, {
+          let geideaResponse = await fetch(geideaEndpoint, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Basic ${credentials}`,
-              'Accept': 'application/json',
-            },
+            headers: geideaHeaders,
             body: JSON.stringify(geideaBody),
           });
 
-          const geideaData = await geideaResponse.json() as any;
+          let geideaData = await geideaResponse.json() as any;
+
+          // Some Geidea KSA merchants reject expressCheckouts — retry without it
+          if (!geideaResponse.ok || geideaData?.responseCode === '001') {
+            console.warn('[Geidea] Session with expressCheckouts failed, retrying without:', geideaData?.detailedResponseMessage || geideaData?.responseMessage);
+            const { expressCheckouts: _ec, ...bodyWithout } = geideaBody;
+            geideaResponse = await fetch(geideaEndpoint, {
+              method: 'POST',
+              headers: geideaHeaders,
+              body: JSON.stringify(bodyWithout),
+            });
+            geideaData = await geideaResponse.json() as any;
+          }
+
+          console.log('[Geidea] Create Session response:', JSON.stringify(geideaData));
           console.log('[Geidea] Create Session response:', JSON.stringify(geideaData));
 
           const sessionId = geideaData?.session?.id;
