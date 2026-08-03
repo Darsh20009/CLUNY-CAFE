@@ -15803,6 +15803,172 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ============== OWNER DATABASE MANAGEMENT ROUTES ==============
 
+  // ── Branch-level analytics (owner/admin only) ────────────────────────────
+  app.get("/api/owner/branch-analytics", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      if (req.employee?.role !== 'owner' && req.employee?.role !== 'admin') {
+        return res.status(403).json({ error: "صلاحيات غير كافية" });
+      }
+      const { branchId, dateFrom, dateTo, date, dayStartHour: dhParam } = req.query as Record<string, string>;
+      if (!branchId) return res.status(400).json({ error: "branchId مطلوب" });
+      const dayStartHour = parseInt(dhParam ?? '0', 10) || 0;
+
+      let dayStart: Date, dayEnd: Date;
+      if (dateFrom && dateTo) {
+        dayStart = new Date(dateFrom + 'T00:00:00.000+03:00');
+        dayEnd   = new Date(dateTo   + 'T23:59:59.999+03:00');
+      } else {
+        const targetDate = date ? new Date(date + 'T00:00:00Z') : new Date();
+        const bounds = getBusinessDayBoundaries(targetDate, dayStartHour);
+        dayStart = bounds.start;
+        dayEnd   = bounds.end;
+      }
+
+      const { OrderModel, BranchModel, BranchStockModel, RawItemModel } = await import("@shared/schema");
+
+      const branch = await BranchModel.findOne({ id: branchId }).lean() as any;
+      if (!branch) return res.status(404).json({ error: "الفرع غير موجود" });
+
+      const orderMatch: any = {
+        branchId,
+        createdAt: { $gte: dayStart, $lte: dayEnd },
+        status: { $ne: 'cancelled' },
+      };
+      const orders = await OrderModel.find(orderMatch).lean() as any[];
+
+      // ── KPIs ──
+      const totalRevenue  = orders.reduce((s, o) => s + (Number(o.totalAmount) || 0), 0);
+      const totalOrders   = orders.length;
+      const avgOrder      = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+      const grossProfit   = orders.reduce((s, o) => s + (Number(o.grossProfit) || 0), 0);
+      const uniquePhones  = new Set(orders.filter(o => o.customerPhone).map(o => o.customerPhone as string));
+      const uniqueCustomers = uniquePhones.size;
+
+      // ── Payment breakdown ──
+      const CARD_METHODS = new Set(['card','network','pos-network','mada','stc-pay','alinma','rajhi','ur','barq','apple_pay','neoleap','neoleap-apple-pay','geidea','bank_card','paymob-card','paymob-wallet','paymob-apple-pay','credit_card','bank_transfer']);
+      const LOYALTY_METHODS = new Set(['qahwa-card','loyalty-card','pos']);
+      const pb = {
+        cash:   { total: 0, orders: 0 },
+        card:   { total: 0, orders: 0 },
+        split:  { total: 0, orders: 0, cashPortion: 0, cardPortion: 0 },
+        loyalty:{ total: 0, orders: 0 },
+        other:  { total: 0, orders: 0 },
+      };
+      for (const o of orders) {
+        const m   = String(o.paymentMethod || 'other');
+        const amt = Number(o.totalAmount) || 0;
+        if (m === 'cash') {
+          pb.cash.total += amt; pb.cash.orders++;
+        } else if (CARD_METHODS.has(m)) {
+          pb.card.total += amt; pb.card.orders++;
+        } else if (m === 'split') {
+          pb.split.total += amt; pb.split.orders++;
+          let cp = 0, kp = 0;
+          try {
+            const pd = JSON.parse(o.paymentDetails || '{}');
+            cp = Number(pd.cash || pd.cashAmount || 0);
+            kp = Number(pd.card || pd.cardAmount || pd.network || 0);
+          } catch { /* ignore */ }
+          if (cp + kp <= 0) { cp = amt / 2; kp = amt / 2; }
+          pb.split.cashPortion  += cp;
+          pb.split.cardPortion  += kp;
+        } else if (LOYALTY_METHODS.has(m)) {
+          pb.loyalty.total += amt; pb.loyalty.orders++;
+        } else {
+          pb.other.total += amt; pb.other.orders++;
+        }
+      }
+      const round2 = (n: number) => Math.round(n * 100) / 100;
+
+      // ── Top products ──
+      const prodMap: Record<string, { nameAr: string; nameEn?: string; qty: number; revenue: number }> = {};
+      for (const o of orders) {
+        const items: any[] = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+        for (const it of items) {
+          const pid = String(it.id || it.coffeeItemId || it._id || 'unknown');
+          if (!prodMap[pid]) prodMap[pid] = { nameAr: it.nameAr || it.name || pid, nameEn: it.nameEn, qty: 0, revenue: 0 };
+          const qty = Number(it.quantity ?? 1);
+          prodMap[pid].qty     += qty;
+          prodMap[pid].revenue += Number(it.price || it.totalPrice || 0) * qty;
+        }
+      }
+      const topProducts = Object.entries(prodMap)
+        .sort((a, b) => b[1].qty - a[1].qty)
+        .slice(0, 20)
+        .map(([id, v]) => ({ id, nameAr: v.nameAr, nameEn: v.nameEn, qty: v.qty, revenue: round2(v.revenue) }));
+
+      // ── Customer list ──
+      const custMap: Record<string, { name: string; phone: string; orders: number; totalSpent: number; lastOrder: string }> = {};
+      for (const o of orders) {
+        const phone = String(o.customerPhone || o.customerInfo?.phone || '');
+        const key   = phone || String(o.customerId || '');
+        if (!key) continue;
+        if (!custMap[key]) custMap[key] = { name: o.customerName || o.customerInfo?.name || 'ضيف', phone, orders: 0, totalSpent: 0, lastOrder: '' };
+        custMap[key].orders++;
+        custMap[key].totalSpent += Number(o.totalAmount) || 0;
+        const d = new Date(o.createdAt).toISOString().slice(0, 10);
+        if (!custMap[key].lastOrder || d > custMap[key].lastOrder) custMap[key].lastOrder = d;
+      }
+      const customers = Object.values(custMap)
+        .sort((a, b) => b.totalSpent - a.totalSpent)
+        .slice(0, 50)
+        .map(c => ({ ...c, totalSpent: round2(c.totalSpent) }));
+
+      // ── Daily trend ──
+      const dayMap: Record<string, { revenue: number; orders: number }> = {};
+      for (const o of orders) {
+        const saudiDate = new Date(new Date(o.createdAt).getTime() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        if (!dayMap[saudiDate]) dayMap[saudiDate] = { revenue: 0, orders: 0 };
+        dayMap[saudiDate].revenue += Number(o.totalAmount) || 0;
+        dayMap[saudiDate].orders++;
+      }
+      const dailyTrend = Object.entries(dayMap)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([date, v]) => ({ date, revenue: round2(v.revenue), orders: v.orders }));
+
+      // ── Stock ──
+      const [stockDocs, rawDocs] = await Promise.all([
+        BranchStockModel.find({ branchId }).lean(),
+        RawItemModel.find({}).lean(),
+      ]) as [any[], any[]];
+      const rawMap: Record<string, any> = {};
+      for (const r of rawDocs) rawMap[r.id || String(r._id)] = r;
+      const stock = stockDocs.map(s => {
+        const raw = rawMap[s.rawItemId] || {};
+        const qty = Number(s.currentQuantity ?? s.currentStock ?? 0);
+        const min = Number(s.minStockLevel ?? raw.minStockLevel ?? 0);
+        return {
+          rawItemId: s.rawItemId,
+          nameAr: raw.nameAr || s.rawItemId,
+          unit: raw.unit || '',
+          currentQuantity: qty,
+          minStockLevel: min,
+          status: qty <= 0 ? 'out' : qty <= min ? 'low' : 'ok',
+        };
+      }).sort((a, b) => (a.status === 'out' ? -1 : a.status === 'low' ? 0 : 1) - (b.status === 'out' ? -1 : b.status === 'low' ? 0 : 1));
+
+      res.json({
+        branch:  { id: branch.id || String(branch._id), nameAr: branch.nameAr, nameEn: branch.nameEn, address: branch.address },
+        period:  { from: dayStart.toISOString(), to: dayEnd.toISOString() },
+        kpis:    { revenue: round2(totalRevenue), orders: totalOrders, avgOrder: round2(avgOrder), uniqueCustomers, grossProfit: round2(grossProfit) },
+        paymentBreakdown: {
+          cash:   { total: round2(pb.cash.total),    orders: pb.cash.orders },
+          card:   { total: round2(pb.card.total),    orders: pb.card.orders },
+          split:  { total: round2(pb.split.total),   orders: pb.split.orders, cashPortion: round2(pb.split.cashPortion), cardPortion: round2(pb.split.cardPortion) },
+          loyalty:{ total: round2(pb.loyalty.total), orders: pb.loyalty.orders },
+          other:  { total: round2(pb.other.total),   orders: pb.other.orders },
+        },
+        topProducts,
+        customers,
+        dailyTrend,
+        stock,
+      });
+    } catch (err) {
+      console.error("[GET /api/owner/branch-analytics] Error:", err);
+      res.status(500).json({ error: "فشل جلب تحليلات الفرع" });
+    }
+  });
+
   // Get database statistics (owner only)
   app.get("/api/owner/database-stats", requireAuth, async (req: AuthRequest, res) => {
     try {

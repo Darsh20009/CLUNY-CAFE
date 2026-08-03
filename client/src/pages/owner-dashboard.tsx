@@ -741,9 +741,13 @@ export default function OwnerDashboard() {
                       const isSelected = selectedBranchFilter === b.branchId;
                       return (
                         <Card key={b.branchId}
-                          className={`border-2 bg-card transition-all cursor-pointer hover:shadow-md ${isSelected ? 'shadow-lg' : ''}`}
+                          className={`border-2 bg-card transition-all cursor-pointer hover:shadow-md hover:border-primary/60 ${isSelected ? 'shadow-lg' : ''}`}
                           style={{ borderColor: isSelected ? color : 'hsl(var(--border))' }}
-                          onClick={() => setSelectedBranchFilter(isSelected ? '' : b.branchId)}
+                          onClick={() => {
+                            const from = dateFrom || selectedDate;
+                            const to   = dateTo   || selectedDate;
+                            setLocation(`/owner/branch/${encodeURIComponent(b.branchId)}?dateFrom=${encodeURIComponent(from)}&dateTo=${encodeURIComponent(to)}`);
+                          }}
                           data-testid={`branch-card-${b.branchId}`}
                         >
                           <CardContent className="p-0">

@@ -79,6 +79,7 @@ const EmployeeAttendance = lazy(() => import("@/pages/employee-attendance"));
 const LeaveRequestPage = lazy(() => import("@/pages/leave-request"));
 const ManagerAttendance = lazy(() => import("@/pages/manager-attendance"));
 const OwnerDashboard = lazy(() => import("@/pages/owner-dashboard"));
+const BranchAnalytics = lazy(() => import("@/pages/branch-analytics"));
 const InventoryRawItems = lazy(() => import("@/pages/inventory-raw-items"));
 const InventorySuppliers = lazy(() => import("@/pages/inventory-suppliers"));
 const InventoryPurchases = lazy(() => import("@/pages/inventory-purchases"));
@@ -412,6 +413,7 @@ function AppRouter() {
       <Route path="/manager/system-diagnostics"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><SystemDiagnostics /></AuthGuard></Route>
       {/* Owner protected routes */}
       <Route path="/owner/dashboard"><AuthGuard userType="manager" allowedRoles={["owner", "admin"]}><OwnerDashboard /></AuthGuard></Route>
+      <Route path="/owner/branch/:branchId"><AuthGuard userType="manager" allowedRoles={["owner", "admin"]}><BranchAnalytics /></AuthGuard></Route>
       <Route path="/executive"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><ExecutiveDashboard /></AuthGuard></Route>
 
       {/* Admin redirect */}
@@ -498,7 +500,9 @@ function AppContent() {
       <Suspense fallback={null}>
         {isCartOpen && <CartModal />}
         {isCheckoutOpen && <CheckoutModal />}
-        <CustomerAuthModal />
+        <ErrorBoundary silent>
+          <CustomerAuthModal />
+        </ErrorBoundary>
       </Suspense>
       <Toaster />
     </>

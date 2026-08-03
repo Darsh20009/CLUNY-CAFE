@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import type { UppyFile } from "@uppy/core";
+import type { UppyFile } from "@/components/ObjectUploader";
 
 interface UploadMetadata {
   name: string;
@@ -155,7 +155,7 @@ export function useUpload(options: UseUploadOptions = {}) {
    */
   const getUploadParameters = useCallback(
     async (
-      file: UppyFile<Record<string, unknown>, Record<string, unknown>>
+      file: UppyFile
     ): Promise<{
       method: "PUT";
       url: string;

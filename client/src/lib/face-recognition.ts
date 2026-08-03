@@ -9,6 +9,8 @@ export async function loadFaceModels(): Promise<void> {
   if (modelsLoaded) return;
   try {
     // Dynamic import — only loads in browsers with WebGL support
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore — package is optional; absent in web builds
     const fa = await import(/* @vite-ignore */ "@vladmandic/face-api").catch(() => null);
     if (!fa) {
       throw new Error("مكتبة التعرف على الوجه غير متاحة في هذه البيئة");
