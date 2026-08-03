@@ -1,0 +1,167 @@
+Dear Mohammed,
+
+Thank you for your update.
+
+After configuring the new Apple Pay domain verification file (Apple Pay Merchant Association File) for the new domain, Apple Pay is still not working on our side.
+
+Could you please confirm whether the new domain verification has been successfully recognized from your side? Has the domain been verified correctly, or is there any issue with the verification process?
+
+We would appreciate your confirmation so we can proceed with the next troubleshooting steps.
+
+Best regards,
+Youssef Darwish
+
+
+...
+
+[Message clipped]  View entire message
+
+Mohammed Hamdy
+Sun, Jul 26, 12:41 PM (8 days ago)
+to me, Khalil, PGW, Nouf, Asma, Hussamalden
+
+Classification: Public
+
+Dear @Youssef Darwish,
+
+ 
+
+            Kindly make sure that you’re passing the customer email while creating the session and confirm back. Also, you can try with a different card
+
+...
+
+[Message clipped]  View entire message
+
+Youssef Darwish <youssefd.business@gmail.com>
+Sun, Aug 2, 10:15 PM (20 hours ago)
+to Mohammed
+
+Dear @Mohammed Hamdy 
+
+
+We have Apple Pay enabled on www.cluny.cafe, and the .well-known file is now correctly accessible as text/plain at: https://www.cluny.cafe/.well-known/apple-developer-merchantid-domain-association
+
+However, Apple Pay still fails inside the HPP with "Payment operation incomplete". When we create a Geidea session via the API (/payment-intent/api/v2/direct/session), the response always returns "expressCheckouts": [] even though Apple Pay is enabled on the merchant account.
+
+We need you to:
+
+Enable expressCheckouts: ApplePay as default for HPP sessions on merchant account f9931464-9a09-458f-7bd9-08de72963454
+Re-verify the domain www.cluny.cafe for Apple Pay (the file was previously served incorrectly — this has been fixed)
+BR, 
+
+Youssef Darwish
+
+-  QIROX Support Team
+
+
+
+ 
+
+ 
+
+We are integrating Apple Pay via your Direct API for our merchant account.
+
+The /payment/api/v1/direct/apple/merchant-session endpoint is returning 401 Unauthorized.Please enable Apple Pay Direct API on our account.
+
+Details:
+
+Merchant Identifier: merchant.cluny.cafe
+Domain: cluny.cafe
+Let us know once it's activated.
+
+Thanks
+
+   
+
+On Mon, May 4, 2026 at 1:51 PM Mohammed Hamdy <Mohammed.hamdy@geidea.net> wrote:
+
+
+Mohammed Hamdy
+9:58 AM (8 hours ago)
+to Khalil, PGW, Nouf, Asma, Hussamalden, me
+
+Classification: Public
+
+Dear @Youssef Darwish,
+
+ 
+
+            Kindly note that Apple Pay is already active on https://www.cluny.cafe/, please try with a different card and make sure you’re using the live keys below.
+
+ 
+
+PK: 5bf49a11-693b-4d3c-9d85-4f757d03cc1c
+
+API: c37321b2-9785-4439-8e53-61005f13fab3
+
+...
+
+[Message clipped]  View entire message
+
+Youssef Darwish <youssefd.business@gmail.com>
+10:03 AM (8 hours ago)
+to Khalil, PGW, Nouf, Asma, Hussamalden, Mohammed
+
+Dear Mohammed,
+
+Thank you for your update.
+
+We have already tested Apple Pay using multiple cards from different banks and networks, including Visa and Mastercard, and unfortunately all attempts are still failing.
+
+We have also reviewed our integration and logs from our side, and everything appears to be configured correctly. At this point, the only remaining issue seems to be that the domain is still not fully activated for Apple Pay.
+
+We believe this may be related to the fact that www.cluny.cafe was previously configured under our own Apple Developer account. We have already removed it from that account, which is why we requested that it be activated again under your configuration.
+
+Could you please verify that the domain has been fully activated and propagated on your side? If there is any additional step required from our side, please let us know.
+
+Thank you, and we look forward to your confirmation.
+
+Best regards,
+
+Youssef Darwish
+
+
+...
+
+[Message clipped]  View entire message
+
+Mohammed Hamdy
+10:21 AM (7 hours ago)
+to me, Khalil, PGW, Nouf, Asma, Hussamalden
+
+Classification: Public
+
+Dear @Youssef Darwish,
+
+ 
+
+            The domain is already configured. Kindly share the session ID
+
+ 
+
+ 
+
+ 
+
+Khalil Mayyasi
+
+
+
+ 
+
+Product Owner
+
+
+
+ 
+
+ 
+
+T
+
+ 
+
+
+...
+
+[Message clipped]  View entire message
