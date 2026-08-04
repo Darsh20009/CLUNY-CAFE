@@ -1,0 +1,148 @@
+Dear Geidea Integration Team,
+
+Thank you for your continued support.
+
+We have updated the domain association file and it is now publicly accessible at the correct path, served as plain text (no download prompt):
+
+https://www.cluny.cafe/.well-known/apple-developer-merchantid-domain-association
+
+The file is also accessible on the non-www domain:
+
+https://cluny.cafe/.well-known/apple-developer-merchantid-domain-association
+
+Could you please proceed with enabling Apple Pay for Web on our merchant portal for www.cluny.cafe?
+
+Please let us know if any further action is required from our side.
+
+Thank you for your support.
+
+
+...
+
+[Message clipped]  View entire message
+
+Nouf Alshibramy
+Jul 21, 2026, 2:41 PM (13 days ago)
+Classification: Confidential @Mohammed Hamdy @Hussamalden Abushalha please urgent support client need would to proceed with reactivating Apple Pay through the G
+
+Mohammed Hamdy
+Jul 21, 2026, 6:10 PM (13 days ago)
+Apple Pay is now active on this domain https://www.cluny.cafe/
+
+Youssef Darwish
+Jul 26, 2026, 12:36 PM (8 days ago)
+Dear Mohammed, After configuring the new Apple Pay domain verification file (Apple Pay Merchant Association File) for the new domain, Apple Pay is still not wor
+
+Mohammed Hamdy
+Jul 26, 2026, 12:41 PM (8 days ago)
+Kindly make sure that you’re passing the customer email while creating the session and confirm back. Also, you can try with a different card
+
+Youssef Darwish <youssefd.business@gmail.com>
+Aug 2, 2026, 10:15 PM (20 hours ago)
+to Mohammed
+
+Dear @Mohammed Hamdy 
+
+
+We have Apple Pay enabled on www.cluny.cafe, and the .well-known file is now correctly accessible as text/plain at: https://www.cluny.cafe/.well-known/apple-developer-merchantid-domain-association
+
+However, Apple Pay still fails inside the HPP with "Payment operation incomplete". When we create a Geidea session via the API (/payment-intent/api/v2/direct/session), the response always returns "expressCheckouts": [] even though Apple Pay is enabled on the merchant account.
+
+We need you to:
+
+Enable expressCheckouts: ApplePay as default for HPP sessions on merchant account f9931464-9a09-458f-7bd9-08de72963454
+Re-verify the domain www.cluny.cafe for Apple Pay (the file was previously served incorrectly — this has been fixed)
+BR, 
+
+Youssef Darwish
+
+-  QIROX Support Team
+
+
+
+ 
+
+ 
+
+We are integrating Apple Pay via your Direct API for our merchant account.
+
+The /payment/api/v1/direct/apple/merchant-session endpoint is returning 401 Unauthorized.Please enable Apple Pay Direct API on our account.
+
+Details:
+
+Merchant Identifier: merchant.cluny.cafe
+Domain: cluny.cafe
+Let us know once it's activated.
+
+Thanks
+
+   
+
+On Mon, May 4, 2026 at 1:51 PM Mohammed Hamdy <Mohammed.hamdy@geidea.net> wrote:
+
+
+Mohammed Hamdy
+9:58 AM (8 hours ago)
+to Khalil, PGW, Nouf, Asma, Hussamalden, me
+
+Classification: Public
+
+Dear @Youssef Darwish,
+
+ 
+
+            Kindly note that Apple Pay is already active on https://www.cluny.cafe/, please try with a different card and make sure you’re using the live keys below.
+
+ 
+
+PK: 5bf49a11-693b-4d3c-9d85-4f757d03cc1c
+
+API: c37321b2-9785-4439-8e53-61005f13fab3
+
+...
+
+[Message clipped]  View entire message
+
+Youssef Darwish
+10:03 AM (8 hours ago)
+We have already tested Apple Pay using multiple cards from different banks and networks, including Visa and Mastercard, and unfortunately all attempts are still
+
+Mohammed Hamdy
+10:21 AM (8 hours ago)
+to me, Khalil, PGW, Nouf, Asma, Hussamalden
+
+Classification: Public
+
+Dear @Youssef Darwish,
+
+ 
+
+            The domain is already configured. Kindly share the session ID
+
+ 
+
+ 
+
+ 
+
+Khalil Mayyasi
+
+
+
+ 
+
+Product Owner
+
+
+
+ 
+
+ 
+
+T
+
+ 
+
+...
+
+[Message clipped]  View entire message
