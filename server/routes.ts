@@ -15845,10 +15845,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // ── Payment breakdown ──
       // POS card methods (physical terminal)
-      const POS_CARD_METHODS = new Set(['card','network','pos-network','mada','stc-pay','alinma','rajhi','ur','barq']);
+      // NOTE: 'pos' is the stored value for all card/شبكة payments (paymentMethodMap maps 'card' → 'pos')
+      const POS_CARD_METHODS = new Set(['pos','card','network','pos-network','mada','stc-pay','alinma','rajhi','ur','barq']);
       // Online gateway methods (web/app payments)
-      const ONLINE_METHODS = new Set(['apple_pay','neoleap','neoleap-apple-pay','geidea','bank_card','paymob-card','paymob-wallet','paymob-apple-pay','credit_card','bank_transfer','online','web-payment']);
-      const LOYALTY_METHODS = new Set(['qahwa-card','loyalty-card','pos']);
+      const ONLINE_METHODS = new Set(['apple_pay','neoleap','neoleap-apple-pay','geidea','bank_card','paymob','paymob-card','paymob-wallet','paymob-apple-pay','credit_card','bank_transfer','online','web-payment']);
+      // Loyalty / gift card methods
+      const LOYALTY_METHODS = new Set(['qahwa-card','loyalty-card','qirox-card']);
       const pb = {
         cash:   { total: 0, orders: 0 },
         card:   { total: 0, orders: 0 },
@@ -15870,11 +15872,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           pb.split.total += amt; pb.split.orders++;
           let cp = 0, kp = 0;
           try {
-            const pd = JSON.parse(o.paymentDetails || '{}');
-            cp = Number(pd.cash || pd.cashAmount || 0);
-            kp = Number(pd.card || pd.cardAmount || pd.network || 0);
+            const pd = typeof o.paymentDetails === 'string'
+              ? JSON.parse(o.paymentDetails || '{}')
+              : (o.paymentDetails || {});
+            cp = Number(pd.cash || pd.cashAmount || pd.cashPortion || 0);
+            kp = Number(pd.card || pd.cardAmount || pd.cardPortion || pd.network || pd.networkAmount || 0);
           } catch { /* ignore */ }
-          if (cp + kp <= 0) { cp = amt / 2; kp = amt / 2; }
+          // Normalise: if portions don't sum to order total, scale proportionally
+          const rawSum = cp + kp;
+          if (rawSum <= 0) {
+            cp = amt / 2; kp = amt / 2;           // no data — split 50/50
+          } else if (Math.abs(rawSum - amt) > 0.01) {
+            cp = (cp / rawSum) * amt;              // scale to actual total
+            kp = (kp / rawSum) * amt;
+          }
           pb.split.cashPortion  += cp;
           pb.split.cardPortion  += kp;
         } else if (LOYALTY_METHODS.has(m)) {
