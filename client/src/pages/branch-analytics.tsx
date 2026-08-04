@@ -14,7 +14,7 @@ import {
 import {
   ArrowRight, Banknote, CreditCard, Shuffle, TrendingUp,
   ShoppingCart, Users, BarChart3, Package, MapPin,
-  AlertTriangle, ChevronLeft, RefreshCw,
+  AlertTriangle, RefreshCw, Globe,
 } from "lucide-react";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -224,7 +224,8 @@ export default function BranchAnalytics() {
             </CardTitle>
           </CardHeader>
           <CardContent className="px-4 pb-4">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* ── 4 main method cards ── */}
+            <div className="grid grid-cols-2 gap-3">
 
               {/* Cash */}
               <div className="rounded-xl border-2 border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 p-3">
@@ -237,24 +238,40 @@ export default function BranchAnalytics() {
                     <p className="text-[10px] text-muted-foreground">{pay?.cash.orders ?? 0} {tc("طلب","orders")}</p>
                   </div>
                 </div>
-                <p className="font-bold text-lg text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                  {pay ? fmt(pay.cash.total) : "—"} <SarIcon size={12} />
+                <p className="font-bold text-base text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                  {pay ? fmt(pay.cash.total) : "—"} <SarIcon size={11} />
                 </p>
               </div>
 
-              {/* Card / Network */}
+              {/* Card / Network (POS) */}
               <div className="rounded-xl border-2 border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 p-3">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
                     <CreditCard className="w-4 h-4 text-blue-600" />
                   </div>
                   <div>
-                    <p className="text-xs font-semibold text-blue-700 dark:text-blue-400">{tc("شبكة / كارت", "Card / Network")}</p>
+                    <p className="text-xs font-semibold text-blue-700 dark:text-blue-400">{tc("شبكة (POS)", "Card / POS")}</p>
                     <p className="text-[10px] text-muted-foreground">{pay?.card.orders ?? 0} {tc("طلب","orders")}</p>
                   </div>
                 </div>
-                <p className="font-bold text-lg text-blue-600 dark:text-blue-400 flex items-center gap-1">
-                  {pay ? fmt(pay.card.total) : "—"} <SarIcon size={12} />
+                <p className="font-bold text-base text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                  {pay ? fmt(pay.card.total) : "—"} <SarIcon size={11} />
+                </p>
+              </div>
+
+              {/* Online */}
+              <div className="rounded-xl border-2 border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-8 h-8 rounded-lg bg-violet-100 dark:bg-violet-900 flex items-center justify-center">
+                    <Globe className="w-4 h-4 text-violet-600" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-violet-700 dark:text-violet-400">{tc("أونلاين", "Online")}</p>
+                    <p className="text-[10px] text-muted-foreground">{pay?.online?.orders ?? 0} {tc("طلب","orders")}</p>
+                  </div>
+                </div>
+                <p className="font-bold text-base text-violet-600 dark:text-violet-400 flex items-center gap-1">
+                  {pay ? fmt(pay.online?.total ?? 0) : "—"} <SarIcon size={11} />
                 </p>
               </div>
 
@@ -269,72 +286,77 @@ export default function BranchAnalytics() {
                     <p className="text-[10px] text-muted-foreground">{pay?.split.orders ?? 0} {tc("طلب","orders")}</p>
                   </div>
                 </div>
-                <p className="font-bold text-lg text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                  {pay ? fmt(pay.split.total) : "—"} <SarIcon size={12} />
+                <p className="font-bold text-base text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                  {pay ? fmt(pay.split.total) : "—"} <SarIcon size={11} />
                 </p>
                 {pay && pay.split.orders > 0 && (
                   <div className="mt-2 space-y-1 border-t border-amber-200 dark:border-amber-800 pt-2">
                     <div className="flex justify-between text-[10px]">
                       <span className="text-muted-foreground flex items-center gap-1"><Banknote className="w-3 h-3" /> {tc("منها كاش","Cash portion")}</span>
-                      <span className="font-medium text-emerald-600">{fmt(pay.split.cashPortion)} ﷼</span>
+                      <span className="font-semibold text-emerald-600">{fmt(pay.split.cashPortion)} ﷼</span>
                     </div>
                     <div className="flex justify-between text-[10px]">
                       <span className="text-muted-foreground flex items-center gap-1"><CreditCard className="w-3 h-3" /> {tc("منها شبكة","Card portion")}</span>
-                      <span className="font-medium text-blue-600">{fmt(pay.split.cardPortion)} ﷼</span>
+                      <span className="font-semibold text-blue-600">{fmt(pay.split.cardPortion)} ﷼</span>
                     </div>
                   </div>
                 )}
               </div>
-
-              {/* Loyalty + Other (compact) */}
-              {pay && (pay.loyalty.orders > 0 || pay.other.orders > 0) && (
-                <div className="sm:col-span-3 grid grid-cols-2 gap-3">
-                  {pay.loyalty.orders > 0 && (
-                    <div className="rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/20 p-3 flex items-center gap-3">
-                      <div className="w-7 h-7 rounded-lg bg-purple-100 dark:bg-purple-900 flex items-center justify-center">
-                        <Package className="w-3.5 h-3.5 text-purple-600" />
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-muted-foreground">{tc("ولاء / بطاقة","Loyalty / Card")} · {pay.loyalty.orders} {tc("طلب","orders")}</p>
-                        <p className="font-bold text-sm text-purple-600 dark:text-purple-400 flex items-center gap-1">{fmt(pay.loyalty.total)} <SarIcon size={10} /></p>
-                      </div>
-                    </div>
-                  )}
-                  {pay.other.orders > 0 && (
-                    <div className="rounded-xl border border-border bg-muted/30 p-3 flex items-center gap-3">
-                      <div className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center">
-                        <BarChart3 className="w-3.5 h-3.5 text-muted-foreground" />
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-muted-foreground">{tc("أخرى","Other")} · {pay.other.orders} {tc("طلب","orders")}</p>
-                        <p className="font-bold text-sm text-foreground flex items-center gap-1">{fmt(pay.other.total)} <SarIcon size={10} /></p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
-            {/* Combined totals bar */}
-            {pay && (pay.cash.total + pay.card.total + pay.split.total) > 0 && (() => {
-              const total = pay.cash.total + pay.card.total + pay.split.total + pay.loyalty.total + pay.other.total;
-              const cashTotal  = pay.cash.total + pay.split.cashPortion;
-              const cardTotal  = pay.card.total + pay.split.cardPortion;
-              const pct = (n: number) => total > 0 ? Math.round((n / total) * 100) : 0;
-              return (
-                <div className="mt-4">
-                  <p className="text-[10px] text-muted-foreground mb-1">{tc("الكاش الكلي (كاش + حصة الكاش من المقسّم)", "Total cash incl. split cash portion")}</p>
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-full bg-muted rounded-full h-3 overflow-hidden flex">
-                      <div className="h-3 bg-emerald-500 transition-all" style={{ width: `${pct(cashTotal)}%` }} title={`كاش: ${fmt(cashTotal)} ﷼`} />
-                      <div className="h-3 bg-blue-500 transition-all"   style={{ width: `${pct(cardTotal)}%` }} title={`شبكة: ${fmt(cardTotal)} ﷼`} />
-                      {pay.loyalty.total > 0 && <div className="h-3 bg-purple-500 transition-all" style={{ width: `${pct(pay.loyalty.total)}%` }} />}
+            {/* Loyalty + Other compact row */}
+            {pay && (pay.loyalty.orders > 0 || pay.other.orders > 0) && (
+              <div className="grid grid-cols-2 gap-3 mt-3">
+                {pay.loyalty.orders > 0 && (
+                  <div className="rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/20 p-3 flex items-center gap-3">
+                    <div className="w-7 h-7 rounded-lg bg-purple-100 dark:bg-purple-900 flex items-center justify-center shrink-0">
+                      <Package className="w-3.5 h-3.5 text-purple-600" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground">{tc("ولاء / بطاقة","Loyalty")} · {pay.loyalty.orders} {tc("طلب","orders")}</p>
+                      <p className="font-bold text-sm text-purple-600 dark:text-purple-400 flex items-center gap-1">{fmt(pay.loyalty.total)} <SarIcon size={10} /></p>
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-3 text-[10px]">
+                )}
+                {pay.other.orders > 0 && (
+                  <div className="rounded-xl border border-border bg-muted/30 p-3 flex items-center gap-3">
+                    <div className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                      <BarChart3 className="w-3.5 h-3.5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground">{tc("أخرى","Other")} · {pay.other.orders} {tc("طلب","orders")}</p>
+                      <p className="font-bold text-sm text-foreground flex items-center gap-1">{fmt(pay.other.total)} <SarIcon size={10} /></p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Combined totals bar */}
+            {pay && (() => {
+              const grandTotal = pay.cash.total + pay.card.total + (pay.online?.total ?? 0) + pay.split.total + pay.loyalty.total + pay.other.total;
+              if (grandTotal <= 0) return null;
+              // Normalise split portions into their true categories
+              const cashTotal   = pay.cash.total   + pay.split.cashPortion;
+              const cardTotal   = pay.card.total   + pay.split.cardPortion;
+              const onlineTotal = pay.online?.total ?? 0;
+              const pct = (n: number) => grandTotal > 0 ? Math.round((n / grandTotal) * 100) : 0;
+              return (
+                <div className="mt-4">
+                  <p className="text-[10px] text-muted-foreground mb-1.5">
+                    {tc("توزيع المبيعات الإجمالي (السبلت يُوزَّع على فئته)", "Total sales split (split orders distributed by method)")}
+                  </p>
+                  <div className="w-full bg-muted rounded-full h-3 overflow-hidden flex mb-2">
+                    <div className="h-3 bg-emerald-500 transition-all" style={{ width: `${pct(cashTotal)}%` }}   title={`كاش: ${fmt(cashTotal)} ﷼`} />
+                    <div className="h-3 bg-blue-500   transition-all" style={{ width: `${pct(cardTotal)}%` }}   title={`شبكة: ${fmt(cardTotal)} ﷼`} />
+                    <div className="h-3 bg-violet-500 transition-all" style={{ width: `${pct(onlineTotal)}%` }} title={`أونلاين: ${fmt(onlineTotal)} ﷼`} />
+                    {pay.loyalty.total > 0 && <div className="h-3 bg-purple-400 transition-all" style={{ width: `${pct(pay.loyalty.total)}%` }} />}
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px]">
                     <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"/>{tc("كاش","Cash")}: {fmt(cashTotal)} ﷼ ({pct(cashTotal)}%)</span>
                     <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500 inline-block"/>{tc("شبكة","Card")}: {fmt(cardTotal)} ﷼ ({pct(cardTotal)}%)</span>
-                    {pay.loyalty.total > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500 inline-block"/>{tc("ولاء","Loyalty")}: {fmt(pay.loyalty.total)} ﷼ ({pct(pay.loyalty.total)}%)</span>}
+                    {onlineTotal > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-violet-500 inline-block"/>{tc("أونلاين","Online")}: {fmt(onlineTotal)} ﷼ ({pct(onlineTotal)}%)</span>}
+                    {pay.loyalty.total > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-400 inline-block"/>{tc("ولاء","Loyalty")}: {fmt(pay.loyalty.total)} ﷼ ({pct(pay.loyalty.total)}%)</span>}
                   </div>
                 </div>
               );

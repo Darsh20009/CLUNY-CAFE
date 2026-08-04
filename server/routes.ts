@@ -3585,7 +3585,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           const geideaData = await geideaResponse.json() as any;
           console.log('[Geidea] Create Session response:', JSON.stringify(geideaData));
-          console.log('[Geidea] Create Session response:', JSON.stringify(geideaData));
 
           const sessionId = geideaData?.session?.id;
 
@@ -15845,11 +15844,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const uniqueCustomers = uniquePhones.size;
 
       // ── Payment breakdown ──
-      const CARD_METHODS = new Set(['card','network','pos-network','mada','stc-pay','alinma','rajhi','ur','barq','apple_pay','neoleap','neoleap-apple-pay','geidea','bank_card','paymob-card','paymob-wallet','paymob-apple-pay','credit_card','bank_transfer']);
+      // POS card methods (physical terminal)
+      const POS_CARD_METHODS = new Set(['card','network','pos-network','mada','stc-pay','alinma','rajhi','ur','barq']);
+      // Online gateway methods (web/app payments)
+      const ONLINE_METHODS = new Set(['apple_pay','neoleap','neoleap-apple-pay','geidea','bank_card','paymob-card','paymob-wallet','paymob-apple-pay','credit_card','bank_transfer','online','web-payment']);
       const LOYALTY_METHODS = new Set(['qahwa-card','loyalty-card','pos']);
       const pb = {
         cash:   { total: 0, orders: 0 },
         card:   { total: 0, orders: 0 },
+        online: { total: 0, orders: 0 },
         split:  { total: 0, orders: 0, cashPortion: 0, cardPortion: 0 },
         loyalty:{ total: 0, orders: 0 },
         other:  { total: 0, orders: 0 },
@@ -15859,8 +15862,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const amt = Number(o.totalAmount) || 0;
         if (m === 'cash') {
           pb.cash.total += amt; pb.cash.orders++;
-        } else if (CARD_METHODS.has(m)) {
+        } else if (POS_CARD_METHODS.has(m)) {
           pb.card.total += amt; pb.card.orders++;
+        } else if (ONLINE_METHODS.has(m)) {
+          pb.online.total += amt; pb.online.orders++;
         } else if (m === 'split') {
           pb.split.total += amt; pb.split.orders++;
           let cp = 0, kp = 0;
@@ -15954,6 +15959,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentBreakdown: {
           cash:   { total: round2(pb.cash.total),    orders: pb.cash.orders },
           card:   { total: round2(pb.card.total),    orders: pb.card.orders },
+          online: { total: round2(pb.online.total),  orders: pb.online.orders },
           split:  { total: round2(pb.split.total),   orders: pb.split.orders, cashPortion: round2(pb.split.cashPortion), cardPortion: round2(pb.split.cardPortion) },
           loyalty:{ total: round2(pb.loyalty.total), orders: pb.loyalty.orders },
           other:  { total: round2(pb.other.total),   orders: pb.other.orders },

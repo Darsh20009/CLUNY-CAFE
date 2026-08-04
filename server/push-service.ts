@@ -126,10 +126,14 @@ async function sendPushToSubscriptions(
   });
 
   const isNewOrder = payload.type === 'new_order';
+  // Web Push topics must be URL-safe ASCII with no special chars (RFC 8030).
+  // Strip anything outside a-z A-Z 0-9 - _ and truncate to 32 chars.
+  const rawTopic = payload.tag || payload.type || 'notification';
+  const safeTopic = rawTopic.replace(/[^a-zA-Z0-9\-_]/g, '-').slice(0, 32);
   const pushOptions: webpush.RequestOptions = {
     TTL: 86400,
     urgency: isNewOrder ? 'high' : 'normal',
-    topic: payload.tag || payload.type || 'notification',
+    topic: safeTopic,
   };
 
   const results = await Promise.allSettled(
