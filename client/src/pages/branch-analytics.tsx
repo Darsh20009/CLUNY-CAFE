@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useLocation, useParams } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslate } from "@/lib/useTranslate";
-import { SarIcon } from "@/components/SarIcon";
+import { SarIcon } from "@/components/sar-icon";
 import {
   Card, CardContent, CardHeader, CardTitle,
 } from "@/components/ui/card";
