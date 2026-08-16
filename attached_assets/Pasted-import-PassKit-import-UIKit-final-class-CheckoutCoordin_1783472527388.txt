@@ -1,0 +1,83 @@
+import PassKit
+import UIKit
+
+final class CheckoutCoordinator: NSObject {
+    private var authController: PKPaymentAuthorizationController?
+
+    func beginApplePayFlow(total: Decimal) {
+        let networks: [PKPaymentNetwork] = [.visa, .masterCard, .amex, .mada]
+        guard PKPaymentAuthorizationController.canMakePayments(usingNetworks: networks) else {
+            
+            return
+        }
+
+        let req = PKPaymentRequest()
+        req.merchantIdentifier = "merchant.com.example.app"
+        req.countryCode = "SA"
+        req.currencyCode = "SAR"
+        req.supportedNetworks = networks
+        req.merchantCapabilities = [.capability3DS]
+
+        let amount = NSDecimalNumber(decimal: (total as NSDecimalNumber.DecimalType))
+        req.paymentSummaryItems = [
+            PKPaymentSummaryItem(label: "Order Total", amount: amount)
+        ]
+
+        let controller = PKPaymentAuthorizationController(paymentRequest: req)
+        controller.delegate = self
+        self.authController = controller
+        controller.present { presented in
+            if !presented {
+                
+            }
+        }
+    }
+}
+
+extension CheckoutCoordinator: PKPaymentAuthorizationControllerDelegate {
+    func paymentAuthorizationController(_ controller: PKPaymentAuthorizationController,
+                                        didAuthorizePayment payment: PKPayment,
+                                        completion: @escaping (PKPaymentAuthorizationResult) -> Void) {
+        
+        do {
+            let tokenData = payment.token.paymentData
+            let tokenJSON = try JSONSerialization.jsonObject(with: tokenData, options: [])
+
+            let payload: [String: Any] = [
+                "applePayToken": tokenJSON,               
+                "amount": "100.00",
+                "currency": "SAR",
+                "merchantReference": "ORDER-12345"
+            ]
+
+            sendToBackend(json: payload) { ok in
+                completion(PKPaymentAuthorizationResult(status: ok ? .success : .failure, errors: nil))
+            }
+        } catch {
+            completion(PKPaymentAuthorizationResult(status: .failure, errors: nil))
+        }
+    }
+
+    func paymentAuthorizationControllerDidFinish(_ controller: PKPaymentAuthorizationController) {
+        controller.dismiss(completion: nil)
+        self.authController = nil
+    }
+
+    
+    private func sendToBackend(json: [String: Any], completion: @escaping (Bool) -> Void) {
+        guard let url = URL(string: "https://api.your-backend.example/payments/applepay") else {
+            completion(false); return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: json, options: [])
+
+        URLSession.shared.dataTask(with: req) { _, resp, err in
+            guard err == nil,
+                  let http = resp as? HTTPURLResponse,
+                  200..<300 ~= http.statusCode else { completion(false); return }
+            completion(True)
+        }.resume()
+    }
+}

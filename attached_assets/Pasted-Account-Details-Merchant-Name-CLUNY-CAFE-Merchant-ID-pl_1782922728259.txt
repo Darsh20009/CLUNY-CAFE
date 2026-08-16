@@ -1,0 +1,51 @@
+Account Details
+
+Merchant Name: CLUNY CAFE
+Merchant ID: (please fill in your Geidea merchant ID)
+Public Key in use: 5bf49a11-693b-4d3c-9d85-4f757d03cc1c
+Domain: cluny.cafe
+Apple Merchant Identifier: merchant.cluny.cafe
+Environment: Production (Live)
+Base URL: https://api.ksamerchant.geidea.net
+The Issue
+
+Our backend is implementing the Apple Pay Direct API (server-to-server), not the Hosted Payment Page (HPP). The flow is:
+
+Create a Geidea session — WORKS SUCCESSFULLY
+POST /payment-intent/api/v2/direct/session
+→ 200 OK, returns sessionId
+Validate Apple Pay merchant session — FAILS WITH 401
+POST /payment/api/v1/direct/apple/merchant-session
+Headers:
+  Authorization: Basic base64(publicKey:apiPassword)
+  Content-Type: application/json
+Body:
+{
+  "sessionId": "<valid sessionId from step 1>",
+  "validationUrl": "<Apple validation URL from onvalidatemerchant>",
+  "merchantIdentifier": "merchant.cluny.cafe",
+  "domainName": "cluny.cafe",
+  "displayName": "CLUNY CAFE",
+  "initiative": "web",
+  "initiativeContext": "cluny.cafe"
+}
+Response:
+HTTP 401 Unauthorized
+{ "message": "Unauthorized" }
+The exact same publicKey + apiPassword Basic Auth credentials succeed on the session endpoint but are rejected on the Apple Pay merchant-session endpoint. This indicates the rejection is at the account permission layer, not at the credential layer.
+
+We have already verified on our side:
+
+Apple Merchant ID merchant.cluny.cafe is created and active in Apple Developer.
+Domain cluny.cafe is registered and verified in Apple Developer.
+The domain association file is served at https://cluny.cafe/.well-known/apple-developer-merchantid-domain-association.
+The Apple Pay Payment Processing Certificate has been generated.
+What I Need From You — Please Confirm in Writing
+
+Is Apple Pay Direct API (server-to-server, not HPP/iframe) explicitly enabled on my merchant account? Please confirm this specific feature is provisioned, as it is separate from the standard Apple Pay-via-HPP option.
+Is the domain cluny.cafe whitelisted in your Apple Pay configuration for my merchant account? This is in addition to the Apple Developer domain registration we have already completed on our side.
+Do my existing credentials (publicKey 5bf49a11-693b-4d3c-9d85-4f757d03cc1c) have permission to call the Apple Pay Direct endpoints, or do you need to issue separate credentials specifically for Apple Pay Direct API access?
+Please check your server logs for my account and tell me the exact reason for the 401 on /payment/api/v1/direct/apple/merchant-session. A timestamp range you can use:
+From: (fill in date/time of your most recent test)
+To: (fill in)
+If your Apple Pay Direct flow requires a Merchant Identity Certificate (.pfx) to be issued by Geidea (rather than by us), please confirm and provide the steps and CSR requirements.

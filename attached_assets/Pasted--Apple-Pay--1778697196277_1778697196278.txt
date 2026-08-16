@@ -1,0 +1,207 @@
+هذا السلوك غالبًا يعني أن Apple Pay لا يستطيع الوصول لملف التحقق بشكل صحيح، حتى لو أنت رفعته فعلًا.
+يعني:
+
+
+Apple يبدأ التحقق
+
+
+يبقى Processing
+
+
+ثم يفشل بصمت بدون Success/Error واضح
+
+
+وهذا يحدث عادة بسبب واحد من هذه الأسباب الدقيقة جدًا:
+1) الملف لا يُخدم كـ raw text
+افتح هذا الرابط بنفسك:
+https://cluny.cafe/.well-known/apple-developer-merchantid-domain-association
+المفروض:
+
+
+يفتح نص طويل مباشرة
+
+
+بدون تحميل
+
+
+بدون HTML
+
+
+بدون redirect
+
+
+بدون صفحة 403/404
+
+
+إذا رأيت:
+
+
+صفحة موقعك
+
+
+Cloudflare page
+
+
+حماية
+
+
+Redirect
+
+
+صفحة index
+
+
+فالتوثيق سيفشل.
+
+2) يوجد Redirect
+Apple Pay يرفض أحيانًا:
+
+
+301
+
+
+302
+
+
+force slash
+
+
+redirect إلى www
+
+
+مثال سيء:
+cluny.cafe -> www.cluny.cafe
+أو:
+http -> https -> www
+يجب أن يكون الرابط النهائي مباشر 200.
+
+3) الـ MIME Type خطأ
+الملف يجب أن يرجع:
+Content-Type: text/plain
+وليس:
+
+
+application/octet-stream
+
+
+text/html
+
+
+
+4) Cloudflare / حماية / Bot Fight
+إذا تستخدم:
+
+
+Cloudflare
+
+
+حماية بوتات
+
+
+WAF
+
+
+Under Attack Mode
+
+
+فغالبًا Apple لا يستطيع قراءة الملف.
+جرّب:
+
+
+تعطيل الحماية مؤقتًا
+
+
+أو bypass لـ:
+
+
+/.well-known/*
+
+5) LiteSpeed يمنع dot directories
+أنت سابقًا ظهر عندك LiteSpeed.
+أحيانًا LiteSpeed يمنع:
+.well-known
+أو لا يقرأه صحيح.
+جرّب وضع .htaccess داخل public_html:
+RewriteEngine OnRewriteRule ^\.well-known/apple-developer-merchantid-domain-association$ - [L]
+
+6) الملف فيه امتداد بالغلط
+يجب أن يكون الاسم بالضبط:
+apple-developer-merchantid-domain-association
+بدون:
+
+
+.txt
+
+
+.json
+
+
+.html
+
+
+
+7) Permissions خطأ
+يفضل:
+644
+للفايل.
+
+اختبار مهم جدًا الآن
+ادخل هذا:
+https://cluny.cafe/.well-known/apple-developer-merchantid-domain-association
+ثم افتح:
+
+
+Inspect
+
+
+Network
+
+
+وتأكد:
+Status: 200
+وليس:
+
+
+301
+
+
+302
+
+
+403
+
+
+404
+
+
+
+أسرع طريقة أعرف المشكلة
+استخدم هذا الموقع:
+https://search.google.com/test/mobile-friendly
+وحط رابط الملف.
+إذا Google نفسها لا تستطيع قراءته بشكل raw فـ Apple أيضًا لن تستطيع.
+
+نقطة قاتلة جدًا
+إذا كنت تستخدم Next.js أو React Router أو SPA:
+أحيانًا أي رابط غير معروف يتحول تلقائيًا إلى index.html.
+وهذا يكسر Apple verification.
+يجب أن يكون الملف Static حقيقي داخل:
+public/.well-known/
+وليس Route ديناميكي.
+
+من وصفك تحديدًا:
+
+processing ثم لا يعطي صح أو خطأ
+
+فأنا أشك جدًا في:
+
+
+redirect
+
+
+cloudflare
+
+
+أو MIME/content-type
+
+

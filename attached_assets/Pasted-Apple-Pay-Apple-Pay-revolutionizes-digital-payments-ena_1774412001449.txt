@@ -1,0 +1,30 @@
+Apple Pay
+Apple Pay revolutionizes digital payments, enabling users to seamlessly transition from traditional wallets by securely storing their credit and debit card details on their Apple devices. Supported on iPhones, iPads, Apple Watches, and Mac computers, Apple Pay delivers a unified payment experience across multiple devices. Whether users are making purchases in-store, within apps, or online, they can relish the convenience and security that Apple Pay offers.
+
+Apple Pay is available in supported regions found here.
+
+Apple Pay Integration:
+Geidea provides two tailored integrations of Apple Pay to meet the specific needs of your application: one optimized for mobile applications and the other for website applications. Detailed integration instructions for both types will be provided in the subsequent sections.
+
+
+Apple Pay Website Integration
+Follow the below steps to complete Apple Pay integration with your website:
+
+Geidea's integration team will share a file called_"apple-developer-merchantid-domain-association"_
+Create a ".well-known" folder in the root of your website and add the file inside it. It should be available under www.yourwebsite.com/.well-known/apple-developer-merchantid-domain-association
+Contact Geidea's integration team to enable Apple Pay for Web from the merchant portal.
+After successfully Integrating with Apple Pay, you will have a Checkout experience as below:
+
+🚧
+Ensure that the ".well-known" folder and file are publicly published, otherwise the feature won't be enabled
+Apple Pay Mobile Integration
+Follow the below steps to complete Apple Pay integration with your mobile application:
+
+Login to your Geidea's account at Merchant Portal
+Navigate to the "Apple Pay Settings" section under the "Payment Gateway" tab
+Expand the "Apple Pay for your app" section that will show you 5 steps to perform, as shown below:
+
+
+Follow the steps mentioned in the screenshot above to upload the new Apple Pay certificate in the Geidea Merchant Portal.
+Once you upload the Apple Pay certificate, you can click on the toggle to enable "Apple Pay for your App"
+Click "Save"

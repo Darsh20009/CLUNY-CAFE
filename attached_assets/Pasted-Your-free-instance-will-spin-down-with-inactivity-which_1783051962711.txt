@@ -1,0 +1,59 @@
+Your free instance will spin down with inactivity, which can delay requests by 50 seconds or more.
+Upgrade now
+July 3, 2026 at 6:42 AM
+failed
+aad13e4
+Add thermal printing capabilities for various reports Integrates thermal printer support for generating ESC/POS reports, with HTML fallback. Modifies `thermal-printer.ts` to include generic report building functions and updates `admin-reports.tsx` and `product-reports.tsx` to utilize these new thermal printing features. Replit-Commit-Author: Agent Replit-Commit-Session-Id: f02d338c-6968-41a4-b3ca-d5954a6148ec Replit-Commit-Checkpoint-Type: full_checkpoint Replit-Commit-Event-Id: 0a18ad17-c1eb-4e0a-b1d8-1f856a48a258 Replit-Commit-Screenshot-Url: https://storage.googleapis.com/screenshot-production-us-central1/3a8e26c1-07f0-4061-ac2d-2fdf3800b703/f02d338c-6968-41a4-b3ca-d5954a6148ec/xBhGnKF Replit-Helium-Checkpoint-Created: true
+
+Rollback
+Exited with status 1 while building your code.
+Read our docs for common ways to troubleshoot your deploy.
+
+All logs
+Search
+Search logs
+
+Jul 3, 6:41 AM - 6:44 AM
+GMT+3
+
+
+
+==> Downloading cache...
+==> Cloning from https://github.com/Darsh20009/CLUNY-CAFE
+==> Checking out commit aad13e41e3470b126f82ab3879c369c4a8c8d899 in branch main
+==> Downloaded 228MB in 8s. Extraction took 4s.
+==> Using Node.js version 20.11.1 via /opt/render/project/src/.node-version
+==> Docs on specifying a Node.js version: https://render.com/docs/node-version
+==> Installing Node.js version 20.11.1...
+==> Running build command 'npm ci && NODE_OPTIONS=--max-old-space-size=3072 npm run build'...
+added 796 packages in 9s
+> cluny-cafe@2.0.0 build
+> sh build.sh
+>>> Running vite build...
+vite v5.4.21 building for production...
+transforming...
+A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+✓ 1166 modules transformed.
+x Build failed in 5.62s
+error during build:
+[vite:esbuild] Transform failed with 1 error:
+/opt/render/project/src/client/src/pages/admin-reports.tsx:616:0: ERROR: Unexpected "}"
+file: /opt/render/project/src/client/src/pages/admin-reports.tsx:616:0
+Unexpected "}"
+614|      </div>
+615|    );
+616|  }
+   |  ^
+617|  
+    at failureErrorWithLog (/opt/render/project/src/node_modules/vite/node_modules/esbuild/lib/main.js:1472:15)
+    at /opt/render/project/src/node_modules/vite/node_modules/esbuild/lib/main.js:755:50
+    at responseCallbacks.<computed> (/opt/render/project/src/node_modules/vite/node_modules/esbuild/lib/main.js:622:9)
+    at handleIncomingPacket (/opt/render/project/src/node_modules/vite/node_modules/esbuild/lib/main.js:677:12)
+    at Socket.readFromStdout (/opt/render/project/src/node_modules/vite/node_modules/esbuild/lib/main.js:600:7)
+    at Socket.emit (node:events:518:28)
+    at addChunk (node:internal/streams/readable:559:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+    at Readable.push (node:internal/streams/readable:390:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:190:23)
+==> Build failed 😞
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys

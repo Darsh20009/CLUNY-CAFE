@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: cluny-cafe
+    runtime: node
+    buildCommand: npm install --include=dev && NODE_OPTIONS=--max-old-space-size=3072 npm run build
+    startCommand: node dist/index.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: MONGODB_URI
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: ADMIN_REPORT_EMAIL
+        sync: false

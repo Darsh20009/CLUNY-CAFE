@@ -1,0 +1,59 @@
+Darsh20009 / CLUNY-CAFE
+main
+cluny.cafe
+
+Your free instance will spin down with inactivity, which can delay requests by 50 seconds or more.
+Upgrade now
+July 1, 2026 at 6:30 AM
+failed
+ed82ab8
+Fix Render build: pin Node 20, fix face-api external, fix Geidea SDK URL and routing
+
+Rollback
+Exited with status 1 while building your code.
+Read our docs for common ways to troubleshoot your deploy.
+
+All logs
+Search
+Search logs
+
+Jul 1, 6:29 AM - 6:31 AM
+GMT+3
+
+
+
+==> Downloading cache...
+==> Cloning from https://github.com/Darsh20009/CLUNY-CAFE
+==> Checking out commit ed82ab8b32bf573b6b6ccecfc7bf37fa1170623c in branch main
+==> Downloaded 190MB in 3s. Extraction took 3s.
+==> Using Node.js version 20.20.0 via /opt/render/project/src/.node-version
+==> Docs on specifying a Node.js version: https://render.com/docs/node-version
+==> Installing Node.js version 20.20.0...
+==> Running build command 'npm install; npm run build'...
+npm error code ENOTEMPTY
+npm error syscall rename
+npm error path /opt/render/project/src/node_modules/postcss
+npm error dest /opt/render/project/src/node_modules/.postcss-pNXqdin3
+npm error errno -39
+npm error ENOTEMPTY: directory not empty, rename '/opt/render/project/src/node_modules/postcss' -> '/opt/render/project/src/node_modules/.postcss-pNXqdin3'
+npm error A complete log of this run can be found in: /opt/render/.cache/_logs/2026-07-01T03_30_53_523Z-debug-0.log
+> cluny-cafe@2.0.0 build
+> vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --minify --outfile=dist/index.js
+node:internal/modules/esm/resolve:283
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/opt/render/project/src/node_modules/rollup/parseAst' imported from /opt/render/project/src/node_modules/vite/dist/node/cli.js
+    at finalizeResolution (node:internal/modules/esm/resolve:283:11)
+    at moduleResolve (node:internal/modules/esm/resolve:952:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1188:11)
+    at ModuleLoader.defaultResolve (node:internal/modules/esm/loader:708:12)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:657:25)
+    at ModuleLoader.resolve (node:internal/modules/esm/loader:640:38)
+    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:264:38)
+    at ModuleJob._link (node:internal/modules/esm/module_job:168:49) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///opt/render/project/src/node_modules/rollup/parseAst'
+}
+Node.js v20.20.0
+==> Build failed 😞
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys

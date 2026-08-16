@@ -1,0 +1,12 @@
+Illegal constructor
+TypeError: Illegal constructor
+    at renderWithHooks (https://01ed3368-e69a-48fb-b62a-6984aa445c3e-00-la2r6e2o6bjv.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=6bb35b82:11548:26)
+    at mountIndeterminateComponent (https://01ed3368-e69a-48fb-b62a-6984aa445c3e-00-la2r6e2o6bjv.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=6bb35b82:14926:21)
+    at beginWork (https://01ed3368-e69a-48fb-b62a-6984aa445c3e-00-la2r6e2o6bjv.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=6bb35b82:15914:22)
+    at beginWork$1 (https://01ed3368-e69a-48fb-b62a-6984aa445c3e-00-la2r6e2o6bjv.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=6bb35b82:19753:22)
+    at performUnitOfWork (https://01ed3368-e69a-48fb-b62a-6984aa445c3e-00-la2r6e2o6bjv.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=6bb35b82:19198:20)
+    at workLoopSync (https://01ed3368-e69a-48fb-b62a-6984aa445c3e-00-la2r6e2o6bjv.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=6bb35b82:19137:13)
+    at renderRootSync (https://01ed3368-e69a-48fb-b62a-6984aa445c3e-00-la2r6e2o6bjv.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=6bb35b82:19116:15)
+    at recoverFromConcurrentError (https://01ed3368-e69a-48fb-b62a-6984aa445c3e-00-la2r6e2o6bjv.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=6bb35b82:18736:28)
+    at performSyncWorkOnRoot (https://01ed3368-e69a-48fb-b62a-6984aa445c3e-00-la2r6e2o6bjv.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=6bb35b82:18879:28)
+    at flushSyncCallbacks (https://01ed3368-e69a-48fb-b62a-6984aa445c3e-00-la2r6e2o6bjv.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=6bb35b82:9119:30)

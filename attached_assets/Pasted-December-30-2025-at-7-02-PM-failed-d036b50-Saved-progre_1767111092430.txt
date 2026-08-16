@@ -1,0 +1,64 @@
+December 30, 2025 at 7:02 PM
+failed
+d036b50
+Saved progress at the end of the loop Replit-Commit-Author: Agent Replit-Commit-Session-Id: 36b3ae66-a834-4463-83e2-b3855ac1968a Replit-Commit-Checkpoint-Type: full_checkpoint Replit-Commit-Event-Id: 664b9b1e-b3d9-491b-884a-e4eb8d57f2ed Replit-Commit-Screenshot-Url: https://storage.googleapis.com/screenshot-production-us-central1/4e2bd856-b3b5-4298-acab-847afaf06cb8/36b3ae66-a834-4463-83e2-b3855ac1968a/D5we3DO Replit-Helium-Checkpoint-Created: true
+
+Rollback
+Application exited early while running your code.
+Read our docs for common ways to troubleshoot your deploy.
+
+All logs
+Search
+Search
+
+Dec 30, 7:01 PM - 7:05 PM
+GMT+3
+
+
+
+   SMTP_HOST: ✅
+   SMTP_USER: ✅
+📧 Attempting to connect to SMTP: pro.eu.turbo-smtp.com:587 with user e09353b5db3d94e88d62
+[2025-12-30 16:04:10] DEBUG Creating transport: nodemailer (7.0.11; +https://nodemailer.com/; SMTP/7.0.11[client:7.0.11])
+[2025-12-30 16:04:10] DEBUG [0VRuyEMXhg0] Resolved pro.eu.turbo-smtp.com as 185.228.39.23 [cache miss]
+✅ MongoDB connected successfully
+🌱 Starting clean re-initialization...
+🌱 Starting clean re-initialization...
+✅ System re-initialized successfully with clean state.
+✅ System re-initialized successfully with clean state.
+==> Application exited early
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
+==> Running 'npm run start'
+> cluny-cafe@2.0.0 start
+> NODE_ENV=production node dist/index.js
+⚠️ MAILEROO_API_KEY not set - Email functionality will be disabled
+✅ WebSocket server initialized at /ws/orders
+4:04:26 PM [express] serving on port 10000
+📧 Performing startup email connection test...
+📧 Mail service initializing - credentials status:
+   SMTP_HOST: ✅
+   SMTP_USER: ✅
+📧 Attempting to connect to SMTP: pro.eu.turbo-smtp.com:587 with user e09353b5db3d94e88d62
+[2025-12-30 16:04:27] DEBUG Creating transport: nodemailer (7.0.11; +https://nodemailer.com/; SMTP/7.0.11[client:7.0.11])
+[2025-12-30 16:04:27] DEBUG [AW7meYCom3w] Resolved pro.eu.turbo-smtp.com as 185.228.39.23 [cache miss]
+✅ MongoDB connected successfully
+🌱 Starting clean re-initialization...
+🌱 Starting clean re-initialization...
+✅ System re-initialized successfully with clean state.
+==> Running 'npm run start'
+> cluny-cafe@2.0.0 start
+> NODE_ENV=production node dist/index.js
+⚠️ MAILEROO_API_KEY not set - Email functionality will be disabled
+✅ WebSocket server initialized at /ws/orders
+4:05:03 PM [express] serving on port 10000
+📧 Performing startup email connection test...
+📧 Mail service initializing - credentials status:
+   SMTP_HOST: ✅
+   SMTP_USER: ✅
+📧 Attempting to connect to SMTP: pro.eu.turbo-smtp.com:587 with user e09353b5db3d94e88d62
+[2025-12-30 16:05:03] DEBUG Creating transport: nodemailer (7.0.11; +https://nodemailer.com/; SMTP/7.0.11[client:7.0.11])
+[2025-12-30 16:05:04] DEBUG [60UJQRDQH1o] Resolved pro.eu.turbo-smtp.com as 185.228.39.23 [cache miss]
+✅ MongoDB connected successfully
+🌱 Starting clean re-initialization...
+🌱 Starting clean re-initialization...
+✅ System re-initialized successfully with clean state.

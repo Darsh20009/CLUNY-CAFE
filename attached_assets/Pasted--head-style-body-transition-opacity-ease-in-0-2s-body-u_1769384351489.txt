@@ -1,0 +1,595 @@
+<head><style>body {transition: opacity ease-in 0.2s; } 
+body[unresolved] {opacity: 0; display: block; overflow: hidden; position: relative; } 
+</style><meta charset="utf-8"><title>noon FOOD | Order Food Online | Food Delivery in UAE, الرياض‎‎</title><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0"><style id="marketplace-styles">
+		/* ---------------------------------------- RESET START */
+		html, body, div, span, applet, object, iframe,
+		h1, h2, h3, h4, h5, h6, p, blockquote, pre,
+		a, abbr, acronym, address, big, cite, code,
+		del, dfn, em, img, ins, kbd, q, s, samp,
+		small, strike, strong, sub, sup, tt, var,
+		b, u, i, center,
+		dl, dt, dd, ol, ul, li,
+		fieldset, form, label, legend,
+		table, caption, tbody, tfoot, thead, tr, th, td,
+		article, aside, canvas, details, embed,
+		figure, figcaption, footer, header, hgroup,
+		menu, nav, output, ruby, section, summary,
+		time, mark, audio, video {
+			margin: 0;
+			padding: 0;
+			border: 0;
+			font-size: 100%;
+			font: inherit;
+			vertical-align: baseline;
+			box-sizing: border-box;
+		}
+
+		article, aside, details, figcaption, figure,
+		footer, header, hgroup, menu, nav, section {
+			display: block;
+		}
+
+		ol, ul {
+			list-style: none;
+		}
+
+		blockquote, q {
+			quotes: none;
+		}
+
+		blockquote:before, blockquote:after,
+		q:before, q:after {
+			content: '';
+			content: none;
+		}
+
+		table {
+			border-collapse: collapse;
+			border-spacing: 0;
+		}
+		/* ---------------------------------------- RESET END */
+
+		/* ---------------------------------------- CUSTOM RESETS/DEFAULTS START */
+		* {
+			box-sizing: border-box;
+		}
+
+		* {
+			-webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+		}
+
+		*:focus {
+			outline: none;
+		}
+
+		*:focus-visible {
+			outline: 1px solid #D90368;
+			outline-offset: -1px;
+		}
+
+		strong, b {
+			font-weight: bold;
+		}
+
+		a {
+			text-decoration: none;
+			color: inherit;
+			cursor: pointer;
+		}
+
+		h1, h2, h3, h4, h5 {
+			font-weight: bold;
+		}
+
+		img {
+			max-width: 100%;
+			display: block;
+		}
+
+		input, textarea, select, button {
+			font: inherit;
+			font-size: 16px; /* prevent ios zoom plus who doesnt like user friendly form inputs? */
+			color: inherit;
+			padding: 0;
+			margin: 0;
+		}
+
+		input::-ms-clear {
+			display: none; /* remove IE X - lets provide our own */
+		}
+		input::-webkit-search-cancel-button {
+			-webkit-appearance: none; /* remove webkit X - lets provide our own */
+		}
+
+		input[type="button"],
+		input[type="reset"],
+		input[type="submit"] {
+			border-width: 0;
+			cursor: pointer;
+		}
+
+		input[type="email"],
+		input[type="number"],
+		input[type="password"],
+		input[type="search"],
+		input[type="tel"],
+		input[type="text"],
+		textarea  {
+			appearance: none;
+			border: 1px solid #CCCFDD;
+		}
+
+		textarea {
+			resize: vertical;
+		}
+
+		select {
+			border: 1px solid #CCCFDD;
+			background-color: #FFFFFF;
+		}
+
+		button {
+			appearance: none;
+			border: 0;
+			background-color: transparent;
+			cursor: pointer;
+		}
+
+		button[disabled] {
+			cursor: default;
+		}
+
+		/* ---------------------------------------- CUSTOM RESETS/DEFAULTS END */
+
+		
+        @font-face {
+            font-family: 'noonsymbols';
+            src: url("https://f.nooncdn.com/s/app/com/common/fonts/noonsymbols/noonsymbols.ttf") format('truetype');
+            font-weight: normal;
+			font-style: normal;
+        }
+        @font-face {
+            font-family: 'figtree';
+            src: url("https://f.nooncdn.com/s/app/com/common/fonts/figtree/Figtree-Regular.ttf") format('truetype');
+            font-weight: normal;
+			font-style: normal;
+        }
+        @font-face {
+            font-family: 'figtree';
+            src: url("https://f.nooncdn.com/s/app/com/common/fonts/figtree/Figtree-SemiBold.ttf") format('truetype');
+            font-weight: 600;
+			font-style: normal;
+        }
+        @font-face {
+			font-family: "Proxima Nova";
+			src: url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Regular.eot?#iefix");
+			src: url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Regular.eot?#iefix") format("eot"),
+			  url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Regular.woff2") format("woff2"),
+			  url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Regular.woff") format("woff"),
+			  url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Regular.ttf") format("truetype");
+			font-weight: normal;
+			font-style: normal;
+        }
+        @font-face {
+			font-family: "Proxima Nova";
+			src: url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Semibold.eot?#iefix");
+			src: url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Semibold.eot?#iefix") format("eot"),
+			  url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Semibold.woff2") format("woff2"),
+			  url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Semibold.woff") format("woff"),
+			  url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Semibold.ttf") format("truetype");
+			font-weight: 600;
+			font-style: normal;
+        }
+      
+    	/* LOADING THIS IN BECAUSE THE LANGUAGE SWITCHER REQUIRES THE OTHER LANGUAGES FONT */
+        @font-face {
+            font-family: 'figtree';
+            src: url("https://f.nooncdn.com/s/app/com/common/fonts/figtree/Figtree-Bold.ttf") format('truetype');
+            font-weight: bold;
+			font-style: normal;
+        }
+        @font-face {
+			font-family: "Proxima Nova";
+			src: url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Bold.eot?#iefix");
+			src: url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Bold.eot?#iefix") format("eot"),
+			url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Bold.woff2") format("woff2"),
+			url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Bold.woff") format("woff"),
+			url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Bold.ttf") format("truetype");
+			font-weight: bold;
+			font-style: normal;
+		}
+		/* arabic */
+        @font-face {
+			font-family: 'Cairo';
+			font-style: normal;
+			font-weight: 400;
+			src: local('Cairo'), local('Cairo-Regular'), url(https://fonts.gstatic.com/s/cairo/v2/KHiPzIiPko_Fw3pWntR2CoDGDUGfDkXyfkzVDelzfFk.woff2) format('woff2');
+			unicode-range: U+0600-06FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+E0FF, U+EFFD, U+F000, U+FB50-FDFF, U+FE80-FEFC;
+        }
+        /* latin */
+        @font-face {
+			font-family: 'Cairo';
+			font-style: normal;
+			font-weight: 400;
+			src: local('Cairo'), local('Cairo-Regular'), url(https://fonts.gstatic.com/s/cairo/v2/9AWxzDXz2R7tHfJeCoIOqqCWcynf_cDxXwCLxiixG1c.woff2) format('woff2');
+			unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2212, U+2215;
+        }
+
+		/* -------------------OUR STYLES START HERE */
+		:root {
+
+			/* cli remove this when bigalog is ready */
+			/* bigalog is ready, commenting this out */
+			// --temp-site-max-width: 520px;
+
+			--site-horz-spacing: 16px;
+			--modal-horz-spacing: 16px;
+
+			--desktop-header-height: 73px;
+			--desktop-footer-height: 48px;
+			--mweb-bottom-tabs-height: 60px;
+			--form-element-height: 40px;
+			::-webkit-scrollbar {
+				display: none;
+			}
+
+		}
+
+		/* cli comment this when bigalog is WIP */
+		// @media only screen and (min-width: 768px) {
+		// 	:root {
+		// 		--site-horz-spacing: 24px;
+		// 	}
+		// }
+		// @media only screen and (min-width: 992px) {
+		// 	:root {
+		// 		--site-horz-spacing: 32px;
+		// 		--modal-horz-spacing: 24px;
+		// 	}
+		// }
+		// @media only screen and (min-width: 1200px) {
+		// 	:root {
+		// 		--site-horz-spacing: 40px;
+		// 	}
+		// }
+
+		html {
+			font-size: 16px;
+			line-height: 1.4;
+
+			/* cli remove this when bigalog is ready */
+			@media only screen and (min-width: 520px)  {
+				background-color: #FFFFFF;
+			}
+		}
+
+		body {
+			background-color: #FFFFFF;
+			color: #313131;
+			font-family: 'noonsymbols', 'figtree', 'Proxima Nova', 'Helvetica Neue', Arial, sans-serif !important;
+
+
+			/* cli remove this when bigalog is ready */
+			@media only screen and (min-width: 520px)  {
+				max-width: var(--temp-site-max-width);
+				margin: 0 auto;
+			}
+
+            width: 100%;
+            max-width: 1440px;
+
+            @media screen and (min-width: 1920px) {
+                max-width: 1920px;
+            }
+		}
+
+		html[dir=rtl] body {
+			font-family: 'noonsymbols', Cairo, Tahoma, sans-serif !important;
+		}
+
+		.siteWidthContainer {
+			padding-left: var(--site-horz-spacing);
+			padding-right: var(--site-horz-spacing);
+		}
+
+    </style><link rel="icon" href="/favicon.ico"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="icon" type="image/png" sizes="192x192" href="/android-chrome-192x192.png"><link rel="icon" type="image/png" sizes="512x512" href="/android-chrome-512x512.png"><link rel="manifest" href="/site.webmanifest"><iframe src="javascript:void(0)" title="" role="presentation" style="width: 0px; height: 0px; border: 0px; display: none;"></iframe><script type="text/javascript" async="" src="https://analytics.tiktok.com/i18n/pixel/static/identify_b46e7c41.js"></script><script type="text/javascript" async="" src="https://analytics.tiktok.com/i18n/pixel/static/main.MTBmYzFiNDExMQ.js" data-id="CPC7MIRC77UB5SANEMTG"></script><script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyANWPf72r_A0rSYpmnXJ_1J4MRIhCswK0c&amp;libraries=places"></script><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0"><meta name="description" content="Get delicious food delivered right to your door with noon FOOD! Choose from a variety of cuisines and order your favorite dishes online today."><link rel="icon" href="/favicon.ico"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="icon" type="image/png" sizes="192x192" href="/android-chrome-192x192.png"><style id="marketplace-styles">
+		/* ---------------------------------------- RESET START */
+		html, body, div, span, applet, object, iframe,
+		h1, h2, h3, h4, h5, h6, p, blockquote, pre,
+		a, abbr, acronym, address, big, cite, code,
+		del, dfn, em, img, ins, kbd, q, s, samp,
+		small, strike, strong, sub, sup, tt, var,
+		b, u, i, center,
+		dl, dt, dd, ol, ul, li,
+		fieldset, form, label, legend,
+		table, caption, tbody, tfoot, thead, tr, th, td,
+		article, aside, canvas, details, embed,
+		figure, figcaption, footer, header, hgroup,
+		menu, nav, output, ruby, section, summary,
+		time, mark, audio, video {
+			margin: 0;
+			padding: 0;
+			border: 0;
+			font-size: 100%;
+			font: inherit;
+			vertical-align: baseline;
+			box-sizing: border-box;
+		}
+
+		article, aside, details, figcaption, figure,
+		footer, header, hgroup, menu, nav, section {
+			display: block;
+		}
+
+		ol, ul {
+			list-style: none;
+		}
+
+		blockquote, q {
+			quotes: none;
+		}
+
+		blockquote:before, blockquote:after,
+		q:before, q:after {
+			content: '';
+			content: none;
+		}
+
+		table {
+			border-collapse: collapse;
+			border-spacing: 0;
+		}
+		/* ---------------------------------------- RESET END */
+
+		/* ---------------------------------------- CUSTOM RESETS/DEFAULTS START */
+		* {
+			box-sizing: border-box;
+		}
+
+		* {
+			-webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+		}
+
+		*:focus {
+			outline: none;
+		}
+
+		*:focus-visible {
+			outline: 1px solid #D90368;
+			outline-offset: -1px;
+		}
+
+		strong, b {
+			font-weight: bold;
+		}
+
+		a {
+			text-decoration: none;
+			color: inherit;
+			cursor: pointer;
+		}
+
+		h1, h2, h3, h4, h5 {
+			font-weight: bold;
+		}
+
+		img {
+			max-width: 100%;
+			display: block;
+		}
+
+		input, textarea, select, button {
+			font: inherit;
+			font-size: 16px; /* prevent ios zoom plus who doesnt like user friendly form inputs? */
+			color: inherit;
+			padding: 0;
+			margin: 0;
+		}
+
+		input::-ms-clear {
+			display: none; /* remove IE X - lets provide our own */
+		}
+		input::-webkit-search-cancel-button {
+			-webkit-appearance: none; /* remove webkit X - lets provide our own */
+		}
+
+		input[type="button"],
+		input[type="reset"],
+		input[type="submit"] {
+			border-width: 0;
+			cursor: pointer;
+		}
+
+		input[type="email"],
+		input[type="number"],
+		input[type="password"],
+		input[type="search"],
+		input[type="tel"],
+		input[type="text"],
+		textarea  {
+			appearance: none;
+			border: 1px solid #CCCFDD;
+		}
+
+		textarea {
+			resize: vertical;
+		}
+
+		select {
+			border: 1px solid #CCCFDD;
+			background-color: #FFFFFF;
+		}
+
+		button {
+			appearance: none;
+			border: 0;
+			background-color: transparent;
+			cursor: pointer;
+		}
+
+		button[disabled] {
+			cursor: default;
+		}
+
+		/* ---------------------------------------- CUSTOM RESETS/DEFAULTS END */
+
+		
+        @font-face {
+            font-family: 'noonsymbols';
+            src: url("https://f.nooncdn.com/s/app/com/common/fonts/noonsymbols/noonsymbols.ttf") format('truetype');
+            font-weight: normal;
+			font-style: normal;
+        }
+        @font-face {
+            font-family: 'figtree';
+            src: url("https://f.nooncdn.com/s/app/com/common/fonts/figtree/Figtree-Regular.ttf") format('truetype');
+            font-weight: normal;
+			font-style: normal;
+        }
+        @font-face {
+            font-family: 'figtree';
+            src: url("https://f.nooncdn.com/s/app/com/common/fonts/figtree/Figtree-SemiBold.ttf") format('truetype');
+            font-weight: 600;
+			font-style: normal;
+        }
+        @font-face {
+			font-family: "Proxima Nova";
+			src: url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Regular.eot?#iefix");
+			src: url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Regular.eot?#iefix") format("eot"),
+			  url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Regular.woff2") format("woff2"),
+			  url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Regular.woff") format("woff"),
+			  url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Regular.ttf") format("truetype");
+			font-weight: normal;
+			font-style: normal;
+        }
+        @font-face {
+			font-family: "Proxima Nova";
+			src: url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Semibold.eot?#iefix");
+			src: url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Semibold.eot?#iefix") format("eot"),
+			  url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Semibold.woff2") format("woff2"),
+			  url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Semibold.woff") format("woff"),
+			  url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Semibold.ttf") format("truetype");
+			font-weight: 600;
+			font-style: normal;
+        }
+      
+    	/* LOADING THIS IN BECAUSE THE LANGUAGE SWITCHER REQUIRES THE OTHER LANGUAGES FONT */
+        @font-face {
+            font-family: 'figtree';
+            src: url("https://f.nooncdn.com/s/app/com/common/fonts/figtree/Figtree-Bold.ttf") format('truetype');
+            font-weight: bold;
+			font-style: normal;
+        }
+        @font-face {
+			font-family: "Proxima Nova";
+			src: url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Bold.eot?#iefix");
+			src: url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Bold.eot?#iefix") format("eot"),
+			url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Bold.woff2") format("woff2"),
+			url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Bold.woff") format("woff"),
+			url("https://f.nooncdn.com/s/app/com/common/fonts/proxima-v2/Proxima-Nova-Bold.ttf") format("truetype");
+			font-weight: bold;
+			font-style: normal;
+		}
+		/* arabic */
+        @font-face {
+			font-family: 'Cairo';
+			font-style: normal;
+			font-weight: 400;
+			src: local('Cairo'), local('Cairo-Regular'), url(https://fonts.gstatic.com/s/cairo/v2/KHiPzIiPko_Fw3pWntR2CoDGDUGfDkXyfkzVDelzfFk.woff2) format('woff2');
+			unicode-range: U+0600-06FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+E0FF, U+EFFD, U+F000, U+FB50-FDFF, U+FE80-FEFC;
+        }
+        /* latin */
+        @font-face {
+			font-family: 'Cairo';
+			font-style: normal;
+			font-weight: 400;
+			src: local('Cairo'), local('Cairo-Regular'), url(https://fonts.gstatic.com/s/cairo/v2/9AWxzDXz2R7tHfJeCoIOqqCWcynf_cDxXwCLxiixG1c.woff2) format('woff2');
+			unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2212, U+2215;
+        }
+
+		/* -------------------OUR STYLES START HERE */
+		:root {
+
+			/* cli remove this when bigalog is ready */
+			/* bigalog is ready, commenting this out */
+			// --temp-site-max-width: 520px;
+
+			--site-horz-spacing: 16px;
+			--modal-horz-spacing: 16px;
+
+			--desktop-header-height: 73px;
+			--desktop-footer-height: 48px;
+			--mweb-bottom-tabs-height: 60px;
+			--form-element-height: 40px;
+			::-webkit-scrollbar {
+				display: none;
+			}
+
+		}
+
+		/* cli comment this when bigalog is WIP */
+		// @media only screen and (min-width: 768px) {
+		// 	:root {
+		// 		--site-horz-spacing: 24px;
+		// 	}
+		// }
+		// @media only screen and (min-width: 992px) {
+		// 	:root {
+		// 		--site-horz-spacing: 32px;
+		// 		--modal-horz-spacing: 24px;
+		// 	}
+		// }
+		// @media only screen and (min-width: 1200px) {
+		// 	:root {
+		// 		--site-horz-spacing: 40px;
+		// 	}
+		// }
+
+		html {
+			font-size: 16px;
+			line-height: 1.4;
+
+			/* cli remove this when bigalog is ready */
+			@media only screen and (min-width: 520px)  {
+				background-color: #FFFFFF;
+			}
+		}
+
+		body {
+			background-color: #FFFFFF;
+			color: #313131;
+			font-family: 'noonsymbols', 'figtree', 'Proxima Nova', 'Helvetica Neue', Arial, sans-serif !important;
+
+
+			/* cli remove this when bigalog is ready */
+			@media only screen and (min-width: 520px)  {
+				max-width: var(--temp-site-max-width);
+				margin: 0 auto;
+			}
+
+            width: 100%;
+            max-width: 1440px;
+
+            @media screen and (min-width: 1920px) {
+                max-width: 1920px;
+            }
+		}
+
+		html[dir=rtl] body {
+			font-family: 'noonsymbols', Cairo, Tahoma, sans-serif !important;
+		}
+
+		.siteWidthContainer {
+			padding-left: var(--site-horz-spacing);
+			padding-right: var(--site-horz-spacing);
+		}
+
+    </style><meta name="next-head-count" content="13"><script>
+                                (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+                                new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+                                j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+                                'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+                                })(window,document,'script','dataLayer','GTM-MNQ68744');
+                                </script><link rel="preload" href="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/css/71ab47c45f133781.css" as="style"><link rel="stylesheet" href="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/css/71ab47c45f133781.css" data-n-g=""><noscript data-n-css=""></noscript><script defer="" nomodule="" src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/polyfills-c67a75d1b6f99dc8.js"></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/webpack-9b79360a4360535f.js" defer=""></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/framework-cb117c6c2a272871.js" defer=""></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/main-597955a136e3588e.js" defer=""></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/pages/_app-daf73d30adf1c32c.js" defer=""></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/e965e928-e58ff23a9cfd881a.js" defer=""></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/497-bf5713fb395db695.js" defer=""></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/162-c095a2748fc003a2.js" defer=""></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/53-ef985ea285172393.js" defer=""></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/19-f2459eafcd5914c6.js" defer=""></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/764-d82d1c352be7c100.js" defer=""></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/248-f8ccb435594d6a8d.js" defer=""></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/pages/%5B%5B...catalog%5D%5D-d27f82b914847e75.js" defer=""></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/PDbegimHBLHowNbzFi8sn/_buildManifest.js" defer=""></script><script src="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/PDbegimHBLHowNbzFi8sn/_ssgManifest.js" defer=""></script><style data-styled="active" data-styled-version="5.3.3"></style>
+<script>(window.BOOMR_mq=window.BOOMR_mq||[]).push(["addVar",{"rua.upush":"false","rua.cpush":"false","rua.upre":"false","rua.cpre":"true","rua.uprl":"false","rua.cprl":"false","rua.cprf":"false","rua.trans":"SJ-723fbc5d-84bc-4b04-9f9d-512d3d4082c3","rua.cook":"true","rua.ims":"false","rua.ufprl":"false","rua.cfprl":"false","rua.isuxp":"false","rua.texp":"norulematch","rua.ceh":"false","rua.ueh":"false","rua.ieh.st":"0"}]);</script>
+                              <script>!function(a){var e="https://s.go-mpulse.net/boomerang/",t="addEventListener";if("False"=="True")a.BOOMR_config=a.BOOMR_config||{},a.BOOMR_config.PageParams=a.BOOMR_config.PageParams||{},a.BOOMR_config.PageParams.pci=!0,e="https://s2.go-mpulse.net/boomerang/";if(window.BOOMR_API_key="BBMXM-YSEHP-8STBQ-XZXNZ-PUT3F",function(){function n(e){a.BOOMR_onload=e&&e.timeStamp||(new Date).getTime()}if(!a.BOOMR||!a.BOOMR.version&&!a.BOOMR.snippetExecuted){a.BOOMR=a.BOOMR||{},a.BOOMR.snippetExecuted=!0;var i,_,o,r=document.createElement("iframe");if(a[t])a[t]("load",n,!1);else if(a.attachEvent)a.attachEvent("onload",n);r.src="javascript:void(0)",r.title="",r.role="presentation",(r.frameElement||r).style.cssText="width:0;height:0;border:0;display:none;",o=document.getElementsByTagName("script")[0],o.parentNode.insertBefore(r,o);try{_=r.contentWindow.document}catch(O){i=document.domain,r.src="javascript:var d=document.open();d.domain='"+i+"';void(0);",_=r.contentWindow.document}_.open()._l=function(){var a=this.createElement("script");if(i)this.domain=i;a.id="boomr-if-as",a.src=e+"BBMXM-YSEHP-8STBQ-XZXNZ-PUT3F",BOOMR_lstart=(new Date).getTime(),this.body.appendChild(a)},_.write("<bo"+'dy onload="document._l();">'),_.close()}}(),"".length>0)if(a&&"performance"in a&&a.performance&&"function"==typeof a.performance.setResourceTimingBufferSize)a.performance.setResourceTimingBufferSize();!function(){if(BOOMR=a.BOOMR||{},BOOMR.plugins=BOOMR.plugins||{},!BOOMR.plugins.AK){var e="true"=="true"?1:0,t="cookiepresent",n="eaarniwkhyyqaiabc2qaaajaefuxnkau-f-bfd1e5679-clienttons-s.akamaihd.net",i="false"=="true"?2:1,_={"ak.v":"39","ak.cp":"652853","ak.ai":parseInt("425089",10),"ak.ol":"0","ak.cr":15,"ak.ipv":6,"ak.proto":"h2","ak.rid":"24c8ed72","ak.r":33622,"ak.a2":e,"ak.m":"dsca","ak.n":"essl","ak.bpcip":"2001:16a2:ca3e:3100::","ak.cport":55452,"ak.gh":"94.97.231.180","ak.quicv":"","ak.tlsv":"tls1.3","ak.0rtt":"","ak.0rtt.ed":"","ak.csrc":"-","ak.acc":"","ak.t":"1769383956","ak.ak":"hOBiQwZUYzCg5VSAfCLimQ==RAUPuueKVaU8WluZzXrFDTGeBoFvW+P1GpHcJ8O2dnkS91CJA+DKD0UR2USbDir0eyibTzYwfzLSEAb8qHZXRbgJgl4swTWkpY8Taz1zED18KkDq9lYiMcSh60J9FnnUGEzHbpTQpIAR9KjCVMQ52LNzh1mYzYfkMAN6mkPgdbL2vGr1yeP6afk/rgH6Q7OnckOnjLQLGrJZNgpwxC+3JTeCAOHf8QS8+T0SS+ZqUJ6bccF9khiQNlXGrS6Tb3HkruFDdIeQvdu6zrQ+gGVnEibgN7UK9UbAW1uwABZ42Te3B2MRF7kogZlOx9gDVitt08ZRxrE/bq4e0eNwPEIccRKBHJ226fq0z+MZ2XQvgt4MAzlmaXlvzv4V81mnUtGTBV/KxltW9C8YjLpIHkenpZp81JiFmu6UD8qBDFPSfMo=","ak.pv":"158","ak.dpoabenc":"","ak.tf":i};if(""!==t)_["ak.ruds"]=t;var o={i:!1,av:function(e){var t="http.initiator";if(e&&(!e[t]||"spa_hard"===e[t]))_["ak.feo"]=void 0!==a.aFeoApplied?1:0,BOOMR.addVar(_)},rv:function(){var a=["ak.bpcip","ak.cport","ak.cr","ak.csrc","ak.gh","ak.ipv","ak.m","ak.n","ak.ol","ak.proto","ak.quicv","ak.tlsv","ak.0rtt","ak.0rtt.ed","ak.r","ak.acc","ak.t","ak.tf"];BOOMR.removeVar(a)}};BOOMR.plugins.AK={akVars:_,akDNSPreFetchDomain:n,init:function(){if(!o.i){var a=BOOMR.subscribe;a("before_beacon",o.av,null,null),a("onbeacon",o.rv,null,null),o.i=!0}return this},is_complete:function(){return!0}}}}()}(window);</script><link as="script" rel="prefetch" href="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/pages/termsofuse-517686e6cbc3505d.js"><link as="script" rel="prefetch" href="https://f.nooncdn.com/s/app/2025/mp-food-web/bigalog/4e918a7223aebb59f2fedf01dd737e18715c32dc/_next/static/chunks/pages/privacy-policy-84ae37c4207c7eed.js"><script type="text/javascript" charset="UTF-8" src="https://maps.googleapis.com/maps-api-v3/api/js/63/10a/intl/en_gb/common.js"></script><script type="text/javascript" charset="UTF-8" src="https://maps.googleapis.com/maps-api-v3/api/js/63/10a/intl/en_gb/util.js"></script></head>

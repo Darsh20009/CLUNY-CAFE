@@ -1,0 +1,177 @@
+Apple Pay Direct API
+Overview
+This document describes the end-to-end steps to enable Apple Pay with Geidea’s Payment Gateway using the Direct API. It implements a hardened iOS example using PKPaymentAuthorizationController, forwards the Apple Pay token as JSON to the backend, and includes a corrected Direct API cURL example.
+
+Integration Steps
+Step 1: Download CSR from the Merchant Portal
+
+Sign in to Geidea’s Merchant Portal
+Download the Certificate Signing Request (CSR) for Apple Pay.
+This CSR will be used to generate the Apple Pay Payment Processing Certificate at Apple Developer.
+
+Step 2: Create Apple Pay Processing Certificate on Apple Developer
+
+Using the downloaded CSR, create your Apple Pay Payment Processing Certificate from your Apple Developer Account (Certificates, Identifiers & Profiles → Identifiers → Merchant IDs → Select your Merchant ID → Payment Processing Certificate).
+
+Step 3: Upload the Processing Certificate to Geidea’s Merchant Portal
+
+Upload the generated Apple Pay Payment Processing Certificate to Geidea’s Merchant Portal so the gateway can decrypt Apple Pay tokens destined for your merchant account.
+
+Step 4: Integrate Apple Pay in Your iOS App (Swift / PassKit, Hardened)
+
+Active Apple Developer account.
+Merchant ID created in Apple Developer.
+Apple Pay capability enabled in Xcode (Signing & Capabilities → Apple Pay) and your Merchant ID added.
+Real device that supports Apple Pay and a test card provisioned in Wallet (Sandbox for testing).
+Implementation
+Use PassKit to present the Apple Pay sheet, capture user authorization, and send the encrypted payment token (PKPayment.token.paymentData) to your backend.
+Your backend forwards this token to Geidea’s Direct API for authorization/capture.
+This guide uses PKPaymentAuthorizationController (modern API) and forwards the token as parsed JSON.
+Sample Swift Code (Controller-based, JSON token forwarding)
+
+Swift
+
+import PassKit
+import UIKit
+
+final class CheckoutCoordinator: NSObject {
+    private var authController: PKPaymentAuthorizationController?
+
+    func beginApplePayFlow(total: Decimal) {
+        let networks: [PKPaymentNetwork] = [.visa, .masterCard, .amex, .mada]
+        guard PKPaymentAuthorizationController.canMakePayments(usingNetworks: networks) else {
+            
+            return
+        }
+
+        let req = PKPaymentRequest()
+        req.merchantIdentifier = "merchant.com.example.app"
+        req.countryCode = "SA"
+        req.currencyCode = "SAR"
+        req.supportedNetworks = networks
+        req.merchantCapabilities = [.capability3DS]
+
+        let amount = NSDecimalNumber(decimal: (total as NSDecimalNumber.DecimalType))
+        req.paymentSummaryItems = [
+            PKPaymentSummaryItem(label: "Order Total", amount: amount)
+        ]
+
+        let controller = PKPaymentAuthorizationController(paymentRequest: req)
+        controller.delegate = self
+        self.authController = controller
+        controller.present { presented in
+            if !presented {
+                
+            }
+        }
+    }
+}
+
+extension CheckoutCoordinator: PKPaymentAuthorizationControllerDelegate {
+    func paymentAuthorizationController(_ controller: PKPaymentAuthorizationController,
+                                        didAuthorizePayment payment: PKPayment,
+                                        completion: @escaping (PKPaymentAuthorizationResult) -> Void) {
+        
+        do {
+            let tokenData = payment.token.paymentData
+            let tokenJSON = try JSONSerialization.jsonObject(with: tokenData, options: [])
+
+            let payload: [String: Any] = [
+                "applePayToken": tokenJSON,               
+                "amount": "100.00",
+                "currency": "SAR",
+                "merchantReference": "ORDER-12345"
+            ]
+
+            sendToBackend(json: payload) { ok in
+                completion(PKPaymentAuthorizationResult(status: ok ? .success : .failure, errors: nil))
+            }
+        } catch {
+            completion(PKPaymentAuthorizationResult(status: .failure, errors: nil))
+        }
+    }
+
+    func paymentAuthorizationControllerDidFinish(_ controller: PKPaymentAuthorizationController) {
+        controller.dismiss(completion: nil)
+        self.authController = nil
+    }
+
+    
+    private func sendToBackend(json: [String: Any], completion: @escaping (Bool) -> Void) {
+        guard let url = URL(string: "https://api.your-backend.example/payments/applepay") else {
+            completion(false); return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: json, options: [])
+
+        URLSession.shared.dataTask(with: req) { _, resp, err in
+            guard err == nil,
+                  let http = resp as? HTTPURLResponse,
+                  200..<300 ~= http.statusCode else { completion(false); return }
+            completion(True)
+        }.resume()
+    }
+}
+❗️
+Important Notes
+
+Do not log or persist paymentData. Treat it as sensitive.
+Ensure networks reflect those approved/available on device (e.g., Visa, Mastercard, mada).
+Always call the completion handler exactly once in the delegate.
+Production Checklist
+
+Entitlements: Apple Pay capability + correct merchantIdentifier.
+Capabilities: .capability3DS (and any others required by your acquirer).
+Backend: Submit the token to Geidea’s Direct API for authorization/capture and map declines/timeouts to clear user messaging.
+Call Geidea’s Apple Pay Direct API to Authorize the Payment
+From your backend, send the Apple Pay token JSON to Geidea’s Direct API. Ensure the Authorization header is formed according to your credentials. KSA production domain is shown as an example; adjust the hostname for your region (UAE/Egypt) and environment (test vs production).
+
+UAE Environment URL: https://api.uae-test.geidea.net/pgw/api/v2/direct/apple/pay
+Egypt Environment URL: https://api.uae-test.geidea.net/pgw/api/v2/direct/apple/pay
+KSA Environment URL: https://api.ksamerchant.geidea.net/pgw/api/v2/direct/apple/pay
+
+Sample Curl Request
+
+cURL
+
+curl --location 'https:
+--header 'Accept: application/json' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Basic <YOUR_BASE64_ENCODED_API_CREDENTIALS>' \
+--data '{
+  "Method": "encrypted",
+  "Token": {
+    "PaymentData": {
+      "Version": "EC_v1",
+      "Data": "<base64-data>",
+      "Signature": "<base64-signature>",
+      "Header": {
+        "EphemeralPublicKey": "<base64-ephemeral-key>",
+        "PublicKeyHash": "<base64-hash>",
+        "TransactionId": "<uuid>"
+      }
+    }
+  },
+  "PaymentMethod": {
+    "DisplayName": "Visa 1234",
+    "Network": "Visa",
+    "Type": "credit"
+  },
+  "Amount": 100.00,
+  "Currency": "SAR",
+  "MerchantReferenceId": "ORDER-12345",
+  "CallbackUrl": "https://your.backend.example/webhooks/geidea",
+  "InitiatedBy": "internet",
+  "CardOnFile": false,
+  "DeviceIdentification": {
+    "UserAgent": "iOS-App/1.0",
+    "Language": "en"
+  }
+}'
+References
+Apple Developer – PassKit / Apple Pay: https://developer.apple.com/documentation/passkit/apple_pay
+PKPaymentAuthorizationController: https://developer.apple.com/documentation/passkit/pkpaymentauthorizationcontroller
+PKPaymentRequest Class Reference: https://developer.apple.com/documentation/passkit/pkpaymentrequest
+Geidea Developer Docs – Apple Pay Integration (Direct): https://docs.geidea.net/docs/apple-pay-integration

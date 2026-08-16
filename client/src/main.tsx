@@ -1,0 +1,217 @@
+import { createRoot } from "react-dom/client";
+import App from "./App";
+import "./index.css";
+import { applyBrandColors } from "./lib/brand";
+import { installRiyalSymbol } from "./lib/riyal-symbol";
+
+// ── One-time global storage wipe ──────────────────────────────────────────
+// Bump CLIENT_RESET_VERSION to force every device that opens the app to clear
+// its cookies, localStorage, sessionStorage, IndexedDB, caches and service
+// workers exactly once. The flag itself is preserved so it only runs once
+// per device per version.
+const CLIENT_RESET_VERSION = "2026-04-21-v2-logo";
+(function maybeWipeClientStorage() {
+  try {
+    const KEY = "__qirox_reset_version";
+    if (localStorage.getItem(KEY) === CLIENT_RESET_VERSION) return;
+
+    // 1) Cookies for this origin (all paths/domains we can reach)
+    try {
+      const host = window.location.hostname;
+      const domains = ["", host, "." + host];
+      const paths = ["/", window.location.pathname];
+      document.cookie.split(";").forEach((c) => {
+        const name = c.split("=")[0].trim();
+        if (!name) return;
+        domains.forEach((d) => {
+          paths.forEach((p) => {
+            document.cookie =
+              name +
+              "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=" +
+              p +
+              (d ? "; domain=" + d : "");
+          });
+        });
+      });
+    } catch {}
+
+    // 2) Web storage
+    try { sessionStorage.clear(); } catch {}
+    try { localStorage.clear(); } catch {}
+
+    // 3) IndexedDB
+    try {
+      const idb: any = (indexedDB as any);
+      if (idb && typeof idb.databases === "function") {
+        idb.databases().then((dbs: any[]) => {
+          (dbs || []).forEach((db) => {
+            if (db && db.name) indexedDB.deleteDatabase(db.name);
+          });
+        }).catch(() => {});
+      }
+    } catch {}
+
+    // 4) Cache Storage (PWA caches)
+    try {
+      if ("caches" in window) {
+        caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => {});
+      }
+    } catch {}
+
+    // 5) Service Workers
+    try {
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker
+          .getRegistrations()
+          .then((regs) => regs.forEach((r) => r.unregister()))
+          .catch(() => {});
+      }
+    } catch {}
+
+    // Mark this version as wiped so we don't loop on every load
+    try { localStorage.setItem(KEY, CLIENT_RESET_VERSION); } catch {}
+  } catch {}
+})();
+
+// ── Kiosk zoom-lock safety net ──────────────────────────────────────────────
+// This is a POS/kiosk app, not a content site — pinch-zoom must never be
+// possible. The <meta viewport user-scalable=no> tag and the CSS
+// touch-action rule cover almost all cases, but some Android WebViews still
+// let a fast multi-touch (a resting hand, two accidental taps) slip through
+// and zoom the page out. When that happens there is no visible "reset zoom"
+// control on Android, so the whole POS UI stays stuck shrunk into a corner
+// until someone force-reloads the tab — this is the exact "screen shrinks"
+// bug that kept recurring regardless of any print-flow fix, because it has
+// nothing to do with printing at all.
+// Fix: actively watch the live zoom level via the visualViewport API and
+// force it back to 1 the instant it drifts, on every device (not just
+// Android) as defense in depth.
+if (window.visualViewport) {
+  const resetZoomIfDrifted = () => {
+    const vv = window.visualViewport!;
+    if (Math.abs(vv.scale - 1) > 0.01) {
+      const meta = document.querySelector('meta[name="viewport"]');
+      if (meta) {
+        const content = meta.getAttribute('content') || '';
+        // Toggling the content attribute forces WebKit/Chromium to
+        // re-apply the viewport constraints immediately.
+        meta.setAttribute('content', content + ',');
+        requestAnimationFrame(() => meta.setAttribute('content', content));
+      }
+    }
+  };
+  window.visualViewport.addEventListener('resize', resetZoomIfDrifted);
+  window.visualViewport.addEventListener('scroll', resetZoomIfDrifted);
+}
+
+// Apply brand colors from the central brand config to CSS variables
+applyBrandColors();
+
+// Install global Saudi Riyal symbol replacement (renders new SAR glyph everywhere)
+installRiyalSymbol();
+
+// Start offline sync engine (auto-sync every 15s, detects online/offline)
+import("./lib/sync-engine").then(({ SyncEngine }) => {
+  SyncEngine.startAutoSync(15_000);
+}).catch(() => {});
+
+createRoot(document.getElementById("root")!).render(<App />);
+
+if (import.meta.env.DEV && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations()
+    .then((registrations) => registrations.forEach((registration) => registration.unregister()))
+    .catch(() => {});
+}
+
+// Register Service Worker for PWA
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  // Capture whether a SW was already controlling this page BEFORE we register.
+  // If null → first install (no reload needed).
+  // If non-null → there was an old SW → any controller change means a real update.
+  const hadController = !!navigator.serviceWorker.controller;
+
+  navigator.serviceWorker.register('/sw.js').then((registration) => {
+    console.log('ServiceWorker registration successful');
+
+    registration.addEventListener('updatefound', () => {
+      const newWorker = registration.installing;
+      if (newWorker) {
+        newWorker.addEventListener('statechange', () => {
+          // Only show "update available" banner if this is a real update
+          // (an old SW was already running), not a first-time install.
+          if (
+            newWorker.state === 'activated' &&
+            navigator.serviceWorker.controller &&
+            hadController
+          ) {
+            window.dispatchEvent(new CustomEvent('sw-update-available'));
+          }
+        });
+      }
+    });
+
+    // Check for SW updates every 30 minutes
+    setInterval(() => {
+      registration.update();
+    }, 30 * 60 * 1000);
+  }).catch(registrationError => {
+    console.log('SW registration failed: ', registrationError);
+  });
+
+  // Auto-reload when a new service worker takes control — but ONLY
+  // if there was already a controller before (i.e. a real update, not first install).
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!reloading && hadController) {
+      reloading = true;
+      window.location.reload();
+    }
+  });
+}
+
+// ── Deploy-detection heartbeat (independent of the service worker) ─────────
+// sw.js only re-installs when ITS OWN file bytes change — an ordinary code
+// deploy (new POS/print fixes etc.) only changes the hashed JS/CSS bundle,
+// which never touches sw.js. That means the SW's controllerchange reload
+// above does NOT fire for most deploys. A POS tablet that stays open for
+// days would then silently keep running the OLD bundle forever, even though
+// the fix was shipped — this is a known trust-breaking failure mode for
+// always-on devices. This heartbeat detects a new build directly (by
+// comparing the hashed main script src referenced by the live index.html
+// against the one this page actually loaded) and force-reloads regardless
+// of service worker state.
+if (import.meta.env.PROD) {
+  const getCurrentBundleSrc = () =>
+    Array.from(document.scripts)
+      .map((s) => s.src)
+      .find((src) => /\/assets\/.*\.js(\?|$)/.test(src)) || null;
+
+  const currentBundleSrc = getCurrentBundleSrc();
+
+  let reloadScheduled = false;
+  const checkForNewDeploy = async () => {
+    if (reloadScheduled || !currentBundleSrc) return;
+    try {
+      const res = await fetch('/', { cache: 'no-store' });
+      if (!res.ok) return;
+      const html = await res.text();
+      const match = html.match(/src="(\/assets\/[^"]+\.js)"/);
+      const latestSrc = match?.[1];
+      if (latestSrc && !currentBundleSrc.endsWith(latestSrc)) {
+        reloadScheduled = true;
+        window.dispatchEvent(new CustomEvent('sw-update-available'));
+        // Give the cashier a brief window to notice/finish an in-flight tap,
+        // then reload automatically — this MUST self-heal without requiring
+        // anyone to remember to refresh the POS device.
+        setTimeout(() => window.location.reload(), 10_000);
+      }
+    } catch {
+      // Offline or request failed — try again on the next tick.
+    }
+  };
+
+  setInterval(checkForNewDeploy, 2 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkForNewDeploy();
+  });
+}

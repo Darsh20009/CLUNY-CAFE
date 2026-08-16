@@ -1,0 +1,259 @@
+كمل تطوير النظام afé Operating System (QahwaCup Engine Product)
+
+Sprint-by-Sprint / Phase-by-Phase Execution Plan
+
+ملاحظة مهمة:
+هذه الخطة مكتوبة كـ “Checklist تسليم” (Definition of Done)
+كل بند ينتهي بـ ✅ فقط عند تحقق مخرجاته + اختباره.
+
+🧱 PHASE 0 — Product Re-Architecture
+🎯 الهدف
+
+تحويل المنتج من “موقع” إلى “نظام تشغيل كافيه” (Operating System)
+
+0.1 تعريف كيانات النظام (Domain Definition)
+
+تعريف كيان Cafe/Business
+
+الاسم التجاري
+
+النشاط (Cafe/Restaurant)
+
+العملة
+
+الضريبة (VAT)
+
+التوقيت
+
+تعريف كيان Branch
+
+اسم الفرع
+
+العنوان
+
+أوقات العمل
+
+إعدادات الطباعة (إن وجدت)
+
+تعريف كيان User
+
+بيانات الحساب
+
+Role
+
+Branch Scope
+
+تعريف كيان Menu
+
+Categories
+
+Items
+
+Modifiers
+
+تعريف كيان Order
+
+Order Type (Dine-in/Takeaway/Delivery)
+
+Status Pipeline
+
+Payment state
+
+تعريف كيان Ingredient
+
+وحدة القياس
+
+تكلفة الوحدة
+
+المورد/الشراء
+
+تعريف كيان Recipe
+
+قائمة مكونات + كميات
+
+تعريف كيان Inventory Movement
+
+In / Out / Waste / Adjustment
+
+تعريف كيان Accounting Snapshot
+
+COGS
+
+Profit
+
+Waste
+
+0.2 فصل الطبقات (Separation of Concerns)
+
+Frontend Layer
+
+واجهات POS
+
+واجهات Admin
+
+واجهات Barista/Kitchen
+
+Business Logic Layer
+
+Order Engine
+
+Recipe Engine
+
+Inventory Engine
+
+Pricing/Discount Engine
+
+Data Layer
+
+Collections/Models
+
+Indexes
+
+Migrations
+
+0.3 معايير جودة معمارية (Architecture Quality Gates)
+
+كل Function في Core = Tested
+
+لا يوجد “Logic” داخل UI Components
+
+لا يوجد “Magic numbers”
+
+Error Handling موحد
+
+Logging موحد (Events)
+
+0.4 مخرجات المرحلة (Deliverables)
+
+وثيقة Domain Models (مختصرة)
+
+ERD مبدئي
+
+قائمة API Modules
+
+قواعد Naming موحدة
+
+تعريف Status flows
+🧠 PHASE 1 — Recipe Intelligence Engine
+🎯 الهدف
+
+كل مشروب يصبح “كيان محاسبي وتشغيلي” وليس مجرد اسم وسعر
+
+1.1 نموذج المشروب (Drink Model)
+
+Drink يحتوي:
+
+Name
+
+SKU/Code
+
+Size ثابت 250ml (أو إعداد نظامي)
+
+Selling Price
+
+Category
+
+Image (اختياري)
+
+Active/Inactive
+
+1.2 نموذج الوصفة (Recipe Model)
+
+Recipe Item يحتوي:
+
+IngredientId
+
+Quantity
+
+Unit (g/ml/pcs)
+
+Auto-cost per unit
+
+Total cost line
+
+Validate Recipe
+
+يمنع Ingredient غير موجود
+
+يمنع Quantity = 0
+
+يمنع وحدات غير مدعومة
+
+Recipe Versioning (اختياري لكن مهم)
+
+Version رقم
+
+CreatedAt
+
+Active Version
+
+1.3 Modifiers/Add-ons (لازم)
+
+تعريف Modifier Groups:
+
+Extra Shot
+
+Syrup
+
+Milk Type
+
+كل Modifier:
+
+Price impact
+
+Recipe impact (لو يخصم مكونات)
+
+1.4 Cost Calculation Engine
+
+حساب التكلفة الفعلية لكل طلب:
+
+تكلفة مكونات المشروب
+
+تكلفة إضافات
+
+حساب الربح:
+
+Profit per item
+
+Profit per order
+
+1.5 Integration مع الطلبات (Order Hook)
+
+عند Create Order:
+
+Pull recipe lines
+
+Freeze cost snapshot
+
+عند Confirm Order:
+
+Reserve inventory (اختياري)
+
+عند Complete Order:
+
+Deduct inventory (نهائي)
+
+1.6 اختبارات المرحلة (Recipe Tests)
+
+اختبار Recipe Validation
+
+اختبار Cost Calculation
+
+اختبار Modifier cost impact
+
+اختبار Freeze snapshot (لا يتغير بتغير سعر المكون لاحقاً)
+
+1.7 مخرجات المرحلة
+
+Recipe Engine مكتمل
+
+Drink/Recipe UI لإدارة الوصفات
+
+Order يتضمن COGS snapshot
+
+📦 PHASE 2 — Smart Inventory Core (
+🎯 الهدف
+
+مخزون ذكي يخصم تلقائي ويعطي تنبيهات بدون ERP تعقيد
+
+

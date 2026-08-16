@@ -1,0 +1,652 @@
+import i18n from "@/lib/i18n";
+import { lazy, Suspense, useState, useEffect, useCallback } from "react";
+import { Router as WouterRouter, Switch, Route, Redirect } from "wouter";
+import { queryClient } from "./lib/queryClient";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { Toaster } from "@/components/ui/toaster";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { AuthGuard } from "@/components/guards/AuthGuard";
+import { AdminLayout } from "@/components/admin-layout";
+import { ManagerLayout } from "@/components/manager-layout";
+import { CartProvider, useCartStore } from "@/lib/cart-store";
+import { CustomerProvider } from "@/contexts/CustomerContext";
+import { BranchProvider } from "@/contexts/BranchContext";
+import { AuthModalProvider } from "@/contexts/AuthModalContext";
+import { ErrorBoundary } from "@/components/error-boundary";
+import { PWAUpdateNotifier } from "@/components/PWAUpdateNotifier";
+import { GlobalPrompts } from "@/components/global-prompts";
+import { PWAInstallBanner } from "@/components/pwa-install";
+import { OfflineIndicator } from "@/components/offline-indicator";
+import { CustomerNotificationListener } from "@/components/customer-notification-listener";
+import { GlobalCommandPalette } from "@/components/global-command-palette";
+import { QuickActionBar } from "@/components/quick-action-bar";
+import { CapacitorServerSetup, useCapacitorServerReady } from "@/components/capacitor-server-setup";
+import { useProximityNotify } from "@/hooks/useProximityNotify";
+import { SplashScreen, useSplash } from "@/components/splash-screen";
+import { NativeAppInit } from "@/components/native-app-init";
+
+const CartModal = lazy(() => import("@/components/cart-modal"));
+const CheckoutModal = lazy(() => import("@/components/checkout-modal"));
+const CustomerAuthModal = lazy(() => import("@/components/customer-auth-modal"));
+const MenuPage = lazy(() => import("@/pages/menu"));
+const CustomerProfile = lazy(() => import("@/pages/customer-profile"));
+const CartPage = lazy(() => import("@/pages/cart-page"));
+
+const ProductDetails = lazy(() => import("@/pages/product-details"));
+const PaymentReturnPage = lazy(() => import("@/pages/payment-return"));
+const PayPage = lazy(() => import("@/pages/pay"));
+const DeliverySelectionPage = lazy(() => import("@/pages/delivery-selection"));
+const DeliveryMapPage = lazy(() => import("@/pages/delivery-map"));
+const CheckoutPage = lazy(() => import("@/pages/checkout"));
+const OrderTrackingPage = lazy(() => import("@/pages/tracking"));
+const PublicOrderTrackPage = lazy(() => import("@/pages/public-order-track"));
+const EmployeeGateway = lazy(() => import("@/pages/employee-gateway"));
+const EmployeeLogin = lazy(() => import("@/pages/employee-login"));
+const EmployeeDashboard = lazy(() => import("@/pages/employee-dashboard"));
+const EmployeeCashier = lazy(() => import("@/pages/employee-cashier"));
+const EmployeeOrders = lazy(() => import("@/pages/employee-orders"));
+const EmployeeLoyalty = lazy(() => import("@/pages/employee-loyalty"));
+const EmployeeMenuManagement = lazy(() => import("@/pages/employee-menu-management"));
+const EmployeeIngredientsManagement = lazy(() => import("@/pages/employee-ingredients-management"));
+const EmployeeOrdersDisplay = lazy(() => import("@/pages/employee-orders-display"));
+const MyCard = lazy(() => import("@/pages/my-card"));
+const CustomerLogin = lazy(() => import("@/pages/customer-login"));
+const CustomerAuth = lazy(() => import("@/pages/CustomerAuth"));
+const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
+const ResetPassword = lazy(() => import("@/pages/ResetPassword"));
+const CopyCard = lazy(() => import("@/pages/CopyCard"));
+const CardCustomization = lazy(() => import("@/pages/card-customization"));
+const MyOrdersPage = lazy(() => import("@/pages/my-orders"));
+const MyOffers = lazy(() => import("@/pages/my-offers"));
+const ManagerEmployees = lazy(() => import("@/pages/manager-employees"));
+const EmployeeActivation = lazy(() => import("@/pages/employee-activation"));
+const ManagerDashboard = lazy(() => import("@/pages/manager-dashboard"));
+const ManagerLogin = lazy(() => import("@/pages/manager-login"));
+const ManagerDrivers = lazy(() => import("@/pages/manager-drivers"));
+const ManagerTables = lazy(() => import("@/pages/manager-tables"));
+const TableMenu = lazy(() => import("@/pages/table-menu"));
+const TableCheckout = lazy(() => import("@/pages/table-checkout"));
+const TableOrderTracking = lazy(() => import("@/pages/table-order-tracking"));
+const TablePay = lazy(() => import("@/pages/table-pay"));
+const TableReservation = lazy(() => import("@/pages/table-reservation"));
+const CashierTableOrders = lazy(() => import("@/pages/cashier-table-orders"));
+const CashierTables = lazy(() => import("@/pages/cashier-tables"));
+const CashierReservations = lazy(() => import("@/pages/cashier-reservations"));
+const EmployeeProductReservations = lazy(() => import("@/pages/employee-product-reservations"));
+const EmployeeForgotPassword = lazy(() => import("@/pages/employee-forgot-password"));
+const ManagerForgotPassword = lazy(() => import("@/pages/manager-forgot-password"));
+const EmployeeAttendance = lazy(() => import("@/pages/employee-attendance"));
+const LeaveRequestPage = lazy(() => import("@/pages/leave-request"));
+const ManagerAttendance = lazy(() => import("@/pages/manager-attendance"));
+const OwnerDashboard = lazy(() => import("@/pages/owner-dashboard"));
+const BranchAnalytics = lazy(() => import("@/pages/branch-analytics"));
+const InventoryRawItems = lazy(() => import("@/pages/inventory-raw-items"));
+const InventorySuppliers = lazy(() => import("@/pages/inventory-suppliers"));
+const InventoryPurchases = lazy(() => import("@/pages/inventory-purchases"));
+const InventoryRecipes = lazy(() => import("@/pages/inventory-recipes"));
+const InventoryStock = lazy(() => import("@/pages/inventory-stock"));
+const InventoryAlerts = lazy(() => import("@/pages/inventory-alerts"));
+const InventoryMovements = lazy(() => import("@/pages/inventory-movements"));
+const InventoryTransfers = lazy(() => import("@/pages/inventory-transfers"));
+const POSSystem = lazy(() => import("@/pages/pos-system"));
+const ShiftManagement = lazy(() => import("@/pages/shift-management"));
+const KitchenDisplay = lazy(() => import("@/pages/kitchen-display"));
+const AccountingDashboard = lazy(() => import("@/pages/accounting-dashboard"));
+const OrderStatusDisplay = lazy(() => import("@/pages/order-status-display"));
+const CustomerDisplay = lazy(() => import("@/pages/customer-display"));
+const InventorySmartPage = lazy(() => import("@/pages/inventory-smart"));
+const InventoryHub = lazy(() => import("@/pages/inventory-hub"));
+const EmployeeAvailability = lazy(() => import("@/pages/employee-availability"));
+const UnauthorizedPage = lazy(() => import("@/pages/unauthorized"));
+const ReferralProgram = lazy(() => import("@/pages/referral-program"));
+const NotificationsPage = lazy(() => import("@/pages/notifications"));
+const AdminNotificationsPage = lazy(() => import("@/pages/admin-notifications"));
+const CustomerReservations = lazy(() => import("@/pages/customer-reservations"));
+const AdminDashboard = lazy(() => import("@/pages/admin-dashboard"));
+const AdminEmployees = lazy(() => import("@/pages/admin-employees"));
+const EmployeesHub = lazy(() => import("@/pages/employees-hub"));
+const ReliabilityHub = lazy(() => import("@/pages/reliability-hub"));
+const AIAutomation = lazy(() => import("@/pages/ai-automation"));
+const EcosystemHub = lazy(() => import("@/pages/ecosystem-hub"));
+const AdminReports = lazy(() => import("@/pages/admin-reports"));
+const AdminSettings = lazy(() => import("@/pages/admin-settings"));
+const AdminBranches = lazy(() => import("@/pages/admin-branches"));
+const AdminEmail = lazy(() => import("@/pages/admin-email"));
+const AdminPaymentLogs = lazy(() => import("@/pages/admin-payment-logs"));
+const PaymentTrackingPage = lazy(() => import("@/pages/payment-tracking"));
+const TenantSignup = lazy(() => import("@/pages/tenant-signup"));
+const NotFound = lazy(() => import("@/pages/not-found"));
+const PrivacyPolicy = lazy(() => import("@/pages/privacy-policy"));
+const ExecutiveDashboard = lazy(() => import("@/pages/executive-dashboard"));
+const ZATCAInvoices = lazy(() => import("@/pages/zatca-invoices"));
+const MenuView = lazy(() => import("@/pages/menu-view"));
+const ErpAccountingPage = lazy(() => import("@/pages/erp-accounting"));
+const UserGuide = lazy(() => import("@/pages/user-guide"));
+const AdvancedAnalytics = lazy(() => import("@/pages/advanced-analytics"));
+const UnifiedReports = lazy(() => import("@/pages/unified-reports"));
+const BIAnalytics = lazy(() => import("@/pages/bi-analytics"));
+const ManagerAI = lazy(() => import("@/pages/manager-ai"));
+const ManagerAuditLogs = lazy(() => import("@/pages/manager-audit-logs"));
+const ManagerSmartReports = lazy(() => import("@/pages/manager-smart-reports"));
+const ProductAnalytics = lazy(() => import("@/pages/product-analytics"));
+const ProductReports = lazy(() => import("@/pages/product-reports"));
+const GiftCardsManagement = lazy(() => import("@/pages/gift-cards-management"));
+const PromotionsManagement = lazy(() => import("@/pages/promotions-management"));
+const ApiManagement = lazy(() => import("@/pages/api-management"));
+const KioskPage = lazy(() => import("@/pages/kiosk"));
+const AttendanceKiosk = lazy(() => import("@/pages/attendance-kiosk"));
+const FaceEnrollment = lazy(() => import("@/pages/face-enrollment"));
+const EmployeeKioskQR = lazy(() => import("@/pages/employee-kiosk-qr"));
+const OrderReceiptPage = lazy(() => import("@/pages/order-receipt"));
+const PayrollManagement = lazy(() => import("@/pages/payroll-management"));
+const ManagerReviews = lazy(() => import("@/pages/manager-reviews"));
+const SupplierManagement = lazy(() => import("@/pages/supplier-management"));
+const LoyaltyProgram = lazy(() => import("@/pages/loyalty-program"));
+const ExternalIntegrations = lazy(() => import("@/pages/external-integrations"));
+const WarehouseManagement = lazy(() => import("@/pages/warehouse-management"));
+const StockOrganizationDashboard = lazy(() => import("@/pages/stock-organization-dashboard"));
+const EmployeeBrandAI = lazy(() => import("@/pages/employee-brand-ai"));
+const InventoryCycleDashboard = lazy(() => import("@/pages/inventory-cycle-dashboard"));
+const SmartStocktake = lazy(() => import("@/pages/smart-stocktake"));
+const InventoryAI = lazy(() => import("@/pages/inventory-ai"));
+const CeoAIDashboard = lazy(() => import("@/pages/ceo-ai-dashboard"));
+const BusinessSimulator = lazy(() => import("@/pages/business-simulator"));
+const DigitalTwin = lazy(() => import("@/pages/digital-twin"));
+const ManagerDelivery = lazy(() => import("@/pages/manager-delivery"));
+const DeliveryZoneSettings = lazy(() => import("@/pages/delivery-zone-settings"));
+const DriverPortal = lazy(() => import("@/pages/driver-portal"));
+const DriverLogin = lazy(() => import("@/pages/driver-login"));
+const DeliveryTracking = lazy(() => import("@/pages/delivery-tracking"));
+const WelcomePage = lazy(() => import("@/pages/welcome"));
+const PromoPage = lazy(() => import("@/pages/promo"));
+const PricingPage = lazy(() => import("@/pages/pricing"));
+const EmployeeHome = lazy(() => import("@/pages/employee-home"));
+const SystemGuide = lazy(() => import("@/pages/system-guide"));
+const QiroxLogin = lazy(() => import("@/pages/qirox-login"));
+const QiroxDashboard = lazy(() => import("@/pages/qirox-dashboard"));
+const HardwareManagement = lazy(() => import("@/pages/hardware-management"));
+const B2BMarketplace = lazy(() => import("@/pages/b2b-marketplace"));
+const PartnerProgram = lazy(() => import("@/pages/partner-program"));
+const DriveThroughPage = lazy(() => import("@/pages/drive-through"));
+const TahalyliPage = lazy(() => import("@/pages/tahalyli"));
+const CurbsidePage = lazy(() => import("@/pages/curbside"));
+const GeneralCheckin = lazy(() => import("@/pages/general-checkin"));
+const OnboardingPage = lazy(() => import("@/pages/onboarding"));
+const PaymentTerminalControl = lazy(() => import("@/pages/payment-terminal-control"));
+const SystemDiagnostics = lazy(() => import("@/pages/system-diagnostics"));
+import clunyLogo from "@assets/cluny-logo-customer.png";
+import clunyLogoStaff from "@assets/cluny-logo-staff.png";
+import { brand } from "@/lib/brand";
+
+const PageLoader = () => (
+  <div className="fixed inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-background via-background to-primary/5 z-50">
+    <div className="relative flex items-center justify-center">
+      {/* Rotating ring around the logo */}
+      <div className="absolute w-32 h-32 rounded-full border-[3px] border-primary/20 border-t-primary animate-spin" style={{ animationDuration: "1.1s" }} />
+      {/* Pulse halo */}
+      <div className="absolute w-32 h-32 rounded-full bg-primary/10 animate-ping" style={{ animationDuration: "1.6s" }} />
+      {/* Logo */}
+      <img
+        src={brand.logoCustomer}
+        alt={brand.nameEn}
+        className="relative w-20 h-20 object-contain drop-shadow-lg animate-pulse"
+        style={{ animationDuration: "1.4s" }}
+        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+      />
+    </div>
+    <div className="mt-8 text-center">
+      <p className="text-lg font-black text-foreground tracking-tight">{brand.nameEn}</p>
+      <p className="text-xs text-muted-foreground mt-1 tracking-wide">{brand.taglineEn}</p>
+    </div>
+  </div>
+);
+
+const MaintenancePage = lazy(() => import("@/pages/maintenance"));
+
+function RouterFallback() {
+  const path = window.location.pathname;
+  const isStaffPath = path.startsWith('/employee') || path.startsWith('/manager') || path.startsWith('/admin') || path.startsWith('/driver') || path.startsWith('/qirox');
+  if (isStaffPath) return <NotFound />;
+  return <MenuPage />;
+}
+
+function AppRouter() {
+  const { data: businessConfig } = useQuery<any>({
+    queryKey: ["/api/business-config"],
+  });
+
+  if (businessConfig?.isMaintenanceMode && !window.location.pathname.startsWith('/employee') && !window.location.pathname.startsWith('/manager') && !window.location.pathname.startsWith('/admin')) {
+    return <MaintenancePage reason={businessConfig.maintenanceReason} />;
+  }
+
+  return (
+    <Switch>
+      {/* Super Admin */}
+      <Route path="/qirox/dashboard"><QiroxDashboard /></Route>
+      <Route path="/qirox"><QiroxLogin /></Route>
+
+      {/* App-only onboarding (Capacitor native) */}
+      <Route path="/onboarding"><OnboardingPage /></Route>
+
+      {/* Public routes */}
+      <Route path="/welcome"><WelcomePage /></Route>
+      <Route path="/promo/:code"><PromoPage /></Route>
+      <Route path="/pricing"><PricingPage /></Route>
+      <Route path="/privacy"><PrivacyPolicy /></Route>
+      <Route path="/" component={WelcomePage} />
+      <Route path="/0">{() => { window.location.replace('/employee/login'); return null; }}</Route>
+      <Route path="/tenant/signup"><TenantSignup /></Route>
+      <Route path="/customer-login">
+        <CustomerLogin />
+      </Route>
+      <Route path="/auth">
+        <CustomerAuth />
+      </Route>
+      <Route path="/forgot-password">
+        <ForgotPassword />
+      </Route>
+      <Route path="/reset-password">
+        <ResetPassword />
+      </Route>
+      <Route path="/menu">
+        <MenuPage />
+      </Route>
+      <Route path="/menu-view">
+        <MenuView />
+      </Route>
+      <Route path="/product/:id">
+        <ProductDetails />
+      </Route>
+      <Route path="/table-menu/:qrToken">
+        <TableMenu />
+      </Route>
+      <Route path="/table-checkout/:tableId/:tableNumber">
+        <TableCheckout />
+      </Route>
+      <Route path="/table-reservation">
+        <TableReservation />
+      </Route>
+      <Route path="/my-reservations">
+        <CustomerReservations />
+      </Route>
+      <Route path="/table-order-tracking/:orderId">
+        <TableOrderTracking />
+      </Route>
+      <Route path="/table-pay/:tableId">
+        <TablePay />
+      </Route>
+      <Route path="/order-status">
+        <OrderStatusDisplay />
+      </Route>
+      <Route path="/track/:orderNumber">
+        <PublicOrderTrackPage />
+      </Route>
+      <Route path="/customer-display">
+        <CustomerDisplay />
+      </Route>
+      <Route path="/unauthorized">
+        <UnauthorizedPage />
+      </Route>
+
+      {/* Notifications - for all users */}
+      <Route path="/notifications"><NotificationsPage /></Route>
+      <Route path="/admin/notifications"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminNotificationsPage /></AdminLayout></AuthGuard></Route>
+
+      {/* Customer protected routes */}
+      <Route path="/copy-card"><AuthGuard userType="customer"><CopyCard /></AuthGuard></Route>
+      <Route path="/card-customization"><AuthGuard userType="customer"><CardCustomization /></AuthGuard></Route>
+      <Route path="/my-orders"><AuthGuard userType="customer"><MyOrdersPage /></AuthGuard></Route>
+      <Route path="/my-offers"><AuthGuard userType="customer"><MyOffers /></AuthGuard></Route>
+      <Route path="/my-card"><AuthGuard userType="customer"><MyCard /></AuthGuard></Route>
+      <Route path="/referrals"><AuthGuard userType="customer"><ReferralProgram /></AuthGuard></Route>
+      <Route path="/cart"><CartPage /></Route>
+      <Route path="/delivery"><AuthGuard userType="customer"><DeliverySelectionPage /></AuthGuard></Route>
+      <Route path="/delivery/map"><AuthGuard userType="customer"><DeliveryMapPage /></AuthGuard></Route>
+      <Route path="/checkout"><AuthGuard userType="customer"><CheckoutPage /></AuthGuard></Route>
+      <Route path="/tracking"><AuthGuard userType="customer"><OrderTrackingPage /></AuthGuard></Route>
+      <Route path="/payment-return"><PaymentReturnPage /></Route>
+      <Route path="/payment-return-iframe"><PaymentReturnPage /></Route>
+      <Route path="/pay/order/:id"><PayPage /></Route>
+      <Route path="/pay/table/:qrToken"><PayPage /></Route>
+      <Route path="/profile"><AuthGuard userType="customer"><CustomerProfile /></AuthGuard></Route>
+
+      {/* Employee auth routes (public) */}
+      <Route path="/employee">{() => { window.location.replace('/employee/login'); return null; }}</Route>
+      <Route path="/employee/home">{() => <AuthGuard userType="employee"><EmployeeHome /></AuthGuard>}</Route>
+      <Route path="/guide"><SystemGuide /></Route>
+      <Route path="/help"><SystemGuide /></Route>
+      <Route path="/employee/gateway"><EmployeeGateway /></Route>
+      <Route path="/employee/login"><EmployeeLogin /></Route>
+      <Route path="/employee/general-checkin"><GeneralCheckin /></Route>
+      <Route path="/employee/forgot-password"><EmployeeForgotPassword /></Route>
+      <Route path="/employee/activate"><EmployeeActivation /></Route>
+
+      {/* Employee protected routes */}
+      <Route path="/employee/dashboard"><AuthGuard userType="employee"><EmployeeDashboard /></AuthGuard></Route>
+      <Route path="/employee/cashier"><AuthGuard userType="employee"><EmployeeCashier /></AuthGuard></Route>
+      <Route path="/employee/pos"><AuthGuard userType="employee"><POSSystem /></AuthGuard></Route>
+      <Route path="/employee/shifts"><AuthGuard userType="employee"><ShiftManagement /></AuthGuard></Route>
+      <Route path="/employee/kitchen"><AuthGuard userType="employee"><KitchenDisplay /></AuthGuard></Route>
+      <Route path="/employee/tables"><AuthGuard userType="employee"><CashierTables /></AuthGuard></Route>
+      <Route path="/employee/table-orders"><AuthGuard userType="employee"><CashierTableOrders /></AuthGuard></Route>
+      <Route path="/employee/orders"><AuthGuard userType="employee"><EmployeeOrders /></AuthGuard></Route>
+      <Route path="/manager/orders"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><ManagerLayout><EmployeeOrders /></ManagerLayout></AuthGuard></Route>
+      <Route path="/employee/orders-display"><AuthGuard userType="employee"><EmployeeOrdersDisplay /></AuthGuard></Route>
+      <Route path="/employee/loyalty"><AuthGuard userType="employee"><EmployeeLoyalty /></AuthGuard></Route>
+      <Route path="/employee/menu-management"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><ManagerLayout><EmployeeMenuManagement /></ManagerLayout></AuthGuard></Route>
+      <Route path="/employee/ingredients"><AuthGuard userType="employee" allowedRoles={["manager", "admin"]}><EmployeeIngredientsManagement /></AuthGuard></Route>
+      <Route path="/employee/availability"><AuthGuard userType="employee"><EmployeeAvailability /></AuthGuard></Route>
+      <Route path="/employee/ai"><AuthGuard userType="employee"><EmployeeBrandAI /></AuthGuard></Route>
+      <Route path="/employee/attendance"><AuthGuard userType="employee"><EmployeeAttendance /></AuthGuard></Route>
+      <Route path="/employee/leave-request"><AuthGuard userType="employee"><LeaveRequestPage /></AuthGuard></Route>
+      <Route path="/employee/reservations"><AuthGuard userType="employee"><CashierReservations /></AuthGuard></Route>
+      <Route path="/manager/reservations"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><ManagerLayout><CashierReservations /></ManagerLayout></AuthGuard></Route>
+      <Route path="/employee/product-reservations"><AuthGuard userType="employee"><EmployeeProductReservations /></AuthGuard></Route>
+      <Route path="/manager/product-reservations"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><ManagerLayout><EmployeeProductReservations /></ManagerLayout></AuthGuard></Route>
+
+      {/* Manager auth routes (public) */}
+      <Route path="/manager"><ManagerLogin /></Route>
+      <Route path="/manager/forgot-password"><ManagerForgotPassword /></Route>
+
+      {/* Manager protected routes */}
+      <Route path="/manager/employees"><AuthGuard userType="employee" allowedRoles={["manager", "admin", "owner"]}><ManagerEmployees /></AuthGuard></Route>
+      <Route path="/manager/drivers"><AuthGuard userType="manager"><ManagerDrivers /></AuthGuard></Route>
+      <Route path="/manager/dashboard"><AuthGuard userType="manager"><ManagerDashboard /></AuthGuard></Route>
+      <Route path="/manager/tables"><AuthGuard userType="manager"><ManagerTables /></AuthGuard></Route>
+      <Route path="/manager/attendance"><AuthGuard userType="manager"><ManagerAttendance /></AuthGuard></Route>
+      <Route path="/manager/inventory"><AuthGuard userType="manager"><InventorySmartPage /></AuthGuard></Route>
+      <Route path="/manager/inventory/raw-items"><AuthGuard userType="manager"><InventoryRawItems /></AuthGuard></Route>
+      <Route path="/manager/inventory/suppliers"><AuthGuard userType="manager"><InventorySuppliers /></AuthGuard></Route>
+      <Route path="/manager/inventory/purchases"><AuthGuard userType="manager"><InventoryPurchases /></AuthGuard></Route>
+      <Route path="/manager/inventory/recipes"><AuthGuard userType="manager"><InventoryRecipes /></AuthGuard></Route>
+      <Route path="/manager/inventory/stock"><AuthGuard userType="manager"><InventoryStock /></AuthGuard></Route>
+      <Route path="/manager/inventory/alerts"><AuthGuard userType="manager"><InventoryAlerts /></AuthGuard></Route>
+      <Route path="/manager/inventory/movements"><AuthGuard userType="manager"><InventoryMovements /></AuthGuard></Route>
+      <Route path="/manager/inventory/transfers"><AuthGuard userType="manager"><InventoryTransfers /></AuthGuard></Route>
+      <Route path="/manager/accounting"><AuthGuard userType="manager"><AccountingDashboard /></AuthGuard></Route>
+      <Route path="/manager/shifts"><AuthGuard userType="manager"><ShiftManagement /></AuthGuard></Route>
+      <Route path="/manager/zatca"><AuthGuard userType="manager"><ZATCAInvoices /></AuthGuard></Route>
+      <Route path="/manager/guide"><AuthGuard userType="manager"><UserGuide /></AuthGuard></Route>
+      <Route path="/manager/analytics"><AuthGuard userType="manager"><AdvancedAnalytics /></AuthGuard></Route>
+      <Route path="/manager/gift-cards"><AuthGuard userType="manager"><GiftCardsManagement /></AuthGuard></Route>
+      <Route path="/manager/promotions"><AuthGuard userType="manager"><PromotionsManagement /></AuthGuard></Route>
+      <Route path="/admin/api"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><ApiManagement /></AdminLayout></AuthGuard></Route>
+      <Route path="/kiosk"><KioskPage /></Route>
+      <Route path="/kiosk/:branchId"><KioskPage /></Route>
+      <Route path="/order"><KioskPage /></Route>
+      <Route path="/attendance-kiosk"><AttendanceKiosk /></Route>
+      <Route path="/admin/employees/:id/face-enrollment"><AuthGuard userType="manager"><FaceEnrollment /></AuthGuard></Route>
+      <Route path="/employee/kiosk-qr"><AuthGuard userType="employee"><EmployeeKioskQR /></AuthGuard></Route>
+      <Route path="/order/:branchId"><KioskPage /></Route>
+      <Route path="/curbside"><CurbsidePage /></Route>
+      <Route path="/car-order"><CurbsidePage /></Route>
+      <Route path="/order-receipt/:id"><OrderReceiptPage /></Route>
+      <Route path="/manager/payroll"><AuthGuard userType="manager"><PayrollManagement /></AuthGuard></Route>
+      <Route path="/manager/reviews"><AuthGuard userType="manager"><ManagerReviews /></AuthGuard></Route>
+      <Route path="/manager/suppliers"><AuthGuard userType="manager"><SupplierManagement /></AuthGuard></Route>
+      <Route path="/manager/loyalty"><AuthGuard userType="manager"><LoyaltyProgram /></AuthGuard></Route>
+      <Route path="/manager/integrations"><AuthGuard userType="manager"><ExternalIntegrations /></AuthGuard></Route>
+      <Route path="/manager/warehouse"><AuthGuard userType="manager"><WarehouseManagement /></AuthGuard></Route>
+      <Route path="/manager/inventory/cycle"><AuthGuard userType="manager"><InventoryCycleDashboard /></AuthGuard></Route>
+      <Route path="/manager/inventory/stocktake"><AuthGuard userType="manager"><SmartStocktake /></AuthGuard></Route>
+      <Route path="/manager/inventory/ai"><AuthGuard userType="manager"><InventoryAI /></AuthGuard></Route>
+      <Route path="/manager/ceo-ai"><AuthGuard userType="manager"><CeoAIDashboard /></AuthGuard></Route>
+      <Route path="/manager/simulator"><AuthGuard userType="manager"><BusinessSimulator /></AuthGuard></Route>
+      <Route path="/manager/digital-twin"><AuthGuard userType="manager"><DigitalTwin /></AuthGuard></Route>
+      <Route path="/manager/inventory/stock-organization"><AuthGuard userType="manager"><StockOrganizationDashboard /></AuthGuard></Route>
+      <Route path="/manager/inventory/hub"><AuthGuard userType="manager"><InventoryHub /></AuthGuard></Route>
+      <Route path="/manager/employees/hub"><AuthGuard userType="employee" allowedRoles={["manager", "admin", "owner", "branch_manager"]}><EmployeesHub /></AuthGuard></Route>
+      <Route path="/manager/reliability"><AuthGuard userType="employee" allowedRoles={["manager", "admin", "owner", "branch_manager"]}><ReliabilityHub /></AuthGuard></Route>
+      <Route path="/manager/ai-automation"><AuthGuard userType="employee" allowedRoles={["manager", "admin", "owner", "branch_manager"]}><AIAutomation /></AuthGuard></Route>
+      <Route path="/manager/ecosystem"><AuthGuard userType="employee" allowedRoles={["manager", "admin", "owner", "branch_manager"]}><EcosystemHub /></AuthGuard></Route>
+      <Route path="/manager/delivery"><AuthGuard userType="manager"><ManagerDelivery /></AuthGuard></Route>
+      <Route path="/manager/delivery-zones"><AuthGuard userType="manager"><DeliveryZoneSettings /></AuthGuard></Route>
+      <Route path="/manager/unified-reports"><AuthGuard userType="manager"><UnifiedReports /></AuthGuard></Route>
+      <Route path="/manager/bi-analytics"><AuthGuard userType="manager"><BIAnalytics /></AuthGuard></Route>
+      <Route path="/manager/ai"><AuthGuard userType="manager"><ManagerAI /></AuthGuard></Route>
+      <Route path="/manager/tahalyli"><AuthGuard userType="manager"><TahalyliPage /></AuthGuard></Route>
+      <Route path="/manager/audit-logs"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><ManagerAuditLogs /></AuthGuard></Route>
+      <Route path="/manager/smart-reports"><AuthGuard userType="manager"><ManagerSmartReports /></AuthGuard></Route>
+      <Route path="/manager/product-analytics"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><ManagerLayout><ProductAnalytics /></ManagerLayout></AuthGuard></Route>
+      <Route path="/manager/product-reports"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><ManagerLayout><ProductReports /></ManagerLayout></AuthGuard></Route>
+      <Route path="/manager/payment-terminal"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner", "cashier", "branch_manager"]}><PaymentTerminalControl /></AuthGuard></Route>
+      <Route path="/manager/system-diagnostics"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><SystemDiagnostics /></AuthGuard></Route>
+      {/* Owner protected routes */}
+      <Route path="/owner/dashboard"><AuthGuard userType="manager" allowedRoles={["owner", "admin"]}><OwnerDashboard /></AuthGuard></Route>
+      <Route path="/owner/branch/:branchId"><AuthGuard userType="manager" allowedRoles={["owner", "admin"]}><BranchAnalytics /></AuthGuard></Route>
+      <Route path="/executive"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><ExecutiveDashboard /></AuthGuard></Route>
+
+      {/* Admin redirect */}
+      <Route path="/admin"><Redirect to="/admin/dashboard" /></Route>
+
+      {/* Admin protected routes */}
+      <Route path="/admin/dashboard"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminDashboard /></AuthGuard></Route>
+      <Route path="/admin/employees"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminEmployees /></AdminLayout></AuthGuard></Route>
+      <Route path="/admin/reports"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminReports /></AdminLayout></AuthGuard></Route>
+      <Route path="/admin/settings"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminSettings /></AdminLayout></AuthGuard></Route>
+      <Route path="/admin/branches"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminBranches /></AdminLayout></AuthGuard></Route>
+      <Route path="/admin/email"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminEmail /></AdminLayout></AuthGuard></Route>
+      <Route path="/admin/payment-logs"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminPaymentLogs /></AdminLayout></AuthGuard></Route>
+      <Route path="/manager/payment-tracking"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><PaymentTrackingPage /></AuthGuard></Route>
+
+      {/* ERP Accounting System */}
+      <Route path="/erp/accounting"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><ErpAccountingPage /></AuthGuard></Route>
+
+
+      {/* Hardware, B2B & Partner routes */}
+      <Route path="/manager/hardware"><AuthGuard userType="manager"><HardwareManagement /></AuthGuard></Route>
+      <Route path="/manager/b2b"><AuthGuard userType="manager"><B2BMarketplace /></AuthGuard></Route>
+      <Route path="/manager/partners"><AuthGuard userType="manager"><PartnerProgram /></AuthGuard></Route>
+
+      {/* Drive-Through Menu */}
+      <Route path="/drive-through"><DriveThroughPage /></Route>
+
+      {/* Driver Portal routes */}
+      <Route path="/driver/login"><DriverLogin /></Route>
+      <Route path="/driver/portal"><DriverPortal /></Route>
+
+      {/* Customer Delivery Tracking */}
+      <Route path="/delivery/track/:orderId"><DeliveryTracking /></Route>
+      <Route component={RouterFallback} />
+    </Switch>
+  );
+}
+
+function AppContent() {
+  const cartStore = useCartStore();
+  const isCartOpen = cartStore?.isCartOpen;
+  const isCheckoutOpen = cartStore?.isCheckoutOpen;
+
+  // Proximity-based push notification (fires when customer is within 100 m of a branch)
+  useProximityNotify();
+
+  // ⚡ Speed boost: prefetch the most-used route chunks while the browser is idle,
+  // so navigation feels instant after first paint.
+  useEffect(() => {
+    const idle: (cb: () => void) => number =
+      (window as any).requestIdleCallback || ((cb: () => void) => window.setTimeout(cb, 1200));
+    const id = idle(() => {
+      // Customer-facing common routes
+      import("@/pages/menu");
+      import("@/pages/cart-page");
+      import("@/pages/checkout");
+      import("@/pages/delivery-selection");
+      import("@/pages/tracking");
+      import("@/pages/my-orders");
+      import("@/components/cart-modal");
+      import("@/components/checkout-modal");
+      // Staff common routes (small, doesn't block anything)
+      import("@/pages/employee-login");
+      import("@/pages/employee-dashboard");
+      import("@/pages/employee-cashier");
+      import("@/pages/employee-orders");
+    });
+    return () => {
+      const cancel = (window as any).cancelIdleCallback;
+      if (cancel) cancel(id); else clearTimeout(id);
+    };
+  }, []);
+
+  return (
+    <>
+      {/* Silent real-time notification listener for logged-in customers */}
+      <CustomerNotificationListener />
+      {/* Native iOS: APNs push + Home Screen Quick Actions */}
+      <NativeAppInit />
+      <Suspense fallback={<PageLoader />}>
+        <AppRouter />
+      </Suspense>
+      {/* Modals inside Router to ensure they can use routing hooks if needed */}
+      <Suspense fallback={null}>
+        {isCartOpen && <CartModal />}
+        {isCheckoutOpen && <CheckoutModal />}
+        <ErrorBoundary silent>
+          <CustomerAuthModal />
+        </ErrorBoundary>
+      </Suspense>
+      <Toaster />
+    </>
+  );
+}
+
+function App() {
+  const [isEmployee, setIsEmployee] = useState(false);
+  const [lang, setLang] = useState(i18n.language || 'ar');
+  const serverReadyInitial = useCapacitorServerReady();
+  const [serverReady, setServerReady] = useState(serverReadyInitial);
+  const { showing: splashShowing, done: splashDone } = useSplash();
+
+  useEffect(() => {
+    const onLangChanged = (lng: string) => setLang(lng);
+    i18n.on('languageChanged', onLangChanged);
+    return () => { i18n.off('languageChanged', onLangChanged); };
+  }, []);
+
+  useEffect(() => {
+    // Prefetch critical data in parallel on app start so pages load instantly
+    const prefetch = (url: string) =>
+      queryClient.prefetchQuery({ queryKey: [url], staleTime: 5 * 60 * 1000 });
+    Promise.all([
+      prefetch("/api/business-config"),
+      prefetch("/api/coffee-items"),
+      prefetch("/api/menu-categories"),
+      prefetch("/api/product-addons"),
+      prefetch("/api/custom-banners"),
+      prefetch("/api/payment-methods"),
+      prefetch("/api/public/loyalty-settings"),
+    ]);
+  }, []);
+
+  useEffect(() => {
+    // Prefetch all page chunks after initial load so navigation is instant
+    const t = setTimeout(() => {
+      const pages = [
+        () => import("@/pages/pos-system"),
+        () => import("@/pages/employee-cashier"),
+        () => import("@/pages/employee-orders"),
+        () => import("@/pages/employee-home"),
+        () => import("@/pages/kitchen-display"),
+        () => import("@/pages/employee-attendance"),
+        () => import("@/pages/manager-dashboard"),
+        () => import("@/pages/employee-dashboard"),
+        () => import("@/pages/cashier-tables"),
+        () => import("@/pages/cashier-table-orders"),
+        () => import("@/pages/employee-loyalty"),
+        () => import("@/pages/menu"),
+        () => import("@/pages/manager-employees"),
+        () => import("@/pages/admin-employees"),
+        () => import("@/pages/accounting-dashboard"),
+        () => import("@/pages/manager-attendance"),
+        () => import("@/pages/inventory-raw-items"),
+        () => import("@/pages/inventory-recipes"),
+        () => import("@/pages/inventory-stock"),
+        () => import("@/pages/manager-delivery"),
+        () => import("@/pages/shift-management"),
+        () => import("@/pages/owner-dashboard"),
+        () => import("@/pages/admin-settings"),
+        () => import("@/pages/admin-branches"),
+        () => import("@/pages/employee-menu-management"),
+        () => import("@/pages/manager-tables"),
+        () => import("@/pages/zatca-invoices"),
+        () => import("@/pages/advanced-analytics"),
+        () => import("@/pages/payroll-management"),
+        () => import("@/pages/gift-cards-management"),
+        () => import("@/pages/loyalty-program"),
+        () => import("@/pages/employee-product-reservations"),
+        () => import("@/pages/cashier-reservations"),
+        () => import("@/pages/manager-reviews"),
+        () => import("@/pages/unified-reports"),
+        () => import("@/pages/bi-analytics"),
+        () => import("@/pages/erp-accounting"),
+        () => import("@/pages/manager-ai"),
+        () => import("@/pages/inventory-purchases"),
+        () => import("@/pages/inventory-suppliers"),
+      ];
+      // Load 3 at a time to avoid network congestion
+      let idx = 0;
+      const loadNext = () => {
+        if (idx >= pages.length) return;
+        const batch = pages.slice(idx, idx + 3);
+        idx += 3;
+        Promise.allSettled(batch.map(fn => fn())).then(loadNext);
+      };
+      loadNext();
+    }, 1500);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    const employeePaths = ['/employee', '/manager', '/kitchen', '/pos', '/cashier', '/admin', '/owner', '/executive', '/0'];
+    const currentPath = window.location.pathname;
+    const isEmployeePath = employeePaths.some(path => currentPath === path || currentPath.startsWith(path + '/'));
+    setIsEmployee(isEmployeePath);
+
+    const manifestTag = document.getElementById('main-manifest') as HTMLLinkElement;
+    if (manifestTag) {
+      manifestTag.href = isEmployeePath ? '/employee-manifest.json' : '/manifest.json';
+    }
+
+    document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+    document.documentElement.lang = lang;
+
+    if (isEmployeePath && currentPath === '/') {
+      window.location.href = '/employee';
+    }
+  }, [lang]);
+
+  if (!serverReady) {
+    return <CapacitorServerSetup onDone={() => setServerReady(true)} />;
+  }
+
+  return (
+    <div className={`${isEmployee ? 'employee-portal' : 'customer-portal'} min-h-screen bg-background text-foreground font-ibm-arabic antialiased`} dir={lang === 'ar' ? 'rtl' : 'ltr'} key={lang}>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <CustomerProvider>
+            <BranchProvider>
+            <AuthModalProvider>
+            <CartProvider>
+              <ErrorBoundary>
+                <WouterRouter>
+                  <AppContent />
+                </WouterRouter>
+              </ErrorBoundary>
+              <ErrorBoundary silent><GlobalPrompts /></ErrorBoundary>
+              <ErrorBoundary silent><GlobalCommandPalette /></ErrorBoundary>
+              <ErrorBoundary silent><QuickActionBar /></ErrorBoundary>
+              <ErrorBoundary silent><PWAUpdateNotifier /></ErrorBoundary>
+              <ErrorBoundary silent><PWAInstallBanner /></ErrorBoundary>
+              <ErrorBoundary silent><OfflineIndicator /></ErrorBoundary>
+            </CartProvider>
+            </AuthModalProvider>
+            </BranchProvider>
+          </CustomerProvider>
+        </TooltipProvider>
+      </QueryClientProvider>
+      {/* Splash screen — native app only, fades out automatically */}
+      {splashShowing && <SplashScreen onDone={splashDone} />}
+    </div>
+  );
+}
+
+export default App;

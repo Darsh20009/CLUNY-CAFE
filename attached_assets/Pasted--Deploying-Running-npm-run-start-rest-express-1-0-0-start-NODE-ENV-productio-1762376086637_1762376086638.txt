@@ -1,0 +1,1022 @@
+     ==> Deploying...
+==> Running 'npm run start'
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.js
+✅ Using External PostgreSQL Database - قاعدة بيانات PostgreSQL خارجية
+7:56:17 PM [express] serving on port 10000
+Error initializing database: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.initializeCoffeeMenu (file:///opt/render/project/src/dist/index.js:345:28)
+    at async DBStorage.initializeDatabase (file:///opt/render/project/src/dist/index.js:336:7) {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+     ==> Your service is live 🎉
+     ==> 
+     ==> ///////////////////////////////////////////////////////////
+     ==> 
+     ==> Available at your primary URL https://qahwa.ma3k.online + 1 more domain
+     ==> 
+     ==> ///////////////////////////////////////////////////////////
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:573:12)
+    at async file:///opt/render/project/src/dist/index.js:1073:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:57:27 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 173ms :: {"error":"Failed …
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:573:12)
+    at async file:///opt/render/project/src/dist/index.js:1073:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:57:28 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 110ms :: {"error":"Failed …
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:519:12)
+    at async file:///opt/render/project/src/dist/index.js:1013:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:57:30 PM [express] GET /api/coffee-items 500 in 133ms :: {"error":"Failed to fetch coffee items"}
+Error fetching coffee items: AggregateError [ETIMEDOUT]: 
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:519:12)
+    at async file:///opt/render/project/src/dist/index.js:1013:21 {
+  code: 'ETIMEDOUT',
+  [errors]: [
+    Error: connect ETIMEDOUT 149.102.156.43:5432
+        at createConnectionError (node:net:1677:14)
+        at Timeout.internalConnectMultipleTimeout (node:net:1736:38)
+        at listOnTimeout (node:internal/timers:590:11)
+        at process.processTimers (node:internal/timers:523:7) {
+      errno: -110,
+      code: 'ETIMEDOUT',
+      syscall: 'connect',
+      address: '149.102.156.43',
+      port: 5432
+    },
+    Error: connect ENETUNREACH 2a02:c204:2184:9836::1:5432 - Local (:::0)
+        at internalConnectMultiple (node:net:1211:16)
+        at Timeout.internalConnectMultipleTimeout (node:net:1741:5)
+        at listOnTimeout (node:internal/timers:590:11)
+        at process.processTimers (node:internal/timers:523:7) {
+      errno: -101,
+      code: 'ENETUNREACH',
+      syscall: 'connect',
+      address: '2a02:c204:2184:9836::1',
+      port: 5432
+    }
+  ]
+}
+7:57:31 PM [express] GET /api/coffee-items 500 in 254ms :: {"error":"Failed to fetch coffee items"}
+Error during customer auth: AggregateError [ETIMEDOUT]: 
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerByPhone (file:///opt/render/project/src/dist/index.js:504:20)
+    at async file:///opt/render/project/src/dist/index.js:951:22 {
+  code: 'ETIMEDOUT',
+  [errors]: [
+    Error: connect ETIMEDOUT 149.102.156.43:5432
+        at createConnectionError (node:net:1677:14)
+        at Timeout.internalConnectMultipleTimeout (node:net:1736:38)
+        at listOnTimeout (node:internal/timers:590:11)
+        at process.processTimers (node:internal/timers:523:7) {
+      errno: -110,
+      code: 'ETIMEDOUT',
+      syscall: 'connect',
+      address: '149.102.156.43',
+      port: 5432
+    },
+    Error: connect ENETUNREACH 2a02:c204:2184:9836::1:5432 - Local (:::0)
+        at internalConnectMultiple (node:net:1211:16)
+        at Timeout.internalConnectMultipleTimeout (node:net:1741:5)
+        at listOnTimeout (node:internal/timers:590:11)
+        at process.processTimers (node:internal/timers:523:7) {
+      errno: -101,
+      code: 'ENETUNREACH',
+      syscall: 'connect',
+      address: '2a02:c204:2184:9836::1',
+      port: 5432
+    }
+  ]
+}
+7:57:46 PM [express] POST /api/customers/auth 500 in 256ms :: {"error":"Authentication failed"}
+Error during customer auth: error: relation "customers" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerByPhone (file:///opt/render/project/src/dist/index.js:504:20)
+    at async file:///opt/render/project/src/dist/index.js:951:22 {
+  length: 108,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '49',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:57:56 PM [express] POST /api/customers/auth 500 in 107ms :: {"error":"Authentication failed"}
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:519:12)
+    at async file:///opt/render/project/src/dist/index.js:1013:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:58:08 PM [express] GET /api/coffee-items 500 in 110ms :: {"error":"Failed to fetch coffee items"}
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:519:12)
+    at async file:///opt/render/project/src/dist/index.js:1013:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:58:10 PM [express] GET /api/coffee-items 500 in 116ms :: {"error":"Failed to fetch coffee items"}
+Error during customer auth: error: relation "customers" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerByPhone (file:///opt/render/project/src/dist/index.js:504:20)
+    at async file:///opt/render/project/src/dist/index.js:951:22 {
+  length: 108,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '49',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:58:16 PM [express] POST /api/customers/auth 500 in 102ms :: {"error":"Authentication failed"}
+Error during customer auth: error: relation "customers" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerByPhone (file:///opt/render/project/src/dist/index.js:504:20)
+    at async file:///opt/render/project/src/dist/index.js:951:22 {
+  length: 108,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '49',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:58:28 PM [express] POST /api/customers/auth 500 in 116ms :: {"error":"Authentication failed"}
+Error fetching coffee items: error: relation "coffee_items" does not exist
+7:58:43 PM [express] GET /api/coffee-items 500 in 113ms :: {"error":"Failed to fetch coffee items"}
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:519:12)
+    at async file:///opt/render/project/src/dist/index.js:1013:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:519:12)
+    at async file:///opt/render/project/src/dist/index.js:1013:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:58:44 PM [express] GET /api/coffee-items 500 in 121ms :: {"error":"Failed to fetch coffee items"}
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:573:12)
+    at async file:///opt/render/project/src/dist/index.js:1073:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:58:54 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 116ms :: {"error":"Failed …
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:519:12)
+    at async file:///opt/render/project/src/dist/index.js:1013:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:58:54 PM [express] GET /api/coffee-items 500 in 107ms :: {"error":"Failed to fetch coffee items"}
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:573:12)
+    at async file:///opt/render/project/src/dist/index.js:1073:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:59:46 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 117ms :: {"error":"Failed …
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:573:12)
+    at async file:///opt/render/project/src/dist/index.js:1073:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:59:47 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 122ms :: {"error":"Failed …
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:519:12)
+    at async file:///opt/render/project/src/dist/index.js:1013:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:59:49 PM [express] GET /api/coffee-items 500 in 120ms :: {"error":"Failed to fetch coffee items"}
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:573:12)
+    at async file:///opt/render/project/src/dist/index.js:1073:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:59:49 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 113ms :: {"error":"Failed …
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:519:12)
+    at async file:///opt/render/project/src/dist/index.js:1013:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:59:51 PM [express] GET /api/coffee-items 500 in 129ms :: {"error":"Failed to fetch coffee items"}
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:519:12)
+    at async file:///opt/render/project/src/dist/index.js:1013:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+7:59:52 PM [express] GET /api/coffee-items 500 in 105ms :: {"error":"Failed to fetch coffee items"}
+     ==> Detected service running on port 10000
+     ==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+     ==> Deploying...
+     ==> No open ports detected, continuing to scan...
+     ==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+==> Running 'npm run start'
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.js
+✅ Using External PostgreSQL Database - قاعدة بيانات PostgreSQL خارجية
+8:41:09 PM [express] serving on port 10000
+Error initializing database: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.initializeCoffeeMenu (file:///opt/render/project/src/dist/index.js:350:27)
+    at async DBStorage.initializeDatabase (file:///opt/render/project/src/dist/index.js:343:7) {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+     ==> Your service is live 🎉
+     ==> 
+     ==> ///////////////////////////////////////////////////////////
+     ==> 
+     ==> Available at your primary URL https://qahwa.ma3k.online + 1 more domain
+     ==> 
+     ==> ///////////////////////////////////////////////////////////
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:544:12)
+    at async file:///opt/render/project/src/dist/index.js:1101:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:41:21 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 307ms :: {"error":"Failed …
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:544:12)
+    at async file:///opt/render/project/src/dist/index.js:1101:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:41:22 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 148ms :: {"error":"Failed …
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:490:12)
+    at async file:///opt/render/project/src/dist/index.js:1041:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:41:26 PM [express] GET /api/coffee-items 500 in 108ms :: {"error":"Failed to fetch coffee items"}
+8:41:27 PM [express] GET /api/coffee-items 500 in 109ms :: {"error":"Failed to fetch coffee items"}
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:490:12)
+    at async file:///opt/render/project/src/dist/index.js:1041:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+Error during customer login: error: relation "customers" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerByPhone (file:///opt/render/project/src/dist/index.js:464:20)
+    at async DBStorage.verifyCustomerPassword (file:///opt/render/project/src/dist/index.js:476:22)
+    at async file:///opt/render/project/src/dist/index.js:962:24 {
+  length: 108,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '61',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:41:42 PM [express] POST /api/customers/login 500 in 113ms :: {"error":"فشل تسجيل الدخول"}
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:544:12)
+    at async file:///opt/render/project/src/dist/index.js:1101:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:44:34 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 112ms :: {"error":"Failed …
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:544:12)
+    at async file:///opt/render/project/src/dist/index.js:1101:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:44:35 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 116ms :: {"error":"Failed …
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:490:12)
+    at async file:///opt/render/project/src/dist/index.js:1041:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:44:36 PM [express] GET /api/coffee-items 500 in 107ms :: {"error":"Failed to fetch coffee items"}
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:490:12)
+    at async file:///opt/render/project/src/dist/index.js:1041:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:44:38 PM [express] GET /api/coffee-items 500 in 105ms :: {"error":"Failed to fetch coffee items"}
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:544:12)
+    at async file:///opt/render/project/src/dist/index.js:1101:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:45:04 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 115ms :: {"error":"Failed …
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:544:12)
+    at async file:///opt/render/project/src/dist/index.js:1101:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:45:05 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 135ms :: {"error":"Failed …
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:490:12)
+    at async file:///opt/render/project/src/dist/index.js:1041:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:45:07 PM [express] GET /api/coffee-items 500 in 105ms :: {"error":"Failed to fetch coffee items"}
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:490:12)
+    at async file:///opt/render/project/src/dist/index.js:1041:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:45:08 PM [express] GET /api/coffee-items 500 in 127ms :: {"error":"Failed to fetch coffee items"}
+     ==> Detected service running on port 10000
+     ==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:544:12)
+    at async file:///opt/render/project/src/dist/index.js:1101:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:48:43 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 134ms :: {"error":"Failed …
+Error fetching cart items: error: relation "cart_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCartItems (file:///opt/render/project/src/dist/index.js:544:12)
+    at async file:///opt/render/project/src/dist/index.js:1101:26 {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:48:44 PM [express] GET /api/cart/session-1759178594747-yavsebg1b 500 in 117ms :: {"error":"Failed …
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:490:12)
+    at async file:///opt/render/project/src/dist/index.js:1041:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:48:45 PM [express] GET /api/coffee-items 500 in 119ms :: {"error":"Failed to fetch coffee items"}
+Error fetching coffee items: error: relation "coffee_items" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCoffeeItems (file:///opt/render/project/src/dist/index.js:490:12)
+    at async file:///opt/render/project/src/dist/index.js:1041:21 {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '178',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1381',
+  routine: 'parserOpenTable'
+}
+8:48:47 PM [express] GET /api/coffee-items 500 in 138ms :: {"error":"Failed to fetch coffee items"}

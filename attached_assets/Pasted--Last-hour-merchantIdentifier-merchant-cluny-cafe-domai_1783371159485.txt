@@ -1,0 +1,56 @@
+
+
+Last hour
+
+
+
+  merchantIdentifier: 'merchant.cluny.cafe',
+  domainName: 'cluny.cafe',
+  displayName: 'CLUNY CAFE',
+  initiative: 'web',
+  initiativeContext: 'cluny.cafe'
+}
+[SCHEDULER] 🗓️ New day detected — daily tracker reset
+[Apple Pay] Merchant validation failed: 401 { message: 'Unauthorized' }
+⚠️  SLOW API: POST /api/payments/apple-pay/validate-merchant took 3071ms (status 401)
+8:51:23 PM [express] POST /api/payments/apple-pay/validate-merchant 401 in 3096ms :: {"error":"Apple…
+8:51:29 PM [express] POST /api/payments/create-session-token 200 in 82ms :: {"token":"e5e77c6c267236…
+[Geidea] Create Session request body: {"amount":"1.35","currency":"SAR","merchantReferenceId":"CLN1783371089496","timestamp":"2026/07/06 20:51:30","signature":"[HIDDEN]","language":"ar","paymentOperation":"Pay","callbackUrl":"https://cluny.cafe/payment-return?pt=e5e77c6c2672366b38ebffd3c4a73bd5684b4c5b948b8495732ea71229e22d18&provider=geidea","returnUrl":"https://cluny.cafe/payment-return?pt=e5e77c6c2672366b38ebffd3c4a73bd5684b4c5b948b8495732ea71229e22d18&provider=geidea","customer":{"phoneNumber":"532441566","phonecountrycode":"+966","firstName":"يوسف","lastName":"يوسف"}}
+[Geidea] Create Session response: {"session":{"id":"18c9649f-4e5f-4e5d-d3de-08dedb63dc62","amount":1.35,"currency":"SAR","callbackUrl":"https://cluny.cafe/payment-return?pt=e5e77c6c2672366b38ebffd3c4a73bd5684b4c5b948b8495732ea71229e22d18&provider=geidea","returnUrl":"https://cluny.cafe/payment-return?pt=e5e77c6c2672366b38ebffd3c4a73bd5684b4c5b948b8495732ea71229e22d18&provider=geidea","expiryDate":"2026-07-06T21:51:30.8676867Z","status":"Initiated","merchantId":"f9931464-9a09-458f-7bd9-08de72963454","merchantPublicKey":"5bf49a11-693b-4d3c-9d85-4f757d03cc1c","language":"ar","merchantReferenceId":"CLN1783371089496","paymentIntentId":null,"paymentOperation":"Pay","cardOnFile":false,"cofAgreement":{"id":null,"type":null},"initiatedBy":"Internet","tokenId":null,"customer":{"id":null,"referenceId":null,"create":false,"setDefaultMethod":false,"email":null,"phoneNumber":"+966532441566","firstName":"يوسف","lastName":"يوسف","address":{"billing":{"country":null,"city":null,"street":null,"postalCode":null},"shipping":{"country":null,"city":null,"street":null,"postalCode":null}}},"platform":{"name":null,"version":null,"pluginVersion":null,"partnerId":null},"paymentOptions":null,"recurrence":null,"order":null,"items":null,"appearance":null,"metadata":{"custom":null},"subscription":null,"acceptTabbyPaymentMethod":false,"acceptTamaraPaymentMethod":false,"expressCheckouts":[],"hideWallets":[],"splitPayoutDetails":[],"caf":{"extraChargesLabel":null,"extraChargesType":"","extraCharges":null,"addOnFeesLabel":null,"addOnFeesType":"","addOnFees":null},"originalAmount":1.35,"addOnFeesAmount":0,"extraChargesAmount":0,"termsAndConditions":null,"token":null,"networkToken":null,"isNTPayment":false,"cardTokenId":null,"processingInformation":{"commerceIndicator":null,"feeProgramIndicator":null},"additionalData":{"isAft":false,"isHighRisk":false},"aft":null},"merchantNameEn":null,"merchantNameAr":null,"paymentIntent":null,"termsAndConditions":null,"responseMessage":"Success","detailedResponseMessage":"The operation was successful","language":"ar","responseCode":"000","detailedResponseCode":"000","signature":"VAKfJfQWKIWguVY4aU8V4oq0fk+0F+YKA3aoWXfU/9c="}
+8:51:31 PM [express] POST /api/payments/init 200 in 1118ms :: {"success":true,"sessionId":"18c9649f-…
+8:51:34 PM [express] GET /api/notifications/unread-count 304 in 263ms :: {"count":94315}
+8:51:34 PM [express] GET /api/shifts/active 304 in 74ms
+8:51:41 PM [express] GET /api/coffee-items 200 in 3ms :: [{"id":"EjCtnANDL-","tenantId":"demo-tenant…
+8:51:41 PM [express] GET /api/menu-categories 200 in 52ms :: []
+8:51:41 PM [express] GET /api/payment-methods 200 in 0ms :: [{"id":"qahwa-card","nameAr":"بطاقة كلون…
+8:51:41 PM [express] GET /api/branches 200 in 0ms :: [{"_id":"699521d8e2f9c24dcbcc28d6","id":"gazZlc…
+8:51:41 PM [express] GET /api/public/loyalty-settings 200 in 0ms :: {"enabled":true,"pointsPerDrink"…
+8:51:41 PM [express] GET /api/product-addons 200 in 0ms :: []
+8:51:41 PM [express] GET /api/custom-banners 200 in 0ms :: []
+8:51:41 PM [express] GET /api/public/settings 200 in 93ms :: {"tradeNameAr":"كلوني كافيه","tradeName…
+8:51:41 PM [express] GET /api/business-config 200 in 104ms :: {"socialLinks":{"instagram":"https://w…
+8:51:41 PM [express] GET /api/customer/loyalty-cards 200 in 150ms :: [{"customerId":"6994c0b09481932…
+8:51:41 PM [express] GET /api/cart/session-1782916875072-qt9xn3jge 200 in 126ms :: [{"id":"EjCtnANDL…
+[WS] Client disconnected: 1006 
+[WS] Client disconnected: 1006 
+[WS] New client connected
+[WS] Client subscribed as customer userId=Z5H23YKwydMjcutOnZk-P
+[WS] Client subscribed as customer userId=Z5H23YKwydMjcutOnZk-P
+[Apple Pay] Session created: f91d545b-ee81-4d03-d3e0-08dedb63dc62
+[Apple Pay] Validating merchant: {
+  sessionId: 'f91d545b-ee81-4d03-d3e0-08dedb63dc62',
+  validationUrl: 'https://apple-pay-gateway.apple.com/paymentservices/startSession',
+  merchantIdentifier: 'merchant.cluny.cafe',
+  domainName: 'cluny.cafe',
+  displayName: 'CLUNY CAFE',
+  initiative: 'web',
+  initiativeContext: 'cluny.cafe'
+}
+[Apple Pay] Merchant validation failed: 401 { message: 'Unauthorized' }
+⚠️  SLOW API: POST /api/payments/apple-pay/validate-merchant took 1780ms (status 401)
+8:51:44 PM [express] POST /api/payments/apple-pay/validate-merchant 401 in 1716ms :: {"error":"Apple…
+8:51:44 PM [express] POST /api/customer/proximity-notify 200 in 63ms :: {"triggered":false,"reason":…
+8:51:50 PM [express] GET /api/shifts/active 304 in 63ms
+8:52:04 PM [express] GET /api/shifts/auto-current 304 in 191ms :: {"isAuto":true,"windowStart":"2026…
+8:52:04 PM [express] GET /api/notifications/unread-count 304 in 194ms :: {"count":94315}
+8:52:05 PM [express] GET /api/shifts/active 304 in 63ms

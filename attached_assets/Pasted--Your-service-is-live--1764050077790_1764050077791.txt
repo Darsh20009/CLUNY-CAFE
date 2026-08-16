@@ -1,0 +1,89 @@
+     ==> Your service is live 🎉
+     ==> 
+     ==> ///////////////////////////////////////////////////////////
+     ==> 
+     ==> Available at your primary URL https://qahwa.ma3k.online + 1 more domain
+     ==> 
+     ==> ///////////////////////////////////////////////////////////
+✅ Updated employee password: عبدالله حسن
+✅ Seeding completed!
+5:50:59 AM [express] GET /api/cart/session-1759178594747-yavsebg1b 304 in 69ms :: []
+5:51:04 AM [express] GET /api/coffee-items 304 in 72ms :: [{"id":"americano","nameAr":"أمريكانو","na…
+5:51:04 AM [express] GET /api/customers/690c74d77e809092eaf2383d/orders 200 in 151ms :: [{"deliveryA…
+5:51:08 AM [express] GET /api/coffee-items 304 in 70ms :: [{"id":"americano","nameAr":"أمريكانو","na…
+5:51:08 AM [express] GET /api/cart/session-1759178594747-yavsebg1b 304 in 66ms :: []
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:51:10 AM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:51:10 AM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+5:51:10 AM [express] GET /api/branches 304 in 68ms :: [{"_id":"6924086d668f7ac4dcfe4052","nameAr":"ف…
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:51:11 AM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:51:11 AM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+5:51:32 AM [express] POST /api/employees/login 200 in 788ms :: {"username":"darwish","fullName":"درو…
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:51:34 AM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:51:34 AM [express] GET /api/orders 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:51:35 AM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:51:35 AM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:51:39 AM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:51:39 AM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:51:40 AM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:51:40 AM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:51:42 AM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:51:43 AM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:51:43 AM [express] GET /api/orders 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:51:44 AM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:51:47 AM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:51:47 AM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+5:51:48 AM [express] GET /api/cart/session-1759178594747-yavsebg1b 304 in 68ms :: []
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:51:49 AM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:51:49 AM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:51:51 AM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:51:51 AM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+5:51:52 AM [express] GET /api/coffee-items 304 in 69ms :: [{"id":"americano","nameAr":"أمريكانو","na…
+5:51:53 AM [express] GET /api/customers/690c74d77e809092eaf2383d/orders 304 in 139ms :: [{"deliveryA…
+5:52:02 AM [express] POST /api/customers/login 400 in 1ms :: {"error":"صيغة رقم الهاتف أو البريد الإ…
+5:52:09 AM [express] POST /api/customers/login 200 in 552ms :: {"registeredBy":"self","isPasswordSet…
+5:52:15 AM [express] POST /api/cart 201 in 212ms :: {"sessionId":"session-1759178594747-yavsebg1b","…
+5:52:16 AM [express] GET /api/cart/session-1759178594747-yavsebg1b 200 in 136ms :: [{"sessionId":"se…
+5:52:17 AM [express] GET /api/branches 304 in 68ms :: [{"_id":"6924086d668f7ac4dcfe4052","nameAr":"ف…
+5:52:22 AM [express] GET /api/loyalty/cards/phone/532441566 200 in 68ms :: {"_id":"690c74d77e809092e…
+5:52:22 AM [express] GET /api/payment-methods 304 in 0ms :: [{"id":"cash","nameAr":"الدفع نقداً","na…
+5:52:23 AM [express] GET /api/payment-methods 304 in 0ms :: [{"id":"qahwa-card","nameAr":"بطاقة كوبي…
+[DEBUG] POST /api/orders - Session employee: MISSING
+5:52:29 AM [express] POST /api/orders 201 in 345ms :: {"orderNumber":"ORD-1764049949435-1","items":[…
+[DEBUG] POST /api/orders/6925441dd4e1562120901543/generate-codes - Session employee: MISSING
+5:52:30 AM [express] DELETE /api/cart/session-1759178594747-yavsebg1b 200 in 70ms :: {"message":"Car…
+5:52:30 AM [express] POST /api/orders/6925441dd4e1562120901543/generate-codes 201 in 68ms :: []
+5:52:30 AM [express] GET /api/cart/session-1759178594747-yavsebg1b 200 in 66ms :: []
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:52:33 AM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:52:33 AM [express] GET /api/orders/table 401 in 1ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:52:34 AM [express] GET /api/orders 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:52:34 AM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders/table - Session employee: MISSING
+5:53:05 AM [express] GET /api/orders/table 401 in 0ms :: {"error":"Unauthorized - Please log in"}
+[DEBUG] GET /api/orders - Session employee: MISSING
+5:53:05 AM [express] GET /api/orders 401 in 1ms :: {"error":"Unauthorized - Please log in"}

@@ -1,0 +1,644 @@
+Geidea HPP Checkout
+Overview
+Our Checkout offering is a pre-built payment UI that offers the quickest way to integrate and start securely accepting payments. It allows you to accept popular payment methods through a single web front-end implementation.
+
+Geidea Checkout supports both one-time payments and subscriptions for your customers - through a quick, easy and low-code integration into your website's checkout flow. It is very user-friendly and customizable.
+
+Additional payment methods can be enabled without any extra development work - Geidea Checkout seamlessly handles all payment method flow complexity, including 3D Secure 2.0 authentication.
+
+How it works
+
+Step 1: Create a checkout session
+The checkout session streamlines the payment process by allowing you to pre-configure the payment details and options for the session, and then simply load the Geidea checkout payment page to complete the transaction.
+
+You can configure this resource with multiple options such as amount and currency, payment method selection priority, appearance, order details (items, summary, etc.), and customer details.
+
+Create Session Request
+
+The create session endpoint requires basic authentication credentials where the merchant public key is used as the username and the API password as the password. Kindly check this section to find your access credentials.
+
+❗️
+Please initiate the Create Session API Request as a server-to-server API call from the back end.
+
+🚧
+Warning
+Your API password is a secret key! It is important to never expose your API password in any part of your application. Instead, store your API password securely on the server-side, and use a backend proxy to make API requests on behalf of your frontend application. This approach ensures that your API password is never exposed to the client side, reducing the risk of unauthorized access and data breaches.
+
+You will need the following fields to initiate a Create Session API call.
+
+Parameter	Description	Mandatory
+amount	The total amount value of the payment. This parameter is required, and the format is a double - a number with 2 digits after the decimal point. For example 19.99	Yes
+currency	
+The currency of the payment. This is a 3-digit alphabetic code, following the ISO 4217 currency code standard. For example: SAR
+
+List of available currencies:
+SAR Saudi Riyal
+EGP Egyptian Pound
+AED UAE Dirham
+QAR Qatari Rial
+OMR Omani Rial
+BHD Bahraini Dinar
+KWD Kuwaiti Dinar
+USD US Dollar
+GBP UK Pound Sterling
+EUR Euro
+
+To enable multicurrency for your account - contact our support team.
+
+Yes
+timestamp	The timestamp of the moment at which the create session request has been initiated.	Yes
+merchantReferenceId	The unique identifier for the given session added by the merchant.	No
+tokenId	Unique ID of the token created for the card. This is a UUID that is created when you initiate a transaction with cardOnFile parameter as true.
+Mandatory for tokenized payments.	No
+signature	A parameter to ensure the security and authenticity of API communications. It involves generating a signature using the contents of the API request and secret keys, which is then sent along with the request.	Yes
+callbackUrl	The URL where the payment gateway should send the callback after the transaction is completed. It must have a valid SSL certificate and start with 'https://'	Yes
+cardOnFile	Indicates whether to store the payment method for future use. If you pass 'true' in this field, Geidea will save the card and will return a tokenId in the callback after the order. This tokenId can be used later to process a payment for the same customer using the saved payment method.	No
+language	The language to be used on the checkout page. The values used for this parameter is either "en" or "ar". If this parameter is not used then the default value is "en".
+Mandatory for Tamara payment method	No
+paymentOperation	The type of payment operation to be performed. This is an optional parameter - if not submitted, the Geidea gateway will process a 'Pay' operation by default.	No
+returnUrl	A URL that can be used to redirect to a different page after the transaction has been completed
+Mandatory for Tabby payment method	No
+cofAgreement	Agreement object to specify the details of the agreement between the merchant & a customer for a specific transaction	No
+cofAgreement.id	An id that can be used to make an agreement merchant & a customer for a specific transaction	No
+cofAgreement.type	The type of agreement of a specific transaction. The values that can be used are "Unscheduled", "Recurring"	No
+customer	Customer object that specifies all details of the customer	No
+customer.email	The email of the customer that can be collected in the transaction details
+Mandatory for Tamara payment method	No
+customer.phoneNumber	The phone number of the customer that can be collected in the transaction details
+Mandatory for Tabby & Tamara payment method	No
+customer.firstName	First name of customer
+Mandatory for Tamara payment method	No
+customer.lastName	Last name of customer
+Mandatory for Tamara payment method	No
+customer.address	The address of the customer including the shipping & billing addresses
+Mandatory for Tamara payment method	No
+customer.address.billing	The billing address of the customer to be collected in the transaction details
+Mandatory for Tamara payment method	No
+customer.address.billing.country	The country code for the billing address of the customer. For example, "SAU" for Saudi Arabia
+Mandatory for Tamara payment method	No
+customer.address.billing.city	The city name for the billing address of the customer.
+Mandatory for Tamara payment method	No
+customer.address.billing.street	The street name for the billing address of the customer.
+Mandatory for Tamara payment method	No
+customer.address.billing.postalCode	The postal code for the billing address of the customer.	No
+customer.address.shipping	The shipping address of the customer to be collected in the transaction details
+Mandatory for Tamara payment method	No
+customer.address.shipping.country	The country code for the shipping address of the customer. For example, "SAU" for Saudi Arabia
+Mandatory for Tamara payment method	No
+customer.address.shipping.city	The city name for the shipping address of the customer.
+Mandatory for Tamara payment method	No
+customer.address.shipping.street	The street name for the shipping address of the customer.
+Mandatory for Tamara payment method	No
+customer.address.shipping.postalCode	The postal code for the shipping address of the customer.	No
+order	The object indicating details of the order
+Mandatory for Tamara payment method	No
+order.items	List of item objects
+Mandatory for Tabby & Tamara payment method	No
+order.items.merchantItemId	Id of the merchant's item
+Mandatory for Tamara payment method	No
+order.items.name	The name of the item
+Mandatory for Tabby & Tamara payment method	No
+order.items.description	Description of the item
+Mandatory for Tamara payment method	No
+order.items.categories	Categories that the item belongs to
+Mandatory for Tabby & Tamara payment method	No
+order.items.count	Quantity of the item
+Mandatory for Tabby & Tamara payment method	No
+order.items.price	Price per one quantity of the item
+Mandatory for Tabby & Tamara payment method	No
+order.items.sku	The SKU of the item
+Mandatory for Tamara payment method	No
+Signature
+We have asignature parameter in the Create Session API to have an additional layer of security during payment processing. To generate the signature, follow the steps below:
+
+Concatenate the string of { MerchantPublicKey, OrderAmount, OrderCurrency, MerchantReferenceId, timeStamp }. For more details about the parameters please refer : Create Session API here
+Amount must be formatted with 2 decimals or the signature function will convert it automatically to 2 decimals.
+Hash (SHA-256) the above Concatenated string by {MerchantAPIPassword}.
+Convert Hashed Value to Base64Str
+Sample Code for generating signature
+PHP
+C#
+
+function generateSignature($merchantPublicKey, $orderAmount, $orderCurrency, $orderMerchantReferenceId, $apiPassword, $timestamp)
+{
+    $amountStr = number_format($orderAmount, 2, '.', '');
+    $data = "{$merchantPublicKey}{$amountStr}{$orderCurrency}{$orderMerchantReferenceId}{$timestamp}";
+    $hash = hash_hmac('sha256', $data, $apiPassword, true);
+    return base64_encode($hash);
+}
+Sample Code
+To initiate an Initiate authentication API call, you will need to provide the following required fields to first create a session and then use the session ID in the Initiate authentication API call.
+
+You can find a full list of parameters which can be used with the Create Session API here.
+
+📘
+Usage of the API environment endpoints
+Please make sure you use the correct endpoint based on your environment
+
+KSA Environment: https://api.ksamerchant.geidea.net/
+Egypt Environment: https://api.merchant.geidea.net/
+UAE Environment: https://api.geidea.ae/
+Below is an example of executing a Create Session API call for payment of 1850.00 EGP with the mandatory parameters.
+
+cURL
+
+    {
+        "amount": "0.5",
+        "currency": "SAR",
+        "timestamp": "{{timestamp}}",
+        "merchantReferenceId": "21036410062-3704648-12-2",
+        "signature": "{{signature}}",
+        "paymentOperation": "Pay",
+        "language": "en",
+        "callbackUrl": "https://webhook.site/c32729f0-39f0-4cf8-a8c2-e932a146b685",
+        "returnUrl": "https://www.geidea.net",
+        "customer": {
+        "email": "test@gmail.com",
+        "phoneNumber": "500726514",
+        "phonecountrycode": "+966",
+        "firstName": "test",
+        "lastName": "geidea",
+        "address": {
+            "billing": {
+                "country": "SAU",
+                "city": "test",
+                "street": "test",
+                "postalCode": "test"
+            },
+            "shipping": {
+                "country": "SAU",
+                "city": "test",
+                "street": "test",
+                "postalCode": "test"
+            }
+        }
+    },
+    "order": {
+        "items": [
+            {
+                "merchantItemId": "SM",
+                "name": "Smartwatch",
+                "description": "tracking",
+                "categories": "electronic",
+                "count": 1,
+                "price": 5270,
+                "sku": "SM09"
+            }
+        ]
+    }
+}
+Create Session Response
+
+After sending the create session request in the example above - if your request is valid, then you will receive a response which includes a session object, with a session.id parameter inside. You will need to use this session.id later in order to start Geidea checkout.
+
+Below is an example of a successful response you can expect to receive for the create session request above.
+
+JSON
+
+{
+    "session": {
+        "id": "0b02b503-fbf8-49dd-cdec-08dcdb056790",
+        "amount": 0.5,
+        "currency": "SAR",
+        "callbackUrl": "https://webhook.site/c32729f0-39f0-4cf8-a8c2-e932a146b685",
+        "returnUrl": "https://www.geidea.net",
+        "expiryDate": "2024-09-24T15:31:34.3256851Z",
+        "status": "Initiated",
+        "merchantId": "e80ece7e-fb2a-4c0b-de94-08d8a29a107b",
+        "merchantPublicKey": "22dc6fc6-78ee-4767-9b7e-ed99ba23fa60",
+        "language": "en",
+        "merchantReferenceId": "21036410062-3704648-12-2",
+        "paymentIntentId": null,
+        "paymentOperation": "Pay",
+        "cardOnFile": false,
+        "cofAgreement": {
+            "id": null,
+            "type": null
+        },
+        "initiatedBy": null,
+        "tokenId": null,
+        "customer": {
+            "id": null,
+            "referenceId": null,
+            "create": false,
+            "setDefaultMethod": false,
+            "email": "test@gmail.com",
+            "phoneNumber": "500726514",
+            "firstName": "test",
+            "lastName": "geidea",
+            "address": {
+                "billing": {
+                    "country": "SAU",
+                    "city": "test",
+                    "street": "test",
+                    "postalCode": "test"
+                },
+                "shipping": {
+                    "country": "SAU",
+                    "city": "test",
+                    "street": "test",
+                    "postalCode": "test"
+                }
+            }
+        },
+        "platform": {
+            "name": null,
+            "version": null,
+            "pluginVersion": null,
+            "partnerId": null
+        },
+        "paymentOptions": null,
+        "recurrence": null,
+        "order": {
+            "integrationType": null,
+            "description": null,
+            "summary": {
+                "subTotal": null,
+                "shipping": null,
+                "vat": null
+            },
+            "statementDescriptor": {
+                "name": null,
+                "phone": null
+            },
+            "items": [
+                {
+                    "merchantItemId": "SM",
+                    "name": "Smartwatch",
+                    "description": "tracking",
+                    "categories": "electronic",
+                    "count": 1,
+                    "price": 5270,
+                    "sku": "SM09"
+                }
+            ]
+        },
+        "items": [
+            {
+                "merchantItemId": "SM",
+                "name": "Smartwatch",
+                "description": "tracking",
+                "categories": "electronic",
+                "count": 1,
+                "price": 5270,
+                "sku": "SM09"
+            }
+        ],
+        "appearance": null,
+        "metadata": {
+            "custom": null
+        },
+        "paymentMethod": {
+            "cardNumber": null,
+            "cardholderName": null,
+            "cvv": null,
+            "expiryDate": {
+                "month": null,
+                "year": null
+            }
+        },
+        "subscription": null,
+        "acceptTabbyPaymentMethod": true
+    },
+    "responseMessage": "Success",
+    "detailedResponseMessage": "The operation was successful",
+    "language": "EN",
+    "responseCode": "000",
+    "detailedResponseCode": "000",
+    "signature": "QMPKpuXfPjSB0mPNR7M966sV7p6Bq2Hjn01Y9xP/ctA="
+}
+The response includes your session expiryDate - each session by default expires after 15 minutes. This is the timeframe in which you will need to start the Geidea Checkout flow. You can also see the already mentioned id of the session - which you must save and use in the "Start the Payment" section of this flow.
+
+Step 2: Set up Geidea Checkout
+Next, embed our Geidea Checkout JavaScript library into your web checkout page HTML. In the example below, we've embedded the script into the <head> section of our example checkout.html file.
+
+📘
+Usage of the script tag environment
+Please make sure you use the correct source script value based on your environment
+
+KSA Environment: https://www.ksamerchant.geidea.net/hpp/geideaCheckout.min.js
+Egypt Environment: https://www.merchant.geidea.net/hpp/geideaCheckout.min.js
+UAE Environment: https://payments.geidea.ae/hpp/geideaCheckout.min.js
+checkout.html
+
+<head>
+  <!-- GeideaCheckout web script load section -->
+  <script src="https://www.merchant.geidea.net/hpp/geideaCheckout.min.js"></script>
+</head>
+After you have embedded the Geidea Checkout JS library, you should initialize an instance of the GeideaCheckout payment object.
+
+JavaScript
+
+// initialize the payment object
+const payment = new GeideaCheckout(onSuccess, onError, onCancel);
+To initialize the payment object, you need to:
+
+1. Provide reference to three callback event functions (onSuccess, onError, onCancel). After the payment process is completed, Geidea Checkout will redirect the customer back to the parent URL from where the checkout was started. One of the three methods will be triggered after the payment through the Geidea Checkout form is completed and the customer has returned. You must create a function for each of these events.
+
+onSuccess: this callback event function is triggered after a payment has been successful. You can use this function to display a successful message to the customer to confirm that the payment order has been successful. The responseCode parameter in this case will always be '000' and the responseMessage will be 'Success'. You can see a full list of Response codes here.
+
+onError: this callback event function is triggered when the parameters in your payment configuration (configurePayment) are invalid; or when there is a payment processing error which does not allow the order to continue.
+
+onCancel: this callback function is triggered when your user clicks the 'Cancel' button on the Geidea Checkout form; or when the payment has timed out.
+
+Geidea Checkout will call one of the three callback events based on the outcome of the customer payment. When one of the callback events is triggered, a JSON data object including information about the order is also sent to the event. This data object includes 6 parameters which can be used to display the result of the payment to your customer:
+
+JSON
+
+{
+   "responseCode":"string",
+   "responseMessage":"string",
+   "detailResponseCode":"string",
+   "detailResponseMessage":"string",
+   "orderId":"GUID",
+   "reference":"GUID"
+}
+2. Create theonSuccess, onError, and onCancel functions. You can determine how you would like the checkout flow to continue after payment has been completed - for example, you can display a successful or failed message to the customer, or you can redirect to a success or error page - you can create your functions as you like.
+
+In the following example, each of the three functions is only alerting the order information after Geidea Checkout is completed:
+
+PHP
+
+// onSuccess function definition
+let onSuccess = function(data) {
+  alert("Success:" + "\n" +
+  data.responseCode + "\n" +
+  data.responseMessage + "\n" +
+  data.detailResponseCode + "\n" +
+  data.detailResponseMessage + "\n" +
+  data.orderId + "\n" +
+  data.reference);
+}
+
+// onError function definition
+let onError = function(data) {
+  alert("Error:" + "\n" +
+  data.responseCode + "\n" +
+  data.responseMessage + "\n" +
+  data.detailResponseCode + "\n" +
+  data.detailResponseMessage + "\n" +
+  data.orderId + "\n" +
+  data.reference);
+}
+
+//onCancel function definition
+let onCancel = function(data) {
+  alert("Cancel:" + "\n" +
+  data.responseCode + "\n" +
+  data.responseMessage + "\n" +
+  data.detailResponseCode + "\n" +
+  data.detailResponseMessage + "\n" +
+  data.orderId + "\n" +
+  data.reference);
+}
+The orderId parameter returned in the callback event data object is Geidea's unique ID assigned to every order. The format of this parameter is a GUID.
+
+The reference parameter returned in the data object serves as an additional reference which can be used to help our support team find all the information about the payment process - in the case where an order was not created and the orderId is missing. The format of this parameter is a GUID.
+
+Once you have completed steps 1 and 2, you are ready to start the Geidea Checkout payment.
+
+Step 3: Start the payment
+Once you've successfully created a session which you received when you created the session in Step 1, the next step is to launch the Geidea Checkout page. Depending on your preferred integration experience, Geidea offers three display modes for the payment interface:
+
+Popup (Modal) – The checkout appears as an overlay modal on your page.
+Drop-in – The checkout is embedded within a specific section of your page.
+Redirection – The user is redirected to a standalone checkout page.
+Each option uses the same GeideaCheckout JavaScript library and session ID, but varies in how the interface is presented to the customer.
+
+Popup Mode (Modal Overlay)
+Use this method to display the checkout page as a popup overlay on top of your existing site. No additional HTML is required. This method offers a smooth and seamless user experience without redirecting or reloading the page.
+
+JavaScript
+
+// initialize the payment object
+const payment = new GeideaCheckout(onSuccess, onError, onCancel);
+
+// start the payment
+payment.startPayment(sessionId);
+The startPayment method must be attached to an action on your web page - you can attach it to a 'Checkout' or a 'Pay' button, or you can use any preferred onClick event on your own web page.
+
+After triggering the startPayment method, Geidea Checkout will appear as a modal/popup iframe on top of your web page by default. This is the recommended flow.
+
+
+Drop-in Mode (Embedded iFrame)
+Use this method to embed the payment page directly into a section (div) of your site.
+
+HTML
+
+<div id="checkout-tag"></div>
+JavaScript
+
+<script>
+  const payment = new GeideaCheckout(onSuccess, onError, onCancel);
+  payment.startPayment(sessionId, null, "checkout-tag"); // Loads HPP into the specified div
+</script>
+Make sure the div with the ID checkout-tag exists on your page. This option is ideal if you want to keep the user fully within your site’s layout.
+
+Redirection Mode
+In this method, customers are taken to a separate Geidea-hosted checkout page in a new browser tab or window.
+
+Steps:
+
+Create the session and retrieve the sessionId.
+Use window.open or a similar function to navigate to the hosted checkout page.
+JavaScript
+
+const sessionId = "your-session-id";
+window.open("https://www.ksamerchant.geidea.net/hpp/checkout/?" + sessionId, "_blank");
+Sample application
+Below is a basic example of a checkout.html page, which loads Geidea Checkout.
+
+checkout.html
+
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Geidea Checkout Example</title>
+  	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<script src="https://www.merchant.geidea.net/hpp/geideaCheckout.min.js"></script>
+	<script>
+		function createAndStartPayment() {
+			// Create a new XMLHttpRequest object
+			var xhr = new XMLHttpRequest();
+
+			// Set up the request
+			xhr.open('POST', 'create_session.php');
+			xhr.setRequestHeader('Content-Type', 'application/json');
+
+			// Set up a function to handle the response
+			xhr.onload = function() {
+				if (xhr.status === 200) {
+					// Get the response text
+					var response = xhr.responseText.trim();
+
+					// Check if the response is empty or not
+					if (response.length > 0) {
+						// Start the payment with the session ID
+						startPayment(response);
+					} else {
+						alert('Error: Empty response from server');
+					}
+				} else {
+					alert('Error: ' + xhr.statusText);
+				}
+			};
+
+			// Set up a function to handle network errors
+			xhr.onerror = function() {
+				alert('Error: Network Error');
+			};
+
+            // Send the request with the JSON string
+            var data = {
+                amount: 10.00,
+                currency: "EGP",
+                callbackUrl: "https://www.example.com/callback",
+                merchantReferenceId: "ABC-123",
+                language: "ar",
+            };
+            xhr.send(JSON.stringify(data));
+		}
+
+		function startPayment(sessionId) {
+			// Initialize GeideaCheckout
+			var payment = new GeideaCheckout(onSuccess, onError, onCancel);
+
+			// Start the payment
+			payment.startPayment(sessionId);
+		}
+
+		// Define the onSuccess function
+		let onSuccess = function(data) {
+			alert('Success:' + '\n' +
+			data.responseCode + '\n' +
+			data.responseMessage + '\n' +
+			data.detailedResponseCode + '\n' +
+			data.detailedResponseMessage + '\n' +
+			data.orderId + '\n' +
+			data.reference);
+		};
+
+        // Define the onError function
+		let onError = function(data) {
+			alert('Error:' + '\n' +
+			data.responseCode + '\n' +
+			data.responseMessage + '\n' +
+			data.detailedResponseCode + '\n' +
+			data.detailedResponseMessage + '\n' +
+			data.orderId + '\n' +
+			data.reference);
+		};
+
+		// Define the onCancel function
+		let onCancel = function(data) {
+			alert('Payment Cancelled:' + '\n' +
+			data.responseCode + '\n' +
+			data.responseMessage + '\n' +
+			data.detailedResponseCode + '\n' +
+			data.detailedResponseMessage + '\n' +
+			data.orderId + '\n' +
+			data.reference);
+		};
+	</script>
+</head>
+<body>
+	<button onclick="createAndStartPayment()">Geidea Checkout</button>
+</body>
+</html>
+The checkout.html file above uses the following PHP script for creating a session.
+
+create_session.php
+
+<?php
+// Replace with your actual merchant public key and API password
+$merchantPublicKey = "Merchant Public Key";
+$apiPassword = "API Password";
+
+// Set the API endpoint URL
+$url = "https://api.merchant.geidea.net/payment-intent/api/v2/direct/session";
+
+// Retrieve the JSON string from the request body
+$data = file_get_contents("php://input");
+
+// Decode the JSON string into a PHP associative array
+$data = json_decode($data, true);
+
+// Access the values of the array
+$orderAmount = $data["amount"];
+$orderCurrency = $data["currency"];
+$callbackUrl = $data["callbackUrl"];
+$orderMerchantReferenceId = $data["merchantReferenceId"];
+$language = $data["language"];
+$date=new DateTime();
+$timestamp = date_format($date,"Y/m/d H:i:s");
+
+$signature = generateSignature($merchantPublicKey, $orderAmount, $orderCurrency, $orderMerchantReferenceId, $apiPassword, $timestamp);
+
+
+
+// Set the request data
+$data = array(
+    'amount' => $orderAmount,
+    'currency' => $orderCurrency,
+    'merchantReferenceId' => $orderMerchantReferenceId,
+    'timestamp' => $timestamp,
+	'signature' => $signature
+);
+
+// Set the cURL options
+$options = array(
+    CURLOPT_URL => $url,
+    CURLOPT_POST => true,
+    CURLOPT_POSTFIELDS => json_encode($data),
+    CURLOPT_HTTPHEADER => array(
+        "Content-Type: application/json",
+        "Authorization: Basic " . base64_encode("$merchantPublicKey:$apiPassword")
+    ),
+    CURLOPT_RETURNTRANSFER => true
+);
+
+// Initialize cURL
+$ch = curl_init();
+
+// Set cURL options
+curl_setopt_array($ch, $options);
+
+// Execute the cURL request
+$response = curl_exec($ch);
+
+// Check for errors
+if (curl_errno($ch)) {
+    $error_msg = curl_error($ch);
+    curl_close($ch);
+    die("cURL Error: $error_msg");
+}
+
+// Close the cURL session
+curl_close($ch);
+
+// Decode the JSON response
+$response_data = json_decode($response, true);
+
+// Check for errors in the response
+if ($response_data["responseCode"] !== "000" || $response_data["detailedResponseCode"] !== "000") {
+    die("Error: " . $response_data["detailedResponseMessage"]);
+}
+
+// Get the session ID from the response
+$session_id = $response_data["session"]["id"];
+
+// Output the session ID
+echo $session_id;
+
+function generateSignature($merchantPublicKey, $orderAmount, $orderCurrency, $orderMerchantReferenceId, $apiPassword, $timestamp)
+{
+    $amountStr = number_format($orderAmount, 2, '.', '');
+    $data = "{$merchantPublicKey}{$amountStr}{$orderCurrency}{$orderMerchantReferenceId}{$timestamp}";
+    $hash = hash_hmac('sha256', $data, $apiPassword, true);
+    return base64_encode($hash);
+}
+
+?>
+Callback Validation
+After the payment is complete, the Geidea platform sends a callback informing the final status of the transaction. For the checkout, the callback is automatically validated and the page is redirected the page defined for the Success, Cancelled, Error conditions. For further details of handling callbacks, please check here.
+

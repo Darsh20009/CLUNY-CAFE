@@ -1,0 +1,63 @@
+{
+  "id": "/employee",
+  "name": "CLUNY SYSTEMS - أنظمة كلوني",
+  "short_name": "CLUNY SYSTEMS",
+  "description": "نظام إدارة الموظفين والعمليات والطلبات في كافيه CLUNY",
+  "start_url": "/employee/home",
+  "scope": "/employee",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#F7F8F8",
+  "theme_color": "#9FB2B3",
+  "orientation": "any",
+  "lang": "ar",
+  "dir": "rtl",
+  "categories": ["productivity", "business"],
+  "prefer_related_applications": false,
+  "handle_links": "preferred",
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
+  "icons": [
+    {
+      "src": "/employee-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/employee-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/employee-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/employee-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/employee-logo.png",
+      "sizes": "540x720",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "CLUNY SYSTEMS App"
+    },
+    {
+      "src": "/employee-logo.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "CLUNY SYSTEMS Desktop"
+    }
+  ]
+}

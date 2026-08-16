@@ -1,0 +1,77 @@
+8:19:04 PM [express] GET /api/notifications/unread-count 304 in 81ms :: {"count":10395}
+8:19:15 PM [express] GET /api/shifts/active 304 in 74ms
+8:19:31 PM [express] GET /api/shifts/active 304 in 64ms
+8:19:32 PM [express] GET /api/shifts/auto-current 304 in 192ms :: {"isAuto":true,"windowStart":"2026…
+8:19:34 PM [express] GET /api/menu-categories 200 in 198ms :: [{"_id":"6a4ed7372d35133524e14294","id…
+8:19:34 PM [express] GET /api/product-addons 200 in 201ms :: [{"_id":"6a4dabd5be89bb84e6836097","id"…
+8:19:34 PM [express] GET /api/branches 200 in 96ms :: [{"_id":"699521d8e2f9c24dcbcc28d6","id":"gazZl…
+8:19:35 PM [express] GET /api/public/loyalty-settings 200 in 197ms :: {"enabled":true,"pointsPerDrin…
+8:19:35 PM [express] GET /api/custom-banners 200 in 106ms :: []
+8:19:35 PM [express] GET /api/cart/session-1783591753227-7dbnomm4n 200 in 307ms :: [{"id":"EjCtnANDL…
+8:19:35 PM [express] GET /api/payment-methods 200 in 108ms :: [{"id":"qahwa-card","nameAr":"بطاقة كل…
+8:19:35 PM [express] GET /api/business-config 200 in 210ms :: {"socialLinks":{"instagram":"https://w…
+8:19:35 PM [express] GET /api/notifications/unread-count 304 in 100ms :: {"count":10395}
+8:19:36 PM [express] GET /api/coffee-items 200 in 901ms :: [{"id":"EjCtnANDL-","tenantId":"demo-tena…
+[WS] New client connected
+8:19:38 PM [express] GET /api/promo-offers 200 in 99ms :: []
+8:19:38 PM [express] GET /api/public/branches 200 in 99ms :: [{"id":"gazZlcapt0_u21T2iEyZf","nameAr"…
+8:19:38 PM [express] POST /api/customer/proximity-notify 200 in 100ms :: {"triggered":false,"reason"…
+8:19:38 PM [express] GET /api/coffee-items/with-addons 200 in 96ms :: ["TAV2kHfAJH","m1ct7sKknY"]
+8:19:38 PM [express] GET /api/coffee-items/addons-preview 200 in 162ms :: {"TAV2kHfAJH":[{"nameAr":"…
+8:19:40 PM [express] POST /api/branches/gazZlcapt0_u21T2iEyZf/check-location 200 in 69ms :: {"within…
+8:19:41 PM [express] GET /api/public/settings 200 in 72ms :: {"tradeNameAr":"كلوني كافيه","tradeName…
+8:19:42 PM [express] POST /api/payments/create-session-token 200 in 79ms :: {"token":"91afc945a4b821…
+[Geidea] Create Session request body: {"amount":"1.35","currency":"SAR","merchantReferenceId":"CLN1785874782407","timestamp":"2026/08/04 20:19:42","signature":"[HIDDEN]","language":"ar","paymentOperation":"Pay","callbackUrl":"https://www.cluny.cafe/payment-return?pt=91afc945a4b8210cddefbd78560a1f93c4b0ee648a10d6cdebf5e5c705d02792&provider=geidea","returnUrl":"https://www.cluny.cafe/payment-return?pt=91afc945a4b8210cddefbd78560a1f93c4b0ee648a10d6cdebf5e5c705d02792&provider=geidea","customer":{"email":"guest-532441566@cluny.cafe","phoneNumber":"532441566","phonecountrycode":"+966","firstName":"Youssef","lastName":"Darwish"}}
+[Geidea] Create Session response: {"session":{"id":"b64d8199-912e-49c0-f295-08def090377b","amount":1.35,"currency":"SAR","callbackUrl":"https://www.cluny.cafe/payment-return?pt=91afc945a4b8210cddefbd78560a1f93c4b0ee648a10d6cdebf5e5c705d02792&provider=geidea","returnUrl":"https://www.cluny.cafe/payment-return?pt=91afc945a4b8210cddefbd78560a1f93c4b0ee648a10d6cdebf5e5c705d02792&provider=geidea","expiryDate":"2026-08-04T21:19:43.7484152Z","status":"Initiated","merchantId":"f9931464-9a09-458f-7bd9-08de72963454","merchantPublicKey":"5bf49a11-693b-4d3c-9d85-4f757d03cc1c","language":"ar","merchantReferenceId":"CLN1785874782407","paymentIntentId":null,"paymentOperation":"Pay","cardOnFile":false,"cofAgreement":{"id":null,"type":null},"initiatedBy":"Internet","tokenId":null,"customer":{"id":null,"referenceId":null,"create":false,"setDefaultMethod":false,"email":"guest-532441566@cluny.cafe","phoneNumber":"+966532441566","firstName":"Youssef","lastName":"Darwish","address":{"billing":{"country":null,"city":null,"street":null,"postalCode":null},"shipping":{"country":null,"city":null,"street":null,"postalCode":null}}},"platform":{"name":null,"version":null,"pluginVersion":null,"partnerId":null},"paymentOptions":null,"recurrence":null,"order":null,"items":null,"appearance":null,"metadata":{"custom":null},"subscription":null,"acceptTabbyPaymentMethod":false,"acceptTamaraPaymentMethod":false,"expressCheckouts":[],"hideWallets":[],"splitPayoutDetails":[],"caf":{"extraChargesLabel":null,"extraChargesType":"","extraCharges":null,"addOnFeesLabel":null,"addOnFeesType":"","addOnFees":null},"originalAmount":1.35,"addOnFeesAmount":0,"extraChargesAmount":0,"termsAndConditions":null,"token":null,"networkToken":null,"isNTPayment":false,"cardTokenId":null,"processingInformation":{"commerceIndicator":null,"feeProgramIndicator":null},"additionalData":{"isAft":false,"isHighRisk":false},"aft":null},"merchantNameEn":null,"merchantNameAr":null,"paymentIntent":null,"termsAndConditions":null,"responseMessage":"Success","detailedResponseMessage":"The operation was successful","language":"ar","responseCode":"000","detailedResponseCode":"000","signature":"B4zanjX5yCtyfgEfIN//vxQucRy0iBU/8/o621/KmxU="}
+[Geidea] Create Session response: {"session":{"id":"b64d8199-912e-49c0-f295-08def090377b","amount":1.35,"currency":"SAR","callbackUrl":"https://www.cluny.cafe/payment-return?pt=91afc945a4b8210cddefbd78560a1f93c4b0ee648a10d6cdebf5e5c705d02792&provider=geidea","returnUrl":"https://www.cluny.cafe/payment-return?pt=91afc945a4b8210cddefbd78560a1f93c4b0ee648a10d6cdebf5e5c705d02792&provider=geidea","expiryDate":"2026-08-04T21:19:43.7484152Z","status":"Initiated","merchantId":"f9931464-9a09-458f-7bd9-08de72963454","merchantPublicKey":"5bf49a11-693b-4d3c-9d85-4f757d03cc1c","language":"ar","merchantReferenceId":"CLN1785874782407","paymentIntentId":null,"paymentOperation":"Pay","cardOnFile":false,"cofAgreement":{"id":null,"type":null},"initiatedBy":"Internet","tokenId":null,"customer":{"id":null,"referenceId":null,"create":false,"setDefaultMethod":false,"email":"guest-532441566@cluny.cafe","phoneNumber":"+966532441566","firstName":"Youssef","lastName":"Darwish","address":{"billing":{"country":null,"city":null,"street":null,"postalCode":null},"shipping":{"country":null,"city":null,"street":null,"postalCode":null}}},"platform":{"name":null,"version":null,"pluginVersion":null,"partnerId":null},"paymentOptions":null,"recurrence":null,"order":null,"items":null,"appearance":null,"metadata":{"custom":null},"subscription":null,"acceptTabbyPaymentMethod":false,"acceptTamaraPaymentMethod":false,"expressCheckouts":[],"hideWallets":[],"splitPayoutDetails":[],"caf":{"extraChargesLabel":null,"extraChargesType":"","extraCharges":null,"addOnFeesLabel":null,"addOnFeesType":"","addOnFees":null},"originalAmount":1.35,"addOnFeesAmount":0,"extraChargesAmount":0,"termsAndConditions":null,"token":null,"networkToken":null,"isNTPayment":false,"cardTokenId":null,"processingInformation":{"commerceIndicator":null,"feeProgramIndicator":null},"additionalData":{"isAft":false,"isHighRisk":false},"aft":null},"merchantNameEn":null,"merchantNameAr":null,"paymentIntent":null,"termsAndConditions":null,"responseMessage":"Success","detailedResponseMessage":"The operation was successful","language":"ar","responseCode":"000","detailedResponseCode":"000","signature":"B4zanjX5yCtyfgEfIN//vxQucRy0iBU/8/o621/KmxU="}
+⚠️  SLOW API: POST /api/payments/init took 1538ms (status 200)
+8:19:44 PM [express] POST /api/payments/init 200 in 1479ms :: {"success":true,"sessionId":"b64d8199-…
+8:19:46 PM [express] GET /api/shifts/active 304 in 68ms
+[WS] Client disconnected: 1006 
+8:20:02 PM [express] GET /api/shifts/active 304 in 67ms
+8:20:05 PM [express] GET /api/notifications/unread-count 304 in 82ms :: {"count":10395}
+8:20:17 PM [express] GET /api/shifts/active 304 in 70ms
+8:20:32 PM [express] GET /api/shifts/auto-current 304 in 204ms :: {"isAuto":true,"windowStart":"2026…
+8:20:33 PM [express] GET /api/shifts/active 304 in 98ms
+8:20:36 PM [express] GET /api/notifications/unread-count 304 in 81ms :: {"count":10395}
+8:20:48 PM [express] GET /api/shifts/active 304 in 67ms
+8:21:04 PM [express] GET /api/shifts/active 304 in 69ms
+8:21:06 PM [express] GET /api/notifications/unread-count 304 in 82ms :: {"count":10395}
+8:21:19 PM [express] GET /api/shifts/active 304 in 106ms
+8:21:33 PM [express] GET /api/shifts/auto-current 304 in 234ms :: {"isAuto":true,"windowStart":"2026…
+8:21:35 PM [express] GET /api/shifts/active 304 in 67ms
+8:21:37 PM [express] GET /api/notifications/unread-count 304 in 83ms :: {"count":10395}
+8:21:50 PM [express] GET /api/shifts/active 304 in 67ms
+8:22:05 PM [express] GET /api/shifts/active 304 in 68ms
+8:22:07 PM [express] GET /api/notifications/unread-count 304 in 82ms :: {"count":10395}
+8:22:21 PM [express] GET /api/shifts/active 304 in 67ms
+8:22:34 PM [express] GET /api/shifts/auto-current 304 in 203ms :: {"isAuto":true,"windowStart":"2026…
+8:22:36 PM [express] GET /api/shifts/active 304 in 68ms
+8:22:38 PM [express] GET /api/notifications/unread-count 304 in 81ms :: {"count":10395}
+8:22:52 PM [express] GET /api/shifts/active 304 in 68ms
+8:23:07 PM [express] GET /api/shifts/active 304 in 68ms
+8:23:08 PM [express] GET /api/notifications/unread-count 304 in 82ms :: {"count":10395}
+8:23:23 PM [express] GET /api/shifts/active 304 in 67ms
+[STORAGE] Creating order in DB: {"items":[{"coffeeItemId":"EjCtnANDL-","name":"ماء","nameAr":"ماء","price":1,"quantity":2,"customization":{}}],"subtotal":1.7391304347826089,"tax":0.26086956521739113,"orderType":"dine_in","paymentMethod":"pos","tableNumber":"","customerName":"","customerPhone":"","status":"payment_confirmed","deliveryType":"dine-in","branchId":"gazZlcapt0_u21T2iEyZf","tenantId":"demo-tenant","employeeId":"lpvs3YemaqVQBSwXJQNBY","channel":"pos","totalAmount":2,"estimatedPrepTimeInMinutes":10,"prepTimeSetAt":"2026-08-04T20:23:32.042Z","customerInfo":{"customerName":"","customerPhone":""},"dailyNumber":13995,"orderNumber":"ORD#0995"}
+[PUSH] sendPushToEmployee: branch=all, found 7 subscriptions
+8:23:32 PM [express] POST /api/orders 201 in 608ms :: {"tenantId":"demo-tenant","branchId":"gazZlcap…
+[PUSH] sendPushToEmployee: branch=gazZlcapt0_u21T2iEyZf, found 5 subscriptions
+[PUSH] Failed to send to JqvRa4wq2jxEB8KPbIv5l: status=undefined, error=Error: Unsupported characters set use the URL or filename-safe Base64 characters set
+[PUSH] Failed to send to owner-demo: status=undefined, error=Error: Unsupported characters set use the URL or filename-safe Base64 characters set
+[PUSH] Failed to send to owner-demo: status=undefined, error=Error: Unsupported characters set use the URL or filename-safe Base64 characters set
+[PUSH] Failed to send to lpvs3YemaqVQBSwXJQNBY: status=undefined, error=Error: Unsupported characters set use the URL or filename-safe Base64 characters set
+[PUSH] Failed to send to owner-demo: status=undefined, error=Error: Unsupported characters set use the URL or filename-safe Base64 characters set
+[PUSH] Sent 0/5 notifications successfully
+[PUSH] Failed to send to owner-demo: status=400, error={"reason":"BadWebPushTopic"}
+[PUSH] Failed to send to owner-demo: status=400, error={"reason":"BadWebPushTopic"}
+[PUSH] Sent 5/7 notifications successfully
+8:23:33 PM [express] GET /api/orders/live 200 in 538ms :: [{"tenantId":"demo-tenant","branchId":"gaz…
+[PUSH] Failed to send to owner-demo: status=400, error={"reason":"BadWebPushTopic"}
+[PUSH] Failed to send to owner-demo: status=400, error={"reason":"BadWebPushTopic"}
+[PUSH] Sent 4/6 notifications successfully
+8:23:33 PM [express] GET /api/shifts/active 304 in 301ms
+8:23:34 PM [express] GET /api/orders/live 304 in 5ms :: [{"tenantId":"demo-tenant","branchId":"gazZl…
+8:23:34 PM [express] GET /api/shifts/auto-current 200 in 193ms :: {"isAuto":true,"windowStart":"2026…
+8:23:39 PM [express] GET /api/notifications/unread-count 200 in 79ms :: {"count":10402}
+8:23:49 PM [express] GET /api/shifts/active 304 in 65ms
+8:24:04 PM [express] GET /api/shifts/active 304 in 65ms

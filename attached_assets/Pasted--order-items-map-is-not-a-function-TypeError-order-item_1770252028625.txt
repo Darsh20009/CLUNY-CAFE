@@ -1,0 +1,12 @@
+(order.items || []).map is not a function
+TypeError: (order.items || []).map is not a function
+    at ReceiptInvoice (https://0cdd6ea5-f17d-4946-a116-f3c633ea319d-00-2n2a0s9ra7cmx.picard.replit.dev/src/components/receipt-invoice.tsx:225:205)
+    at renderWithHooks (https://0cdd6ea5-f17d-4946-a116-f3c633ea319d-00-2n2a0s9ra7cmx.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=611e5416:11548:26)
+    at mountIndeterminateComponent (https://0cdd6ea5-f17d-4946-a116-f3c633ea319d-00-2n2a0s9ra7cmx.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=611e5416:14926:21)
+    at beginWork (https://0cdd6ea5-f17d-4946-a116-f3c633ea319d-00-2n2a0s9ra7cmx.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=611e5416:15914:22)
+    at beginWork$1 (https://0cdd6ea5-f17d-4946-a116-f3c633ea319d-00-2n2a0s9ra7cmx.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=611e5416:19753:22)
+    at performUnitOfWork (https://0cdd6ea5-f17d-4946-a116-f3c633ea319d-00-2n2a0s9ra7cmx.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=611e5416:19198:20)
+    at workLoopSync (https://0cdd6ea5-f17d-4946-a116-f3c633ea319d-00-2n2a0s9ra7cmx.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=611e5416:19137:13)
+    at renderRootSync (https://0cdd6ea5-f17d-4946-a116-f3c633ea319d-00-2n2a0s9ra7cmx.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=611e5416:19116:15)
+    at recoverFromConcurrentError (https://0cdd6ea5-f17d-4946-a116-f3c633ea319d-00-2n2a0s9ra7cmx.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=611e5416:18736:28)
+    at performConcurrentWorkOnRoot (https://0cdd6ea5-f17d-4946-a116-f3c633ea319d-00-2n2a0s9ra7cmx.picard.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=611e5416:18684:30)

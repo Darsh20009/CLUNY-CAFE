@@ -1,0 +1,98 @@
+A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+5:24:45 PM [express] GET /api/cart/session-1771262685353-althwhw9o 200 in 43ms :: []
+5:24:46 PM [express] GET /api/business-config 200 in 46ms :: {"tenantId":"demo-tenant","tradeNameAr"…
+5:24:50 PM [express] GET /api/cart/session-1771262690187-vscthjb9n 200 in 31ms :: []
+5:24:50 PM [express] GET /api/business-config 200 in 36ms :: {"tenantId":"demo-tenant","tradeNameAr"…
+5:28:00 PM [express] GET /api/promo-offers 200 in 55ms :: []
+5:28:00 PM [express] GET /api/product-addons 200 in 54ms :: []
+5:28:00 PM [express] GET /api/business-config 304 in 48ms :: {"tenantId":"demo-tenant","tradeNameAr"…
+5:28:00 PM [express] GET /api/custom-banners 200 in 52ms :: []
+[GET /api/coffee-items] Found 15 items for tenant demo-tenant
+[GET /api/coffee-items] Item details: [
+  {
+    id: '2P89AehO1v',
+    nameAr: ' فانيلا لاتيه آيس',
+    tenantId: 'demo-tenant',
+    publishedBranches: [ 'default-branch' ],
+    createdByBranchId: 'default-branch'
+  },
+  {
+    id: 'AuCk-oDgEA',
+    nameAr: 'سجنتشر بارد',
+    tenantId: 'demo-tenant',
+    publishedBranches: [ 'OGKGKqse0QWPCHN1H2nxu' ],
+    createdByBranchId: 'OGKGKqse0QWPCHN1H2nxu'
+  }
+]
+5:28:00 PM [express] GET /api/menu-categories 200 in 85ms :: [{"_id":"698f22bb91028523bdc6aca8","id"…
+5:28:00 PM [express] GET /api/coffee-items 200 in 115ms :: [{"id":"2P89AehO1v","tenantId":"demo-tena…
+5:28:00 PM [express] GET /api/cart/session-1771262685353-althwhw9o 304 in 32ms :: []
+5:28:03 PM [express] GET /api/cart/session-1771262685353-althwhw9o 304 in 42ms :: []
+5:28:04 PM [express] GET /api/business-config 304 in 35ms :: {"tenantId":"demo-tenant","tradeNameAr"…
+  - Session ID: RMzwyLNoLKM9h85DPxmUspTvgDB9--cZ
+  - Employee: MISSING
+  - Cookie: MISSING
+[AUTH] Login attempt for: cafeadmin
+[AUTH] Login successful: cafeadmin (manager)
+5:28:44 PM [express] POST /api/employees/login 200 in 140ms :: {"id":"8_-WcmIVT6nxtc3gZrBBR","tenant…
+5:28:46 PM [express] GET /api/cart/session-1771262685353-althwhw9o 304 in 39ms :: []
+5:28:46 PM [express] GET /api/business-config 304 in 36ms :: {"tenantId":"demo-tenant","tradeNameAr"…
+  - Session ID: RMzwyLNoLKM9h85DPxmUspTvgDB9--cZ
+  - Employee: EXISTS
+  - Cookie: PRESENT
+  - Session ID: RMzwyLNoLKM9h85DPxmUspTvgDB9--cZ
+  - Employee: EXISTS
+  - Cookie: PRESENT
+5:28:46 PM [express] GET /api/leave-requests 200 in 49ms :: []
+5:28:47 PM [express] GET /api/orders 200 in 99ms :: [{"tenantId":"demo-tenant","branchId":"R5xgn6WW5…
+5:28:47 PM [express] GET /api/orders 200 in 105ms :: [{"tenantId":"demo-tenant","branchId":"R5xgn6WW…
+  - Session ID: RMzwyLNoLKM9h85DPxmUspTvgDB9--cZ
+  - Employee: EXISTS
+  - Cookie: PRESENT
+  - Session ID: RMzwyLNoLKM9h85DPxmUspTvgDB9--cZ
+  - Employee: EXISTS
+  - Cookie: PRESENT
+5:28:51 PM [express] GET /api/leave-requests 304 in 35ms :: []
+5:28:52 PM [express] GET /api/orders 304 in 118ms :: [{"tenantId":"demo-tenant","branchId":"R5xgn6WW…
+5:28:52 PM [express] GET /api/orders 304 in 120ms :: [{"tenantId":"demo-tenant","branchId":"R5xgn6WW…
+  - Session ID: RMzwyLNoLKM9h85DPxmUspTvgDB9--cZ
+  - Employee: EXISTS
+  - Cookie: PRESENT
+  - Session ID: RMzwyLNoLKM9h85DPxmUspTvgDB9--cZ
+  - Employee: EXISTS
+  - Cookie: PRESENT
+5:28:56 PM [express] GET /api/leave-requests 304 in 31ms :: []
+5:28:57 PM [express] GET /api/orders 304 in 97ms :: [{"tenantId":"demo-tenant","branchId":"R5xgn6WW5…
+5:28:57 PM [express] GET /api/orders 304 in 98ms :: [{"tenantId":"demo-tenant","branchId":"R5xgn6WW5…
+  - Session ID: RMzwyLNoLKM9h85DPxmUspTvgDB9--cZ
+  - Employee: EXISTS
+  - Cookie: PRESENT
+5:28:57 PM [express] GET /api/orders/table/unassigned 200 in 23ms
+5:28:57 PM [express] GET /api/branches 200 in 37ms :: [{"_id":"6990b50b5c7abd31407d5505","id":"R5xgn…
+5:28:57 PM [express] GET /api/cashier/8_-WcmIVT6nxtc3gZrBBR/orders 200 in 69ms :: []
+  - Session ID: RMzwyLNoLKM9h85DPxmUspTvgDB9--cZ
+  - Employee: EXISTS
+  - Cookie: PRESENT
+5:28:58 PM [express] GET /api/orders/table/unassigned 200 in 21ms
+[GET /api/tables] Querying with: {"tenantId":"demo-tenant","branchId":"R5xgn6WW533TsSMWgYTei"}
+[GET /api/tables] Found 0 tables for query: {"tenantId":"demo-tenant","branchId":"R5xgn6WW533TsSMWgYTei"}
+5:29:00 PM [express] GET /api/tables 200 in 35ms :: []
+[DEBUG] Adding table to bulk insert: {"id":"TVJVT6-v69","tableNumber":"123","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"HYaK7lSDLCs4","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"jLrekCsyPw","tableNumber":"124","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"_2hvwFBtLIpO","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"5bH5EhZG2u","tableNumber":"125","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"SB7rCUbZrXlN","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"6Luk6E3Ba_","tableNumber":"126","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"y9jO_p5kBiQc","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"yt-sgPPwal","tableNumber":"127","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"b6a-BoNg6Czg","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"A1OG99unuw","tableNumber":"128","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"K8hmT11CJ07U","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"Q9RdFcSGhN","tableNumber":"129","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"qqXhKnSJ1o3U","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"Fn_kfMkf_N","tableNumber":"130","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"6DPP4YZTV5-G","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"ADc9tiwW4r","tableNumber":"131","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"Q9QGmbnLbRwb","isActive":1,"isOccupied":0}
+[DEBUG] Adding table to bulk insert: {"id":"OpP3BaGQu-","tableNumber":"132","branchId":"R5xgn6WW533TsSMWgYTei","tenantId":"demo-tenant","qrToken":"BqZOm2N7iy8J","isActive":1,"isOccupied":0}
+[DEBUG] Attempting to insertMany 10 tables for branch R5xgn6WW533TsSMWgYTei
+[DEBUG] Successfully created 10 tables
+5:29:02 PM [express] POST /api/tables/bulk-create 200 in 200ms :: {"results":{"created":[{"tableNumb…
+[GET /api/tables] Querying with: {"tenantId":"demo-tenant","branchId":"R5xgn6WW533TsSMWgYTei"}
+[GET /api/tables] Found 0 tables for query: {"tenantId":"demo-tenant","branchId":"R5xgn6WW533TsSMWgYTei"}
+5:29:02 PM [express] GET /api/tables 304 in 34ms :: []
+[GET /api/tables] Querying with: {"tenantId":"demo-tenant","branchId":"R5xgn6WW533TsSMWgYTei"}
+[GET /api/tables] Found 0 tables for query: {"tenantId":"demo-tenant","branchId":"R5xgn6WW533TsSMWgYTei"}
+5:29:02 PM [express] GET /api/tables 304 in 34ms :: []

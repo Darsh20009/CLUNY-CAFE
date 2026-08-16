@@ -1,0 +1,39 @@
+cluny.cafe
+
+Your free instance will spin down with inactivity, which can delay requests by 50 seconds or more.
+Upgrade now
+July 1, 2026 at 8:25 AM
+failed
+d4bafc2
+Improve deployment stability by removing preinstall script and updating build commands Remove the problematic preinstall script from package.json and update the build command in render.yaml to use `npm ci` for more reliable deployments. Replit-Commit-Author: Agent Replit-Commit-Session-Id: d7cbfda9-4996-400e-85de-87e781d71a53 Replit-Commit-Checkpoint-Type: full_checkpoint Replit-Commit-Event-Id: 4b436bae-9243-4302-ad98-f6a1142bc1f7 Replit-Commit-Screenshot-Url: https://storage.googleapis.com/screenshot-production-us-central1/8c77be9b-395f-4282-abf0-495840646203/d7cbfda9-4996-400e-85de-87e781d71a53/DYYiVGM Replit-Helium-Checkpoint-Created: true
+
+Rollback
+Exited with status 127 while building your code.
+Read our docs for common ways to troubleshoot your deploy.
+
+All logs
+Search
+Search logs
+
+Jul 1, 8:24 AM - 8:28 AM
+GMT+3
+
+
+
+==> Downloading cache...
+==> Cloning from https://github.com/Darsh20009/CLUNY-CAFE
+==> Checking out commit d4bafc270ac7462cb13e6cbc015b87742d65b070 in branch main
+==> Downloaded 107KB in 5s. Extraction took 0s.
+==> Using Node.js version 20.20.0 via /opt/render/project/src/.node-version
+==> Docs on specifying a Node.js version: https://render.com/docs/node-version
+==> Installing Node.js version 20.20.0...
+==> Running build command 'npm ci && NODE_OPTIONS=--max-old-space-size=3072 npm run build'...
+npm error Exit handler never called!
+npm error This is an error with npm itself. Please report this error at:
+npm error   <https://github.com/npm/cli/issues>
+npm error A complete log of this run can be found in: /opt/render/.cache/_logs/2026-07-01T05_26_20_976Z-debug-0.log
+> cluny-cafe@2.0.0 build
+> vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --minify --outfile=dist/index.js
+sh: 1: vite: not found
+==> Build failed 😞
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys

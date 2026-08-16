@@ -1,0 +1,37 @@
+1:25:11 PM [express] GET /api/cart/session-1759325639225-ybyge1kuq 200 in 1ms :: [{"id":"8b8c86f5-c2…
+1:25:14 PM [express] GET /api/loyalty/cards/phone/0532441566 404 in 1ms :: {"error":"بطاقة الولاء غي…
+1:25:14 PM [express] GET /api/payment-methods 304 in 1ms :: [{"id":"cash","nameAr":"الدفع نقداً","na…
+📦 [ORDER] ORDER: 6f98c326-28cd-4908-be07-85c8e75c229a - {"orderNumber":"C319051RYHO","total":"5.00","payment":"ur"}
+1:25:19 PM [express] POST /api/orders 201 in 1ms :: {"id":"6f98c326-28cd-4908-be07-85c8e75c229a","or…
+🛒 [CART_CLEAR] CART: N/A - {"sessionId":"session-1759325639225-ybyge1kuq"}
+1:25:19 PM [express] DELETE /api/cart/session-1759325639225-ybyge1kuq 200 in 16ms :: {"message":"Car…
+⭐ [CODES_GENERATE] LOYALTY: 6f98c326-28cd-4908-be07-85c8e75c229a - {"count":0}
+1:25:19 PM [express] POST /api/orders/6f98c326-28cd-4908-be07-85c8e75c229a/generate-codes 201 in 8ms…
+1:25:19 PM [express] GET /api/cart/session-1759325639225-ybyge1kuq 200 in 1ms :: []
+1:25:45 PM [express] GET /api/cart/session-1759325639225-ybyge1kuq 304 in 1ms :: []
+1:25:49 PM [express] GET /api/cart/session-1759325639225-ybyge1kuq 304 in 0ms :: []
+1:25:49 PM [express] GET /api/coffee-items 304 in 0ms :: [{"id":"espresso-single","nameAr":"إسبريسو …
+Error fetching orders: TypeError: order.items.map is not a function
+    at file:///opt/render/project/src/dist/index.js:1521:35
+    at Array.map (<anonymous>)
+    at file:///opt/render/project/src/dist/index.js:1520:38
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+1:25:50 PM [express] GET /api/orders 500 in 3ms :: {"error":"Failed to fetch orders"}
+Error fetching orders: TypeError: order.items.map is not a function
+    at file:///opt/render/project/src/dist/index.js:1521:35
+    at Array.map (<anonymous>)
+    at file:///opt/render/project/src/dist/index.js:1520:38
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+1:25:51 PM [express] GET /api/orders 500 in 2ms :: {"error":"Failed to fetch orders"}
+Error fetching orders: TypeError: order.items.map is not a function
+    at file:///opt/render/project/src/dist/index.js:1521:35
+    at Array.map (<anonymous>)
+    at file:///opt/render/project/src/dist/index.js:1520:38
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+1:25:53 PM [express] GET /api/orders 500 in 1ms :: {"error":"Failed to fetch orders"}
+Error fetching orders: TypeError: order.items.map is not a function
+    at file:///opt/render/project/src/dist/index.js:1521:35
+    at Array.map (<anonymous>)
+    at file:///opt/render/project/src/dist/index.js:1520:38
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+1:25:54 PM [express] GET /api/orders 500 in 2ms :: {"error":"Failed to fetch orders"}

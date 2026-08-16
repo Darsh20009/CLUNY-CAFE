@@ -1,0 +1,52 @@
+6:55:27 PM [express] GET /api/payment-methods 304 in 23ms :: [{"id":"cash","nameAr":"الدفع نقداً","n…
+Error fetching customer orders: error: column "customer_notes" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerOrders (file:///opt/render/project/src/dist/index.js:428:12)
+    at async file:///opt/render/project/src/dist/index.js:1292:23 {
+  length: 115,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '149',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+6:55:28 PM [express] GET /api/customers/5e600e33-8fa9-4ba8-b251-86a01450bdf6/orders 500 in 470ms :: …
+Error fetching loyalty card by phone: error: column "card_number" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getLoyaltyCardByPhone (file:///opt/render/project/src/dist/index.js:527:20)
+    at async file:///opt/render/project/src/dist/index.js:1674:20 {
+  length: 111,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '59',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+6:55:28 PM [express] GET /api/loyalty/cards/phone/0532441566 500 in 471ms :: {"error":"فشل في جلب بط…
+6:55:28 PM [express] GET /api/cart/session-1759325639225-ybyge1kuq 304 in 525ms :: [{"id":"7b7d3195-…

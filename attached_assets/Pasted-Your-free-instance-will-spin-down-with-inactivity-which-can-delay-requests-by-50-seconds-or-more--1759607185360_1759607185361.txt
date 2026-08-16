@@ -1,0 +1,360 @@
+Your free instance will spin down with inactivity, which can delay requests by 50 seconds or more.
+Upgrade now
+
+All logs
+Search
+Search
+
+Live tail
+GMT+3
+
+Menu
+
+6:55:28 PM [express] GET /api/customers/5e600e33-8fa9-4ba8-b251-86a01450bdf6/orders 500 in 470ms :: …
+Error fetching loyalty card by phone: error: column "card_number" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getLoyaltyCardByPhone (file:///opt/render/project/src/dist/index.js:527:20)
+    at async file:///opt/render/project/src/dist/index.js:1674:20 {
+  length: 111,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '59',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+6:55:28 PM [express] GET /api/loyalty/cards/phone/0532441566 500 in 471ms :: {"error":"فشل في جلب بط…
+6:55:28 PM [express] GET /api/cart/session-1759325639225-ybyge1kuq 304 in 525ms :: [{"id":"7b7d3195-…
+     ==> Deploying...
+==> Running 'npm run start'
+> rest-express@1.0.0 start
+> NODE_ENV=production node dist/index.js
+✅ Using DBStorage - PostgreSQL database for persistent storage
+7:22:29 PM [express] serving on port 10000
+     ==> Your service is live 🎉
+     ==> 
+     ==> ///////////////////////////////////////////////////////////
+     ==> 
+     ==> Available at your primary URL https://qahwa.ma3k.online + 1 more domain
+     ==> 
+     ==> ///////////////////////////////////////////////////////////
+     ==> Detected service running on port 10000
+     ==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+7:27:48 PM [express] GET /api/cart/session-1759325639225-ybyge1kuq 304 in 404ms :: [{"id":"7b7d3195-…
+7:27:52 PM [express] GET /api/coffee-items 304 in 5ms :: [{"id":"espresso-single","nameAr":"إسبريسو …
+Error fetching customer orders: error: column "customer_notes" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerOrders (file:///opt/render/project/src/dist/index.js:428:12)
+    at async file:///opt/render/project/src/dist/index.js:1292:23 {
+  length: 115,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '149',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+7:27:52 PM [express] GET /api/customers/5e600e33-8fa9-4ba8-b251-86a01450bdf6/orders 500 in 9ms :: {"…
+Error fetching customer orders: error: column "customer_notes" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerOrders (file:///opt/render/project/src/dist/index.js:428:12)
+    at async file:///opt/render/project/src/dist/index.js:1292:23 {
+  length: 115,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '149',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+7:27:53 PM [express] GET /api/customers/5e600e33-8fa9-4ba8-b251-86a01450bdf6/orders 500 in 38ms :: {…
+7:27:55 PM [express] GET /api/payment-methods 304 in 1ms :: [{"id":"cash","nameAr":"الدفع نقداً","na…
+Error fetching customer orders: error: column "customer_notes" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerOrders (file:///opt/render/project/src/dist/index.js:428:12)
+    at async file:///opt/render/project/src/dist/index.js:1292:23 {
+  length: 115,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '149',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+7:27:55 PM [express] GET /api/customers/5e600e33-8fa9-4ba8-b251-86a01450bdf6/orders 500 in 95ms :: {…
+Error fetching loyalty card by phone: error: column "card_number" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getLoyaltyCardByPhone (file:///opt/render/project/src/dist/index.js:527:20)
+    at async file:///opt/render/project/src/dist/index.js:1674:20 {
+  length: 111,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '59',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+7:27:55 PM [express] GET /api/loyalty/cards/phone/0532441566 500 in 103ms :: {"error":"فشل في جلب بط…
+Error fetching customer orders: error: column "customer_notes" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerOrders (file:///opt/render/project/src/dist/index.js:428:12)
+    at async file:///opt/render/project/src/dist/index.js:1292:23 {
+  length: 115,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '149',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+7:27:56 PM [express] GET /api/customers/5e600e33-8fa9-4ba8-b251-86a01450bdf6/orders 500 in 39ms :: {…
+Error creating order: error: column "customer_notes" of relation "orders" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.createOrder (file:///opt/render/project/src/dist/index.js:452:20)
+    at async file:///opt/render/project/src/dist/index.js:1467:21 {
+  length: 134,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '164',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_target.c',
+  line: '1066',
+  routine: 'checkInsertTargets'
+}
+7:27:59 PM [express] POST /api/orders 500 in 52ms :: {"error":"Failed to create order"}
+Error fetching customer orders: error: column "customer_notes" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerOrders (file:///opt/render/project/src/dist/index.js:428:12)
+    at async file:///opt/render/project/src/dist/index.js:1292:23 {
+  length: 115,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '149',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+7:28:11 PM [express] GET /api/customers/5e600e33-8fa9-4ba8-b251-86a01450bdf6/orders 500 in 85ms :: {…
+Error fetching customer orders: error: column "customer_notes" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerOrders (file:///opt/render/project/src/dist/index.js:428:12)
+    at async file:///opt/render/project/src/dist/index.js:1292:23 {
+  length: 115,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '149',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+7:28:12 PM [express] GET /api/customers/5e600e33-8fa9-4ba8-b251-86a01450bdf6/orders 500 in 35ms :: {…
+Error fetching customer orders: error: column "customer_notes" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerOrders (file:///opt/render/project/src/dist/index.js:428:12)
+    at async file:///opt/render/project/src/dist/index.js:1292:23 {
+  length: 115,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '149',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+7:28:13 PM [express] GET /api/customers/5e600e33-8fa9-4ba8-b251-86a01450bdf6/orders 500 in 35ms :: {…
+7:28:17 PM [express] GET /api/customers/5e600e33-8fa9-4ba8-b251-86a01450bdf6/orders 500 in 36ms :: {…
+Error fetching customer orders: error: column "customer_notes" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerOrders (file:///opt/render/project/src/dist/index.js:428:12)
+    at async file:///opt/render/project/src/dist/index.js:1292:23 {
+  length: 115,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '149',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+Error fetching customer orders: error: column "customer_notes" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.getCustomerOrders (file:///opt/render/project/src/dist/index.js:428:12)
+    at async file:///opt/render/project/src/dist/index.js:1292:23 {
+  length: 115,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '149',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3722',
+  routine: 'errorMissingColumn'
+}
+7:28:19 PM [express] GET /api/customers/5e600e33-8fa9-4ba8-b251-86a01450bdf6/orders 500 in 26ms :: {…
+7:28:20 PM [express] POST /api/cart 201 in 47ms :: {"id":"5f8158dc-50ed-4799-83cf-1057a7ef083e","ses…
+7:28:20 PM [express] GET /api/cart/session-1759325639225-ybyge1kuq 200 in 6ms :: [{"id":"7b7d3195-d0…
+7:28:31 PM [express] POST /api/customers/auth 200 in 42ms :: {"id":"4fd31192-ca94-499b-9fef-507bc745…
+Error creating order: error: column "customer_notes" of relation "orders" does not exist
+    at /opt/render/project/src/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///opt/render/project/src/node_modules/drizzle-orm/node-postgres/session.js:83:22
+    at async DBStorage.createOrder (file:///opt/render/project/src/dist/index.js:452:20)
+    at async file:///opt/render/project/src/dist/index.js:1467:21 {
+  length: 134,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '164',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_target.c',
+  line: '1066',
+  routine: 'checkInsertTargets'
+}
+7:28:31 PM [express] POST /api/orders 500 in 3ms :: {"error":"Failed to create order"}

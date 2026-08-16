@@ -1,0 +1,92 @@
+CLUNY-CAFE
+
+
+Search
+Command+
+K
+
+New
+
+Upgrade
+
+
+f
+Environment
+CLUNY-CAFE
+Events
+Settings
+Monitor
+Logs
+Metrics
+Manage
+Environment
+Shell
+Scaling
+Previews
+Disk
+One-Off Jobs
+
+Changelog
+Invite a friend
+
+Contact support
+Render Status
+Web Service
+CLUNY-CAFE
+Node
+Free
+Upgrade your instance
+
+Connect
+
+Manual Deploy
+Service ID:
+srv-d91mcseq1p3s73c7mqeg
+
+Darsh20009 / CLUNY-CAFE
+main
+cluny.cafe
+
+Your free instance will spin down with inactivity, which can delay requests by 50 seconds or more.
+Upgrade now
+July 1, 2026 at 3:25 PM
+failed
+8f6acbb
+Improve build script to handle installation failures more reliably Modify the build script to use `npm install --ignore-scripts` as a fallback when `npm ci` fails, ensuring all necessary packages are installed before the build process. Replit-Commit-Author: Agent Replit-Commit-Session-Id: e83e2287-9153-4c42-a1cc-a27dd33cd823 Replit-Commit-Checkpoint-Type: full_checkpoint Replit-Commit-Event-Id: 7761bb86-cf4c-4663-9cfd-40e065760ddd Replit-Commit-Screenshot-Url: https://storage.googleapis.com/screenshot-production-us-central1/3b15fdb9-3be0-4088-bcc2-071e645f2a1e/e83e2287-9153-4c42-a1cc-a27dd33cd823/zfXNAMh Replit-Helium-Checkpoint-Created: true
+
+Rollback
+Exited with status 127 while building your code.
+Read our docs for common ways to troubleshoot your deploy.
+
+All logs
+Search
+Search logs
+
+Jul 1, 3:24 PM - 3:28 PM
+GMT+3
+
+
+
+==> Downloading cache...
+==> Cloning from https://github.com/Darsh20009/CLUNY-CAFE
+==> Checking out commit 8f6acbbb37039918332bddd4812bedc32543f63b in branch main
+==> Downloaded 177KB in 0s. Extraction took 0s.
+==> Using Node.js version 20.20.0 via /opt/render/project/src/.node-version
+==> Docs on specifying a Node.js version: https://render.com/docs/node-version
+==> Installing Node.js version 20.20.0...
+==> Running build command 'npm ci && NODE_OPTIONS=--max-old-space-size=3072 npm run build'...
+npm error Exit handler never called!
+npm error This is an error with npm itself. Please report this error at:
+npm error   <https://github.com/npm/cli/issues>
+npm error A complete log of this run can be found in: /opt/render/.cache/_logs/2026-07-01T12_25_18_554Z-debug-0.log
+> cluny-cafe@2.0.0 build
+> sh build.sh
+>>> vite not found — running npm install as fallback...
+npm error Exit handler never called!
+npm error This is an error with npm itself. Please report this error at:
+npm error   <https://github.com/npm/cli/issues>
+npm error A complete log of this run can be found in: /opt/render/.cache/_logs/2026-07-01T12_26_30_678Z-debug-0.log
+>>> Running vite build...
+build.sh: 11: ./node_modules/.bin/vite: not found
+==> Build failed 😞
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys

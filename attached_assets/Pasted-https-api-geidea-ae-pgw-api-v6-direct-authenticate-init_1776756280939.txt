@@ -1,0 +1,157 @@
+https://api.geidea.ae/pgw/api/v6/direct/authenticate/initiate
+
+Recent Requests
+Log in to see full request history
+Time	Status	User Agent	
+Make a request to see history.
+0 Requests This Month
+
+Go Back
+Body Params
+sessionId
+string
+required
+A session ID, is a unique identifier that a server generates as part of the create session API call and assigns to a merchant transaction for the duration of the session (15 min).
+
+cardNumber
+string
+required
+Defaults to 5123450000000008
+Valid card number, as a string without any separators. Length of 16 for Visa, MasterCard, Mada cards. Length of 15 for American Express cards.
+
+5123450000000008
+ReturnUrl
+string
+required
+Defaults to https://samplereturnurl.com
+The URL where the client will be automatically redirected to once the Authentication process has been successful. Must be dynamic, based on the order being created. Must be a URL with a HTTPS protocol.
+
+https://samplereturnurl.com
+merchantName
+string
+Name of the merchant initiating the transaction
+
+callbackUrl
+string
+Defaults to https://samplecallbackurl.com
+The URL where the response containing order details will be returned. Must be a valid URL and must have an HTTPS protocol.
+
+https://samplecallbackurl.com
+isSetPaymentMethodEnabled
+boolean
+If this is set to true, then the customer is allowed to use the payment gateway
+
+
+isCreateCustomerEnabled
+boolean
+If this is set to true, then the customer account will be created and can be used for later transactions.
+
+
+paymentOperation
+string
+enum
+Defaults to Pay
+Type of payment operation that is carried out with this transaction
+
+
+Pay
+Allowed:
+
+Pay
+
+PreAuthorize
+
+AuthorizeCapture
+cardOnFile
+boolean
+This field only applies if you collect details of card from your payers, store them, and either you or your payers use the stored value for subsequent payments.
+
+
+restrictPaymentMethods
+boolean
+Flag indicating whether certain type of payment methods are restricted for this transaction
+
+
+source
+string
+enum
+Defaults to DirectAPI
+Source of capturing the transaction. Use "DirectAPI" for this call.
+
+
+DirectAPI
+Allowed:
+
+HPP. MobileApp
+
+DirectAPI
+deviceIdentification
+object
+
+deviceIdentification object
+Responses
+
+200
+200
+
+
+400
+400
+
+Updated 8 months ago
+
+Apple Pay Direct API
+Authenticate Payer
+Did this page help you?
+Language
+
+Shell
+
+Node
+
+Ruby
+
+PHP
+
+JSON
+Credentials
+Basic
+base64
+username
+:
+password
+
+Request
+1
+{
+2
+  "cardNumber": "5123450000000008",
+3
+  "ReturnUrl": "https://samplereturnurl.com",
+4
+  "callbackUrl": "https://samplecallbackurl.com",
+5
+  "paymentOperation": "Pay",
+6
+  "source": "DirectAPI",
+7
+  "deviceIdentification": {
+8
+    "providerDeviceId": "6fd571631df9d1e58269af54eeb4c1f0",
+9
+    "language": "en",
+10
+    "userAgent": "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.79 Safari/537.36"
+11
+  }
+12
+}
+
+Try It!
+Response
+Click Try It! to start a request and see the response here! Or choose an example:
+application/json
+
+200 - Result
+
+400 - Result
