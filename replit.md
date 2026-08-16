@@ -28,6 +28,12 @@ Starts the Express server (port 5000) with Vite middleware for hot-reloading the
 
 `npm install` was run to populate `node_modules` (missing after import). The `Start application` workflow (`npm run dev`) runs the Express server with Vite middleware on port 5000.
 
+## Bandwidth protection
+
+- `npm run build` generates resized WebP variants for raster images in `attached_assets`, `public`, and `client/public`.
+- The server serves the WebP variant transparently when the browser supports it, while keeping the original image URLs compatible.
+- Product thumbnails use lazy loading and asynchronous decoding to avoid downloading off-screen images.
+
 ## Project structure
 
 ```

@@ -8,6 +8,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import MongoStore from "connect-mongo";
 import compression from "compression";
+import fs from "fs";
 import path from "path";
 import { cache } from "./cache";
 import { queue } from "./queue";
@@ -728,7 +729,38 @@ app.use((req, res, next) => {
 });
 
 
+// Prefer generated WebP files for browsers that support them while preserving
+// the original URLs stored in MongoDB. This keeps existing product/image URLs
+// compatible and substantially reduces outbound bandwidth.
+function serveOptimizedWebp(rootDir: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (req.method !== "GET" && req.method !== "HEAD") return next();
+    if (!req.headers.accept?.includes("image/webp")) return next();
+    if (!/\.(png|jpe?g)$/i.test(req.path)) return next();
+
+    const relativePath = decodeURIComponent(req.path).replace(/^[/\\]+/, "");
+    const originalPath = path.resolve(rootDir, relativePath);
+    const rootPath = path.resolve(rootDir) + path.sep;
+    if (!originalPath.startsWith(rootPath)) return next();
+
+    const extension = path.extname(originalPath);
+    const webpPath = originalPath.slice(0, -extension.length) + ".optimized.webp";
+    if (!fs.existsSync(webpPath)) return next();
+
+    res.set({
+      "Content-Type": "image/webp",
+      "Cache-Control": "public, max-age=2592000, stale-while-revalidate=86400",
+      Vary: "Accept",
+    });
+    return res.sendFile(webpPath);
+  };
+}
+
+const attachedAssetsPath = path.resolve(__dirname, '..', 'attached_assets');
+const publicAssetsPath = path.resolve(__dirname, '..', 'public');
+
 // Serve attached assets for both development and production
+app.use('/attached_assets', serveOptimizedWebp(attachedAssetsPath));
 app.use('/attached_assets', express.static(path.resolve(__dirname, '..', 'attached_assets'), {
   etag: true,
   lastModified: true,
@@ -751,6 +783,7 @@ app.get('/attached_assets/*', (req, res) => {
 });
 
 // Serve public static files (audio, images, icons) explicitly so Vite dev middleware doesn't intercept
+app.use(serveOptimizedWebp(publicAssetsPath));
 app.use(express.static(path.resolve(__dirname, '..', 'public'), {
   etag: true,
   lastModified: true,

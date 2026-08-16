@@ -8,6 +8,7 @@ if [ ! -f "node_modules/.bin/vite" ]; then
 fi
 
 echo ">>> Running vite build..."
+node scripts/optimize-images.mjs
 ./node_modules/.bin/vite build
 
 echo ">>> Bundling server with esbuild..."

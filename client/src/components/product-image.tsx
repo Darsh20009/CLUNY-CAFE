@@ -21,6 +21,8 @@ export function ProductImage({ src, alt = "", className = "", wrapClassName = ""
       <img
         src={hasRealImage ? src! : DEFAULT_IMG}
         alt={alt}
+        loading="lazy"
+        decoding="async"
         className={`w-full h-full transition-transform duration-500 ${
           hasRealImage ? "object-cover" : "object-contain p-2"
         } ${hoverScale ? "group-hover:scale-110" : ""} ${className}`}
