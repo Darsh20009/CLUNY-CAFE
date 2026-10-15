@@ -4,6 +4,7 @@ A full-stack café management system for CLUNY CAFE, built with React + Express 
 
 ## Stack
 
+- **Runtime**: Node.js 20.20.0 (MongoDB dependencies require Node.js 20.19 or newer)
 - **Frontend**: React 18, Vite, TailwindCSS, shadcn/ui, TanStack Query, Wouter
 - **Backend**: Express.js, TypeScript (tsx), WebSockets
 - **Database**: MongoDB via Mongoose
@@ -22,11 +23,13 @@ Starts the Express server (port 5000) with Vite middleware for hot-reloading the
 
 | Variable | Description | Status |
 |---|---|---|
-| `MONGODB_URI` | MongoDB connection string (Atlas or local) | ✅ Set (Atlas) |
+| `MONGODB_URI` | MongoDB connection string (Atlas or local) | Required for server startup |
 | `SESSION_SECRET` | Secret for express-session cookie signing | ✅ Set |
 | `MONGODB_URI_2` | (Optional) Secondary DB for auto-rotation | Not set |
 
-`npm install` was run to populate `node_modules` (missing after import). The `Start application` workflow (`npm run dev`) runs the Express server with Vite middleware on port 5000.
+Install dependencies with `npm ci` to restore the versions in `package-lock.json`. The `Start application` workflow (`npm run dev`) runs the Express server with Vite middleware on port 5000.
+
+**Security note:** Imported `.replit` settings contain credential-like values as plain text. Before publishing, move credentials to Replit Secrets and rotate values that may have been exposed.
 
 ## Bandwidth protection
 
