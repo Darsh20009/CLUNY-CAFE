@@ -2,14 +2,19 @@ import { Button } from "@/components/ui/button";
 import { Download, Printer } from "lucide-react";
 import type { Order } from "@shared/schema";
 import { brand } from "@/lib/brand";
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useMemo } from "react";
 import QRCode from "qrcode";
 import { fmtOrderNum, printHtmlInPage, isAndroidDevice } from "@/lib/print-utils";
 import { useTranslate } from "@/lib/useTranslate";
+import { useQuery } from "@tanstack/react-query";
+import campaignBanner from "@assets/IMG_4520_2_1792086884882.jpg";
+import { normalizeInvoiceSettings } from "@/lib/invoice-template";
 
 interface ReceiptInvoiceProps {
   order: Order;
-  variant?: "button" | "auto";
+  variant?: "button" | "auto" | "preview";
+  surface?: "customer" | "cashier" | "staff";
+  invoiceSettingsOverride?: any;
   precomputedTrackingQr?: string;
   precomputedZatcaQr?: string;
 }
@@ -27,11 +32,17 @@ function Sar() {
   );
 }
 
-export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQr, precomputedZatcaQr }: ReceiptInvoiceProps) {
+export function ReceiptInvoice({ order, variant = "button", surface = "customer", invoiceSettingsOverride, precomputedTrackingQr, precomputedZatcaQr }: ReceiptInvoiceProps) {
   const tc = useTranslate();
   const invoiceRef = useRef<HTMLDivElement>(null);
+  const { data: businessConfig } = useQuery<any>({ queryKey: ["/api/business-config"] });
+  const invoiceSettings = useMemo(
+    () => normalizeInvoiceSettings(invoiceSettingsOverride ?? businessConfig?.invoiceSettings),
+    [invoiceSettingsOverride, businessConfig?.invoiceSettings],
+  );
   const [trackingQrUrl, setTrackingQrUrl] = useState<string>(precomputedTrackingQr || "");
   const [zatcaQrUrl, setZatcaQrUrl] = useState<string>(precomputedZatcaQr || "");
+  const [customQrUrls, setCustomQrUrls] = useState<Record<string, string>>({});
 
   const getItemsArray = (): any[] => {
     try {
@@ -52,20 +63,29 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
   const subtotal = totalAmount / 1.15;
   const vat = totalAmount - subtotal;
 
-  // Step 1: Generate QR codes
+  const visibleCustomQrs = useMemo(
+    () => invoiceSettings.customQrs.filter((qr) => qr.enabled && (qr.surface === "all" || qr.surface === surface)),
+    [invoiceSettings.customQrs, surface],
+  );
+
+  // Step 1: Generate enabled QR codes.
   useEffect(() => {
     if (!order?.orderNumber) return;
     (async () => {
-      try {
-        const url = `${window.location.origin}/track/${encodeURIComponent(String(order.orderNumber))}`;
-        setTrackingQrUrl(await QRCode.toDataURL(url, { width: 200, margin: 1, errorCorrectionLevel: "M" }));
-      } catch {}
-      try {
-        const payload = btoa(`\x01\x10CLUNY CAFE\x02\x0F312718675800003\x03\x14${new Date(order.createdAt).toISOString()}\x04\x08${totalAmount.toFixed(2)}\x05\x08${vat.toFixed(2)}`);
-        setZatcaQrUrl(await QRCode.toDataURL(payload, { width: 180, margin: 1, errorCorrectionLevel: "M" }));
-      } catch {}
+      const [tracking, zatca, ...custom] = await Promise.all([
+        invoiceSettings.elements.trackingQr
+          ? QRCode.toDataURL(`${window.location.origin}/track/${encodeURIComponent(String(order.orderNumber))}`, { width: 200, margin: 1, errorCorrectionLevel: "M" }).catch(() => "")
+          : Promise.resolve(""),
+        invoiceSettings.elements.zatcaQr
+          ? QRCode.toDataURL(btoa(`\x01\x10CLUNY CAFE\x02\x0F312718675800003\x03\x14${new Date(order.createdAt || Date.now()).toISOString()}\x04\x08${totalAmount.toFixed(2)}\x05\x08${vat.toFixed(2)}`), { width: 180, margin: 1, errorCorrectionLevel: "M" }).catch(() => "")
+          : Promise.resolve(""),
+        ...visibleCustomQrs.map((qr) => QRCode.toDataURL(qr.content, { width: 180, margin: 1, errorCorrectionLevel: "M" }).catch(() => "")),
+      ]);
+      setTrackingQrUrl(invoiceSettings.elements.trackingQr ? (precomputedTrackingQr || tracking) : "");
+      setZatcaQrUrl(invoiceSettings.elements.zatcaQr ? (precomputedZatcaQr || zatca) : "");
+      setCustomQrUrls(Object.fromEntries(visibleCustomQrs.map((qr, index) => [qr.id, custom[index] || ""])));
     })();
-  }, [order?.orderNumber]);
+  }, [order?.orderNumber, order?.createdAt, totalAmount, vat, invoiceSettings, visibleCustomQrs, precomputedTrackingQr, precomputedZatcaQr]);
 
   if (!order?.orderNumber) return null;
 
@@ -81,6 +101,15 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
     if (t === "car_pickup" || t === "car-pickup") return "استلام بالسيارة";
     if (t === "delivery") return "توصيل";
     return "محلي";
+  })();
+  const headerArtworkSrc = (() => {
+    if (invoiceSettings.headerArtwork === "campaign") return campaignBanner;
+    if (invoiceSettings.headerArtwork === "logo") return "/logo.png";
+    if (invoiceSettings.headerArtwork === "custom") {
+      const url = invoiceSettings.customArtworkUrl.trim();
+      return /^https?:\/\//i.test(url) || (url.startsWith("/") && !url.startsWith("//")) ? url : "";
+    }
+    return "";
   })();
 
   const paymentLabel = (() => {
@@ -278,50 +307,72 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
           color: "#000",
           width: "300px",
           margin: "0 auto",
-          padding: "0",
+          padding: invoiceSettings.mode === "custom" ? "8px" : "0",
+          border: invoiceSettings.mode === "custom" ? "1px solid #d5d5d5" : "none",
+          borderRadius: invoiceSettings.mode === "custom" ? "8px" : "0",
           fontSize: "13px",
           lineHeight: 1.5,
           fontWeight: 700,
         }}
       >
-        {/* ── top spacing ── */}
-        <div style={{ height: "20px" }} />
+        {invoiceSettings.elements.headerArtwork !== false && headerArtworkSrc && (
+          <div style={{ padding: "0 0 6px", textAlign: "center" }}>
+            <img
+              src={headerArtworkSrc}
+              alt={invoiceSettings.headerArtwork === "campaign" ? "بالغوا بالدفاع عن وطنكم" : "CLUNY"}
+              crossOrigin="anonymous"
+              style={{
+                width: "100%",
+                maxHeight: invoiceSettings.headerArtwork === "campaign" ? "180px" : "100px",
+                objectFit: "contain",
+                display: "block",
+                margin: "0 auto",
+              }}
+            />
+          </div>
+        )}
 
         {/* ── 1. Order number ── */}
-        <div style={{ textAlign: "center", fontWeight: 900, fontSize: "22px", letterSpacing: "2px", padding: "10px 0 6px" }}>
-          #{orderNum}
-        </div>
+        {invoiceSettings.elements.orderNumber !== false && (
+          <div style={{ textAlign: "center", fontWeight: 900, fontSize: "22px", letterSpacing: "2px", padding: "6px 0" }}>
+            #{orderNum}
+          </div>
+        )}
 
         {/* ── 2. Logo ── */}
-        <div style={{ padding: "6px 0 10px", marginBottom: "4px" }}>
+        {invoiceSettings.elements.logo !== false && <div style={{ padding: "6px 0 10px", marginBottom: "4px" }}>
           <img
             src="/logo.png"
             alt="CLUNY CAFE"
             crossOrigin="anonymous"
             style={{ width: "200px", height: "auto", display: "block", margin: "0 auto" }}
           />
-        </div>
+        </div>}
 
         {/* ── 3. Business info ── */}
-        <div style={{ textAlign: "center", fontSize: "12px", lineHeight: "1.9", marginBottom: "8px" }}>
+        {invoiceSettings.elements.businessInfo !== false && <div style={{ textAlign: "center", fontSize: "12px", lineHeight: "1.9", marginBottom: "8px" }}>
           <div style={{ fontWeight: 900, fontSize: "15px" }}>CLUNY CAFE</div>
           <div style={{ fontSize: "11px", color: "#444" }}>حي المروج، طريق الأمير مقرن</div>
           <div style={{ direction: "ltr", fontSize: "11px", color: "#444" }}>الرقم الضريبي: 312718675800003</div>
           <div style={{ fontSize: "11px", color: "#444" }}>101000004295 :رقم الفاتورة</div>
           <div style={{ direction: "ltr", fontSize: "11px", color: "#444" }}>{timeStr} · {dateStr}</div>
-          <div style={{ fontWeight: 700, fontSize: "13px", marginTop: "3px", background: "#f0f0f0", padding: "2px 8px", display: "inline-block", borderRadius: "4px" }}>
+        </div>
+        }
+        {invoiceSettings.elements.orderType !== false && (
+          <div style={{ textAlign: "center", fontWeight: 700, fontSize: "13px", marginTop: "3px", background: "#f0f0f0", padding: "2px 8px", display: "inline-block", borderRadius: "4px" }}>
             {orderTypeLabel}
           </div>
-        </div>
+        )}
 
         {/* ── 4. Cashier ── */}
-        {safeOrder.employeeName && (
+        {invoiceSettings.elements.cashier !== false && safeOrder.employeeName && (
           <div style={{ textAlign: "center", fontSize: "11px", color: "#555", marginBottom: "4px" }}>
             الكاشير: <strong>{safeOrder.employeeName}</strong>
           </div>
         )}
 
         {/* ── 5. Items header ── */}
+        {invoiceSettings.elements.items !== false && <>
         <div style={dash()} />
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#555", fontWeight: 700, padding: "2px 0 3px" }}>
           <span>السعر</span>
@@ -354,15 +405,19 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
             </div>
           );
         })}
+        </>}
 
         {/* ── 7. Item count ── */}
-        <div style={dash()} />
-        <div style={{ textAlign: "center", fontSize: "11px", color: "#333", padding: "2px 0" }}>
-          عدد المنتجات: {totalQty}
-        </div>
-        <div style={dash()} />
+        {invoiceSettings.elements.itemCount !== false && <>
+          <div style={dash()} />
+          <div style={{ textAlign: "center", fontSize: "11px", color: "#333", padding: "2px 0" }}>
+            عدد المنتجات: {totalQty}
+          </div>
+          <div style={dash()} />
+        </>}
 
         {/* ── 8. Totals ── */}
+        {invoiceSettings.elements.totals !== false && <>
         {[
           { label: "المجموع الفرعي", value: subtotal.toFixed(2) },
           { label: "ضريبة القيمة المضافة (15%)", value: vat.toFixed(2) },
@@ -378,17 +433,20 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
           <span style={{ fontFamily: "Arial, sans-serif", fontWeight: 900 }}>SAR {totalAmount.toFixed(2)}</span>
           <span>المجموع الكلي</span>
         </div>
+        </>}
 
         {/* Payment method */}
-        <div style={{ display: "flex", justifyContent: "space-between", ...cell({ fontSize: "12px", paddingTop: "4px" }) }}>
-          <span style={{ fontFamily: "Arial, sans-serif" }}>SAR {totalAmount.toFixed(2)}</span>
-          <span>طريقة الدفع: {paymentLabel}</span>
-        </div>
+        {invoiceSettings.elements.paymentMethod !== false && (
+          <div style={{ display: "flex", justifyContent: "space-between", ...cell({ fontSize: "12px", paddingTop: "4px" }) }}>
+            <span style={{ fontFamily: "Arial, sans-serif" }}>SAR {totalAmount.toFixed(2)}</span>
+            <span>طريقة الدفع: {paymentLabel}</span>
+          </div>
+        )}
 
-        <div style={dash()} />
+        {(invoiceSettings.elements.paymentMethod !== false || invoiceSettings.elements.totals !== false) && <div style={dash()} />}
 
         {/* ── 8b. ملاحظات العميل ── */}
-        {(() => {
+        {invoiceSettings.elements.customerNotes !== false && (() => {
           let notesText = safeOrder.notes;
           if (!notesText) return null;
           // Guard: if notes was accidentally stored as an object, stringify it safely
@@ -408,13 +466,15 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
         })()}
 
         {/* ── 9. Tagline ── */}
-        <div style={{ textAlign: "center", fontSize: "13px", fontWeight: 700, padding: "2px 0 4px" }}>
-          "قهوة تُقال .. وورد يُهدى"
-        </div>
-        <div style={{ textAlign: "center", fontSize: "11px", color: "#555", paddingBottom: "8px" }}>CLUNY CAFE</div>
+        {invoiceSettings.elements.tagline !== false && <>
+          <div style={{ textAlign: "center", fontSize: "13px", fontWeight: 700, padding: "2px 0 4px" }}>
+            "قهوة تُقال .. وورد يُهدى"
+          </div>
+          <div style={{ textAlign: "center", fontSize: "11px", color: "#555", paddingBottom: "8px" }}>CLUNY CAFE</div>
+        </>}
 
         {/* ── 10. Tracking QR barcode — small on right with text beside it ── */}
-        {trackingQrUrl && (
+        {invoiceSettings.elements.trackingQr !== false && trackingQrUrl && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "10px", padding: "6px 4px 4px", direction: "rtl" }}>
             <img src={trackingQrUrl} alt="Tracking QR" style={{ width: "65px", height: "65px", flexShrink: 0 }} />
             <div style={{ textAlign: "right", lineHeight: "1.7" }}>
@@ -425,10 +485,10 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
           </div>
         )}
 
-        <div style={{ borderTop: "1px dashed #ccc", margin: "8px 0" }} />
+        {((invoiceSettings.elements.trackingQr !== false && trackingQrUrl) || (invoiceSettings.elements.zatcaQr !== false && zatcaQrUrl) || visibleCustomQrs.length > 0) && <div style={{ borderTop: "1px dashed #ccc", margin: "8px 0" }} />}
 
         {/* ── 11. ZATCA QR barcode ── */}
-        {zatcaQrUrl && (
+        {invoiceSettings.elements.zatcaQr !== false && zatcaQrUrl && (
           <div style={{ textAlign: "center", padding: "6px 0 10px" }}>
             <div style={{ fontSize: "12px", fontWeight: 900, color: "#111", marginBottom: "6px" }}>
               الفاتورة الضريبية
@@ -440,10 +500,20 @@ export function ReceiptInvoice({ order, variant = "button", precomputedTrackingQ
           </div>
         )}
 
+        {visibleCustomQrs.map((qr) => customQrUrls[qr.id] && (
+          <div key={qr.id} style={{ textAlign: "center", padding: "6px 0 10px" }}>
+            <div style={{ fontSize: "12px", fontWeight: 900, color: "#111", marginBottom: "6px" }}>{qr.label}</div>
+            <img src={customQrUrls[qr.id]} alt={qr.label} style={{ width: "100px", height: "100px", display: "inline-block" }} />
+            <div style={{ fontSize: "10px", color: "#555", marginTop: "4px", wordBreak: "break-all", direction: "ltr" }}>{qr.content}</div>
+          </div>
+        ))}
+
         {/* ── 12. Powered by ── */}
-        <div style={{ borderTop: "1px dashed #ccc", textAlign: "center", padding: "10px 0", marginTop: "4px", fontFamily: "Arial, sans-serif", fontSize: "11px", color: "#555", letterSpacing: "0.3px" }}>
-          Powered by CLUNY SYSTEMS
-        </div>
+        {invoiceSettings.elements.poweredBy !== false && (
+          <div style={{ borderTop: "1px dashed #ccc", textAlign: "center", padding: "10px 0", marginTop: "4px", fontFamily: "Arial, sans-serif", fontSize: "11px", color: "#555", letterSpacing: "0.3px" }}>
+            Powered by CLUNY SYSTEMS
+          </div>
+        )}
 
         <div style={{ height: "16px" }} />
       </div>

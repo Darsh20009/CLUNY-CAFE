@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import SarIcon from "@/components/sar-icon";
 import { useTranslate } from "@/lib/useTranslate";
+import { calculateCouponDiscount } from "@shared/coupon-discounts";
 import { useLocation } from "wouter";
 import { useRealtimeEvent } from "@/hooks/useRealtimeEngine";
 import { getRealtimeEngine } from "@/lib/realtime-engine";
@@ -105,7 +106,7 @@ export default function EmployeeCashier() {
  const [isRegisteringCustomer, setIsRegisteringCustomer] = useState(false);
  const [loyaltyCard, setLoyaltyCard] = useState<LoyaltyCard | null>(null);
  const [discountCode, setDiscountCode] = useState("");
- const [appliedDiscount, setAppliedDiscount] = useState<{code: string, percentage: number, reason: string} | null>(null);
+ const [appliedDiscount, setAppliedDiscount] = useState<{code: string, percentage: number, reason: string, productDiscounts?: Array<{productId: string; discountPercentage: number}>} | null>(null);
  const [isValidatingDiscount, setIsValidatingDiscount] = useState(false);
  const [lastOrder, setLastOrder] = useState<any>(null);
  const [posConnected, setPosConnected] = useState(false);
@@ -647,11 +648,20 @@ export default function EmployeeCashier() {
    }, 0);
  };
 
- const calculateDiscount = () => {
- if (!appliedDiscount) return 0;
- const subtotal = calculateSubtotal();
- return (subtotal * appliedDiscount.percentage) / 100;
+ const getCashierUnitPrice = (item: OrderItem) => {
+   let itemPrice = Number(item.coffeeItem.price);
+   if (item.customization?.selectedSize) {
+     const sizeOption = item.coffeeItem.availableSizes?.find(
+       (size) => size.nameAr === item.customization?.selectedSize || size.nameEn === item.customization?.selectedSize
+     );
+     if (sizeOption) itemPrice = Number(sizeOption.price);
+   }
+   return itemPrice + (Number(item.customization?.totalAddonsPrice) || 0);
  };
+
+ const calculateDiscount = () => appliedDiscount
+   ? calculateCouponDiscount(orderItems, appliedDiscount, getCashierUnitPrice)
+   : 0;
 
  const calculatePointsDiscount = () => {
    if (!usePointsDiscount || pointsToRedeem <= 0) return 0;
@@ -680,7 +690,15 @@ export default function EmployeeCashier() {
  const response = await fetch('/api/discount-codes/validate', {
  method: 'POST',
  headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({ code: discountCode })
+ body: JSON.stringify({
+   code: discountCode,
+   amount: calculateSubtotal(),
+   items: orderItems.map((item) => ({
+     productId: item.coffeeItem.id,
+     quantity: item.quantity,
+     unitPrice: getCashierUnitPrice(item),
+   })),
+ })
  });
 
  let data;
@@ -710,12 +728,15 @@ export default function EmployeeCashier() {
  setAppliedDiscount({
  code: data.code,
  percentage: data.discountPercentage,
- reason: data.reason
+ reason: data.reason,
+ productDiscounts: data.productDiscounts || [],
  });
 
  toast({
  title: tc("تم تطبيق الخصم بنجاح", "Discount applied"),
- description: `${data.reason} - ${data.discountPercentage}%`,
+ description: data.productDiscounts?.length
+   ? tc("سيطبق الخصم على المنتجات المحددة فقط", "Discount applies only to selected products")
+   : `${data.reason} - ${data.discountPercentage}%`,
  className: "bg-green-600 text-white",
  });
  } catch (error) {
@@ -974,6 +995,7 @@ export default function EmployeeCashier() {
      branchId: employee?.branchId,
      discountCode: appliedDiscount?.code,
      discountPercentage: appliedDiscount?.percentage || 0,
+     discountAmount: appliedDiscount ? calculateDiscount() : 0,
      pointsRedeemed: (usePointsDiscount && pointsToRedeem > 0) ? pointsToRedeem : 0,
      pointsValue: (usePointsDiscount && pointsToRedeem > 0) ? pointsToSar(pointsToRedeem) : 0,
      bypassPointsVerification: true,

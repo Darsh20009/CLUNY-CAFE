@@ -8,18 +8,25 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Plus, ToggleLeft, ToggleRight, Ticket, Percent, Tag, Eye, EyeOff } from "lucide-react";
+import { Plus, ToggleLeft, ToggleRight, Ticket, Percent, Tag, Eye, EyeOff, Pencil, Trash2 } from "lucide-react";
 import { useTranslate } from "@/lib/useTranslate";
+
+interface ProductDiscountRule {
+  productId: string;
+  discountPercentage: number;
+}
 
 interface DiscountCode {
   id: string;
   _id?: string;
   code: string;
   discountPercentage: number;
+  productDiscounts?: ProductDiscountRule[];
   reason: string;
   employeeId: string;
   isActive: number;
   usageCount?: number;
+  usageLimit?: number | null;
   visibleToCustomers?: boolean;
   createdAt?: string;
 }
@@ -32,11 +39,16 @@ export function CouponManagement({ employeeId }: CouponManagementProps) {
   const { toast } = useToast();
   const tc = useTranslate();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [editingCoupon, setEditingCoupon] = useState<DiscountCode | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState("");
+  const [productDiscountPercentage, setProductDiscountPercentage] = useState(10);
   const [newCoupon, setNewCoupon] = useState({
     code: "",
     discountPercentage: 10,
     reason: "",
     visibleToCustomers: false,
+    productDiscounts: [] as ProductDiscountRule[],
+    usageLimit: "",
   });
 
   const { data: discountCodes = [], isLoading } = useQuery<DiscountCode[]>({
@@ -44,18 +56,28 @@ export function CouponManagement({ employeeId }: CouponManagementProps) {
     enabled: !!employeeId,
   });
 
-  const createCouponMutation = useMutation({
-    mutationFn: async (data: { code: string; discountPercentage: number; reason: string; employeeId: string; visibleToCustomers: boolean }) => {
+  const { data: products = [] } = useQuery<any[]>({
+    queryKey: ["/api/coffee-items"],
+    staleTime: 60000,
+  });
+
+  const saveCouponMutation = useMutation({
+    mutationFn: async (data: any) => {
+      if (editingCoupon) {
+        return await apiRequest('PATCH', `/api/discount-codes/${editingCoupon.id || editingCoupon._id}`, data);
+      }
       return await apiRequest('POST', '/api/discount-codes', data);
     },
     onSuccess: () => {
       toast({
-        title: tc("تم إنشاء الكوبون", "Coupon Created"),
-        description: tc("تم إنشاء كود الخصم بنجاح", "Discount code created successfully"),
+        title: editingCoupon ? tc("تم تحديث الكوبون", "Coupon updated") : tc("تم إنشاء الكوبون", "Coupon created"),
+        description: editingCoupon ? tc("تم حفظ التعديلات", "Changes saved") : tc("تم إنشاء كود الخصم بنجاح", "Discount code created successfully"),
         className: "bg-green-600 text-white",
       });
       setIsAddDialogOpen(false);
-      setNewCoupon({ code: "", discountPercentage: 10, reason: "", visibleToCustomers: false });
+      setEditingCoupon(null);
+      setNewCoupon({ code: "", discountPercentage: 10, reason: "", visibleToCustomers: false, productDiscounts: [], usageLimit: "" });
+      setSelectedProductId("");
       queryClient.invalidateQueries({ queryKey: ['/api/discount-codes/employee', employeeId] });
     },
     onError: (error: Error) => {
@@ -65,6 +87,15 @@ export function CouponManagement({ employeeId }: CouponManagementProps) {
         variant: "destructive",
       });
     },
+  });
+
+  const deleteCouponMutation = useMutation({
+    mutationFn: async (id: string) => apiRequest("DELETE", `/api/discount-codes/${id}`, { employeeId }),
+    onSuccess: () => {
+      toast({ title: tc("تم حذف الكوبون", "Coupon deleted") });
+      queryClient.invalidateQueries({ queryKey: ['/api/discount-codes/employee', employeeId] });
+    },
+    onError: (error: Error) => toast({ title: tc("خطأ", "Error"), description: error.message, variant: "destructive" }),
   });
 
   const toggleCouponMutation = useMutation({
@@ -80,12 +111,12 @@ export function CouponManagement({ employeeId }: CouponManagementProps) {
     },
   });
 
-  const handleCreateCoupon = () => {
+  const handleSaveCoupon = () => {
     if (!newCoupon.code.trim()) {
       toast({ title: tc("خطأ", "Error"), description: tc("يرجى إدخال كود الخصم", "Please enter a discount code"), variant: "destructive" });
       return;
     }
-    if (newCoupon.discountPercentage <= 0 || newCoupon.discountPercentage > 100) {
+    if ((!newCoupon.productDiscounts.length && newCoupon.discountPercentage <= 0) || newCoupon.discountPercentage > 100 || newCoupon.discountPercentage < 0) {
       toast({ title: tc("خطأ", "Error"), description: tc("نسبة الخصم يجب أن تكون بين 1 و 100", "Discount percentage must be between 1 and 100"), variant: "destructive" });
       return;
     }
@@ -93,13 +124,48 @@ export function CouponManagement({ employeeId }: CouponManagementProps) {
       toast({ title: tc("خطأ", "Error"), description: tc("يرجى إدخال سبب الخصم", "Please enter a discount reason"), variant: "destructive" });
       return;
     }
-    createCouponMutation.mutate({
-      code: newCoupon.code.toUpperCase(),
+    saveCouponMutation.mutate({
+      ...(editingCoupon ? {} : { code: newCoupon.code.toUpperCase() }),
       discountPercentage: newCoupon.discountPercentage,
-      reason: newCoupon.reason,
+      reason: newCoupon.reason.trim(),
+      productDiscounts: newCoupon.productDiscounts,
+      usageLimit: newCoupon.usageLimit ? Number(newCoupon.usageLimit) : null,
       visibleToCustomers: newCoupon.visibleToCustomers,
       employeeId,
     });
+  };
+
+  const addProductRule = () => {
+    if (!selectedProductId) {
+      toast({ title: tc("اختر منتجاً أولاً", "Choose a product first"), variant: "destructive" });
+      return;
+    }
+    if (productDiscountPercentage <= 0 || productDiscountPercentage > 100) {
+      toast({ title: tc("نسبة الخصم يجب أن تكون بين 1 و 100", "Discount must be between 1 and 100"), variant: "destructive" });
+      return;
+    }
+    if (newCoupon.productDiscounts.some((rule) => rule.productId === selectedProductId)) {
+      toast({ title: tc("تمت إضافة هذا المنتج بالفعل", "This product is already included"), variant: "destructive" });
+      return;
+    }
+    setNewCoupon((current) => ({
+      ...current,
+      productDiscounts: [...current.productDiscounts, { productId: selectedProductId, discountPercentage: productDiscountPercentage }],
+    }));
+    setSelectedProductId("");
+  };
+
+  const startEditing = (coupon: DiscountCode) => {
+    setEditingCoupon(coupon);
+    setNewCoupon({
+      code: coupon.code,
+      discountPercentage: coupon.discountPercentage || 0,
+      reason: coupon.reason || "",
+      visibleToCustomers: !!coupon.visibleToCustomers,
+      productDiscounts: coupon.productDiscounts || [],
+      usageLimit: coupon.usageLimit ? String(coupon.usageLimit) : "",
+    });
+    setIsAddDialogOpen(true);
   };
 
   const generateRandomCode = () => {
@@ -127,16 +193,26 @@ export function CouponManagement({ employeeId }: CouponManagementProps) {
           <span className="font-medium">{tc("أكواد الخصم الخاصة بك", "Your Discount Codes")}</span>
           <Badge variant="secondary">{discountCodes.length}</Badge>
         </div>
-        <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+        <Dialog
+          open={isAddDialogOpen}
+          onOpenChange={(open) => {
+            setIsAddDialogOpen(open);
+            if (!open) {
+              setEditingCoupon(null);
+              setSelectedProductId("");
+              setNewCoupon({ code: "", discountPercentage: 10, reason: "", visibleToCustomers: false, productDiscounts: [], usageLimit: "" });
+            }
+          }}
+        >
           <DialogTrigger asChild>
             <Button data-testid="button-add-coupon">
               <Plus className="w-4 h-4 ml-2" />
               {tc("إضافة كوبون", "Add Coupon")}
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-md" dir="rtl">
+          <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto" dir="rtl">
             <DialogHeader>
-              <DialogTitle>{tc("إنشاء كود خصم جديد", "Create New Discount Code")}</DialogTitle>
+              <DialogTitle>{editingCoupon ? tc("تعديل كود الخصم", "Edit Discount Code") : tc("إنشاء كود خصم جديد", "Create New Discount Code")}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
@@ -148,15 +224,16 @@ export function CouponManagement({ employeeId }: CouponManagementProps) {
                     value={newCoupon.code}
                     onChange={(e) => setNewCoupon({ ...newCoupon, code: e.target.value.toUpperCase() })}
                     className="flex-1"
+                    disabled={!!editingCoupon}
                     data-testid="input-coupon-code"
                   />
-                  <Button variant="outline" onClick={generateRandomCode} type="button">
+                  {!editingCoupon && <Button variant="outline" onClick={generateRandomCode} type="button">
                     {tc("توليد تلقائي", "Auto Generate")}
-                  </Button>
+                  </Button>}
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="percentage">{tc("نسبة الخصم (%)", "Discount % ")}</Label>
+                <Label htmlFor="percentage">{tc("نسبة الخصم العامة (%)", "General discount (%)")}</Label>
                 <div className="flex items-center gap-2">
                   <Input
                     id="percentage"
@@ -169,6 +246,78 @@ export function CouponManagement({ employeeId }: CouponManagementProps) {
                   />
                   <Percent className="w-5 h-5 text-muted-foreground" />
                 </div>
+                <p className="text-xs text-muted-foreground">{tc("تُطبق على كل المنتجات عند عدم اختيار منتجات محددة. عند إضافة منتجات، يطبق خصم كل منتج المحدد فقط.", "Applies to all products only when no products are selected. Once scoped, only each selected product's discount applies.")}</p>
+              </div>
+              <div className="space-y-2 rounded-lg border p-3">
+                <div>
+                  <Label>{tc("تحديد منتجات ونسبة مختلفة لكل منتج", "Choose products and a discount for each")}</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">{tc("المنتجات غير المحددة لن تحصل على خصم من هذا الكود.", "Products not selected will not receive this code's discount.")}</p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-[1fr_120px_auto]">
+                  <select
+                    value={selectedProductId}
+                    onChange={(event) => setSelectedProductId(event.target.value)}
+                    className="h-10 rounded-md border bg-background px-3 text-sm"
+                    aria-label={tc("اختر المنتج", "Select product")}
+                  >
+                    <option value="">{tc("اختر منتجاً", "Select a product")}</option>
+                    {products.map((product: any) => {
+                      const productId = String(product.id || product._id || "");
+                      const name = product.nameAr || product.nameEn || product.name || productId;
+                      const alreadySelected = newCoupon.productDiscounts.some((rule) => rule.productId === productId);
+                      return <option key={productId} value={productId} disabled={!productId || alreadySelected}>{name}</option>;
+                    })}
+                  </select>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={productDiscountPercentage}
+                    onChange={(event) => setProductDiscountPercentage(Number(event.target.value) || 0)}
+                    aria-label={tc("نسبة خصم المنتج", "Product discount percentage")}
+                  />
+                  <Button type="button" variant="outline" onClick={addProductRule} className="gap-1">
+                    <Plus className="h-4 w-4" />{tc("إضافة", "Add")}
+                  </Button>
+                </div>
+                {newCoupon.productDiscounts.length > 0 && (
+                  <div className="space-y-2">
+                    {newCoupon.productDiscounts.map((rule) => {
+                      const product = products.find((item: any) => String(item.id || item._id || "") === rule.productId);
+                      return (
+                        <div key={rule.productId} className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2 text-sm">
+                          <span>{product?.nameAr || product?.nameEn || product?.name || rule.productId}</span>
+                          <span className="flex items-center gap-2 font-semibold">
+                            {rule.discountPercentage}% 
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-destructive"
+                              onClick={() => setNewCoupon((current) => ({
+                                ...current,
+                                productDiscounts: current.productDiscounts.filter((item) => item.productId !== rule.productId),
+                              }))}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />{tc("إزالة", "Remove")}
+                            </Button>
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="usage-limit">{tc("الحد الأقصى للاستخدام (اختياري)", "Usage limit (optional)")}</Label>
+                <Input
+                  id="usage-limit"
+                  type="number"
+                  min="1"
+                  value={newCoupon.usageLimit}
+                  onChange={(event) => setNewCoupon({ ...newCoupon, usageLimit: event.target.value })}
+                  placeholder={tc("غير محدود", "Unlimited")}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="reason">{tc("سبب الخصم", "Discount Reason")}</Label>
@@ -210,11 +359,11 @@ export function CouponManagement({ employeeId }: CouponManagementProps) {
                 {tc("إلغاء", "Cancel")}
               </Button>
               <Button
-                onClick={handleCreateCoupon}
-                disabled={createCouponMutation.isPending}
+                onClick={handleSaveCoupon}
+                disabled={saveCouponMutation.isPending}
                 data-testid="button-confirm-create-coupon"
               >
-                {createCouponMutation.isPending ? tc("جاري الإنشاء...", "Creating...") : tc("إنشاء", "Create")}
+                {saveCouponMutation.isPending ? tc("جاري الحفظ...", "Saving...") : editingCoupon ? tc("حفظ التعديلات", "Save changes") : tc("إنشاء", "Create")}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -256,8 +405,17 @@ export function CouponManagement({ employeeId }: CouponManagementProps) {
                   <div className="space-y-2 text-sm">
                     <div className="flex items-center gap-2">
                       <Percent className="w-4 h-4 text-muted-foreground" />
-                      <span>{tc("خصم", "Discount")} {code.discountPercentage}%</span>
+                      <span>{code.productDiscounts?.length ? tc("خصم حسب المنتج", "Product-specific discounts") : `${tc("خصم عام", "General discount")} ${code.discountPercentage}%`}</span>
                     </div>
+                    {code.productDiscounts?.map((rule) => {
+                      const product = products.find((item: any) => String(item.id || item._id || "") === rule.productId);
+                      return (
+                        <div key={rule.productId} className="flex justify-between gap-2 text-xs text-muted-foreground">
+                          <span className="truncate">{product?.nameAr || product?.nameEn || product?.name || rule.productId}</span>
+                          <span className="shrink-0 font-semibold">{rule.discountPercentage}%</span>
+                        </div>
+                      );
+                    })}
                     <div className="flex items-center gap-2">
                       <Ticket className="w-4 h-4 text-muted-foreground" />
                       <span className="text-muted-foreground">{code.reason}</span>
@@ -265,10 +423,11 @@ export function CouponManagement({ employeeId }: CouponManagementProps) {
                     {code.usageCount !== undefined && (
                       <div className="text-xs text-muted-foreground">
                         {tc("تم الاستخدام:", "Used:")} {code.usageCount} {tc("مرة", "times")}
+                        {code.usageLimit ? ` / ${code.usageLimit}` : ""}
                       </div>
                     )}
                   </div>
-                  <div className="mt-4 pt-3 border-t flex gap-2">
+                  <div className="mt-4 pt-3 border-t flex flex-wrap gap-2">
                     <Button
                       variant="outline"
                       size="sm"
@@ -288,6 +447,29 @@ export function CouponManagement({ employeeId }: CouponManagementProps) {
                       data-testid={`button-visibility-coupon-${code.code}`}
                     >
                       {code.visibleToCustomers ? <><EyeOff className="w-4 h-4 ml-2" />{tc("إخفاء", "Hide")}</> : <><Eye className="w-4 h-4 ml-2" />{tc("إظهار", "Show")}</>}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => startEditing(code)}
+                      data-testid={`button-edit-coupon-${code.code}`}
+                    >
+                      <Pencil className="w-4 h-4 ml-2" />{tc("تعديل", "Edit")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => {
+                        if (window.confirm(tc(`هل تريد حذف الكوبون ${code.code}؟`, `Delete coupon ${code.code}?`))) {
+                          deleteCouponMutation.mutate(codeId);
+                        }
+                      }}
+                      disabled={deleteCouponMutation.isPending}
+                      data-testid={`button-delete-coupon-${code.code}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
                     </Button>
                   </div>
                 </CardContent>

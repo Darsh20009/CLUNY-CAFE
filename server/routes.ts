@@ -7661,7 +7661,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const publicCoupons = await DiscountCodeModel.find({
         isActive: 1,
         visibleToCustomers: true,
-      }).select('code discountPercentage reason').sort({ createdAt: -1 }).lean();
+      }).select('code discountPercentage productDiscounts reason').sort({ createdAt: -1 }).lean();
       res.json(publicCoupons);
     } catch (error) {
       console.error("Failed to fetch discount codes:", error);
@@ -7724,11 +7724,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update discount code (toggle active status or visibility)
+  // Update discount code settings, including product-specific discounts.
   app.patch("/api/discount-codes/:id", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
-      const { isActive, visibleToCustomers, employeeId } = req.body;
+      const { isActive, visibleToCustomers, employeeId, discountPercentage, reason, productDiscounts, usageLimit } = req.body;
 
       // Require employee ID for authorization
       if (!employeeId) {
@@ -7764,6 +7764,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updates.visibleToCustomers = !!visibleToCustomers;
       }
 
+      if (discountPercentage !== undefined) {
+        const percentage = Number(discountPercentage);
+        if (!Number.isFinite(percentage) || percentage < 0 || percentage > 100) {
+          return res.status(400).json({ error: "discountPercentage must be between 0 and 100" });
+        }
+        updates.discountPercentage = percentage;
+      }
+
+      if (reason !== undefined) {
+        if (typeof reason !== "string" || !reason.trim()) {
+          return res.status(400).json({ error: "reason is required" });
+        }
+        updates.reason = reason.trim();
+      }
+
+      if (productDiscounts !== undefined) {
+        if (!Array.isArray(productDiscounts) || productDiscounts.some((rule: any) =>
+          !rule || typeof rule.productId !== "string" || !rule.productId.trim() ||
+          !Number.isFinite(Number(rule.discountPercentage)) ||
+          Number(rule.discountPercentage) < 0 || Number(rule.discountPercentage) > 100
+        )) {
+          return res.status(400).json({ error: "Invalid product discount rules" });
+        }
+        const uniqueIds = new Set(productDiscounts.map((rule: any) => rule.productId));
+        if (uniqueIds.size !== productDiscounts.length) {
+          return res.status(400).json({ error: "A product can only have one discount rule per code" });
+        }
+        updates.productDiscounts = productDiscounts.map((rule: any) => ({
+          productId: rule.productId.trim(),
+          discountPercentage: Number(rule.discountPercentage),
+        }));
+      }
+
+      if (usageLimit !== undefined) {
+        if (usageLimit !== null && (!Number.isInteger(Number(usageLimit)) || Number(usageLimit) < 1)) {
+          return res.status(400).json({ error: "usageLimit must be a positive integer or null" });
+        }
+        updates.usageLimit = usageLimit === null ? null : Number(usageLimit);
+      }
+
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({ error: "No valid fields to update" });
       }
@@ -7772,6 +7812,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(discountCode);
     } catch (error) {
       res.status(500).json({ error: "Failed to update discount code" });
+    }
+  });
+
+  app.delete("/api/discount-codes/:id", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { employeeId } = req.body || {};
+      if (!employeeId) return res.status(401).json({ error: "Employee authentication required" });
+
+      const existingCode = await storage.getDiscountCode(req.params.id);
+      if (!existingCode) return res.status(404).json({ error: "Discount code not found" });
+
+      const sessionEmp: any = (req as any).session?.employee || (req as any).employee;
+      const elevatedRoles = ["admin", "owner", "manager", "branch_manager"];
+      const isElevated = elevatedRoles.includes(sessionEmp?.role || "") || employeeId === "admin";
+      if (existingCode.employeeId !== employeeId && !isElevated) {
+        return res.status(403).json({ error: "Unauthorized: You can only delete your own discount codes" });
+      }
+
+      const { DiscountCodeModel } = await import("@shared/schema");
+      await DiscountCodeModel.deleteOne({ _id: req.params.id });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Failed to delete discount code:", error);
+      res.status(500).json({ error: "Failed to delete discount code" });
     }
   });
 
@@ -7866,12 +7930,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Allow all active discount codes including 100%
+      const productDiscounts = Array.isArray(discountCode.productDiscounts)
+        ? discountCode.productDiscounts.filter((rule: any) => rule?.productId)
+        : [];
+      const cartItems = Array.isArray(req.body.items) ? req.body.items : [];
+      const { calculateCouponDiscount } = await import("@shared/coupon-discounts");
+      let discountAmount: number;
+
+      if (productDiscounts.length > 0) {
+        if (cartItems.length === 0) {
+          return res.status(400).json({ valid: false, error: "أضف المنتجات للسلة قبل التحقق من هذا الكود" });
+        }
+        discountAmount = calculateCouponDiscount(
+          cartItems,
+          { discountPercentage: discountCode.discountPercentage, productDiscounts },
+          (item: any) => {
+            if (item.unitPrice !== undefined) return Number(item.unitPrice);
+            if (item.price !== undefined) return Number(item.price);
+            const quantity = Math.max(1, Number(item.quantity) || 1);
+            return Number(item.totalPrice || 0) / quantity;
+          },
+        );
+        if (discountAmount <= 0) {
+          return res.status(400).json({ valid: false, error: "هذا الكود لا ينطبق على المنتجات الموجودة في السلة" });
+        }
+      } else {
+        discountAmount = Math.max(0, Number(amount) || 0) * Number(discountCode.discountPercentage) / 100;
+        if (cartItems.length > 0) {
+          discountAmount = calculateCouponDiscount(
+            cartItems,
+            { discountPercentage: discountCode.discountPercentage },
+            (item: any) => {
+              if (item.unitPrice !== undefined) return Number(item.unitPrice);
+              if (item.price !== undefined) return Number(item.price);
+              const quantity = Math.max(1, Number(item.quantity) || 1);
+              return Number(item.totalPrice || 0) / quantity;
+            },
+          );
+        }
+      }
 
       res.json({
         valid: true,
         code: discountCode.code,
         discountPercentage: discountCode.discountPercentage,
+        productDiscounts,
+        discountAmount: Math.round(discountAmount * 100) / 100,
         reason: discountCode.reason,
         id: discountCode._id
       });

@@ -335,7 +335,7 @@ export default function MyOrders() {
                     )}
 
                     {(order.status === 'ready' || order.status === 'completed') && (
-                      <ReceiptInvoice order={order} />
+                      <ReceiptInvoice order={order} surface="customer" />
                     )}
 
                     {order.status === 'completed' && !reviewedOrders.has(order.id) && activeReview !== order.id && (

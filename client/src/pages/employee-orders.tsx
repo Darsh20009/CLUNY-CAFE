@@ -746,7 +746,7 @@ export default function EmployeeOrders() {
           </DialogHeader>
           {currentOrder && (
             <div className="py-4">
-              <ReceiptInvoice order={currentOrder} variant="button" />
+              <ReceiptInvoice order={currentOrder} variant="button" surface="staff" />
             </div>
           )}
         </DialogContent>

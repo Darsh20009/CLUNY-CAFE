@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { calculateCouponDiscount } from "@shared/coupon-discounts";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -232,7 +233,7 @@ export default function CheckoutPage() {
   const [customerNotes, setCustomerNotes] = useState("");
   const [discountCode, setDiscountCode] = useState("");
   const [isValidatingDiscount, setIsValidatingDiscount] = useState(false);
-  const [appliedDiscount, setAppliedDiscount] = useState<{code: string, percentage: number, isOffer?: boolean} | null>(null);
+  const [appliedDiscount, setAppliedDiscount] = useState<{code: string, percentage: number, isOffer?: boolean, productDiscounts?: Array<{productId: string; discountPercentage: number}>} | null>(null);
   const [giftCardCode, setGiftCardCode] = useState("");
   const [appliedGiftCard, setAppliedGiftCard] = useState<{ code: string; balance: number; applied: number } | null>(null);
   const [isCheckingGiftCard, setIsCheckingGiftCard] = useState(false);
@@ -258,12 +259,13 @@ export default function CheckoutPage() {
   const minPointsForRedemption: number = loyaltySettings?.minPointsForRedemption ?? 100;
   const loyaltyPoints: number = loyaltyCard?.points || 0;
 
+  const couponDiscountAmount = useMemo(
+    () => calculateCouponDiscount(cartItems, appliedDiscount, getCartItemUnitPrice),
+    [cartItems, appliedDiscount],
+  );
+
   const getBaseTotal = () => {
-    let total = getFinalTotal();
-    if (appliedDiscount) {
-      total = total * (1 - appliedDiscount.percentage / 100);
-    }
-    return total;
+    return Math.max(0, getFinalTotal() - couponDiscountAmount);
   };
 
   const usePointsAsDiscount = pointsToRedeem > 0;
@@ -747,16 +749,27 @@ export default function CheckoutPage() {
         body: JSON.stringify({ 
           code: codeToUse, 
           customerId: customer?.id,
-          amount: getFinalTotal()
+          amount: getFinalTotal(),
+          items: cartItems.map((item: any) => ({
+            productId: item.coffeeItemId,
+            quantity: item.quantity,
+            unitPrice: getCartItemUnitPrice(item),
+          })),
         }),
       });
       const data = await response.json();
       if (response.ok && data.valid) {
-        setAppliedDiscount({ code: data.code, percentage: data.discountPercentage });
+        setAppliedDiscount({
+          code: data.code,
+          percentage: data.discountPercentage,
+          productDiscounts: data.productDiscounts || [],
+        });
         setDiscountCode(data.code);
         toast({
           title: t("checkout.coupon_applied"),
-          description: `${t("checkout.discount")}: ${data.discountPercentage}%`,
+          description: data.productDiscounts?.length
+            ? tc("سيطبق الخصم على المنتجات المحددة فقط", "Discount applies only to selected products")
+            : `${t("checkout.discount")}: ${data.discountPercentage}%`,
         });
       } else {
         setAppliedDiscount(null);
@@ -1050,6 +1063,8 @@ export default function CheckoutPage() {
                : deliveryInfo?.type || 'pickup',
       customerNotes,
       discountCode: appliedDiscount?.code,
+      discountPercentage: appliedDiscount?.percentage || 0,
+      discountAmount: couponDiscountAmount,
       pointsRedeemed: usePointsAsDiscount ? effectivePointsUsed : 0,
       pointsValue: usePointsAsDiscount ? effectivePointsDiscountSAR : 0,
       bypassPointsVerification: true,
@@ -1320,6 +1335,8 @@ export default function CheckoutPage() {
                : deliveryInfo?.type || 'pickup',
       customerNotes: customerNotes,
       discountCode: appliedDiscount?.code,
+      discountPercentage: appliedDiscount?.percentage || 0,
+      discountAmount: couponDiscountAmount,
       pointsRedeemed: usePointsAsDiscount ? effectivePointsUsed : 0,
       pointsValue: usePointsAsDiscount ? effectivePointsDiscountSAR : 0,
       bypassPointsVerification: true,
@@ -1790,8 +1807,8 @@ export default function CheckoutPage() {
                 ))}
                 {appliedDiscount && (
                   <div className="flex justify-between items-center gap-2 text-sm text-green-600 bg-green-50 dark:bg-green-950/30 p-2 rounded">
-                    <span>{t("points.discount")} ({appliedDiscount.percentage}%)</span>
-                    <span>-{(getFinalTotal() * appliedDiscount.percentage / 100).toFixed(2)} <SarIcon /></span>
+                    <span>{t("points.discount")} {appliedDiscount.productDiscounts?.length ? `(${appliedDiscount.productDiscounts.length} ${tc("منتجات", "products")})` : `(${appliedDiscount.percentage}%)`}</span>
+                    <span>-{couponDiscountAmount.toFixed(2)} <SarIcon /></span>
                   </div>
                 )}
                 {usePointsAsDiscount && pointsDiscountSAR > 0 && (
@@ -2167,7 +2184,7 @@ export default function CheckoutPage() {
                         <Sparkles className="w-5 h-5 text-green-600" />
                         <div>
                           <p className="font-semibold text-green-800 dark:text-green-300">{appliedDiscount.code}</p>
-                          <p className="text-sm text-green-600">{t("points.discount")} {appliedDiscount.percentage}% {t("points.applied")}</p>
+                          <p className="text-sm text-green-600">{appliedDiscount.productDiscounts?.length ? tc("خصم على المنتجات المحددة", "Discount on selected products") : `${t("points.discount")} ${appliedDiscount.percentage}%`} {t("points.applied")}</p>
                         </div>
                       </div>
                       <Button 
@@ -2226,7 +2243,7 @@ export default function CheckoutPage() {
                       </div>
                       {appliedDiscount && !appliedDiscount.isOffer && (
                         <div className="flex items-center justify-between">
-                          <p className="text-sm text-green-600">{t("points.applied")}: {appliedDiscount.code} ({appliedDiscount.percentage}%)</p>
+                          <p className="text-sm text-green-600">{t("points.applied")}: {appliedDiscount.code} {appliedDiscount.productDiscounts?.length ? `(${tc("حسب المنتجات", "by product")})` : `(${appliedDiscount.percentage}%)`}</p>
                           <Button
                             variant="ghost"
                             size="sm"

@@ -853,6 +853,19 @@ export interface IBusinessConfig extends Document {
   prepBaseMinutes?: number;
   prepExtraMinutesPerItem?: number;
   prepFreeItemCount?: number;
+  invoiceSettings?: {
+    mode?: "default" | "custom";
+    headerArtwork?: "campaign" | "logo" | "custom" | "none";
+    customArtworkUrl?: string;
+    elements?: Record<string, boolean>;
+    customQrs?: Array<{
+      id: string;
+      label: string;
+      content: string;
+      surface: "all" | "customer" | "staff";
+      enabled: boolean;
+    }>;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -973,6 +986,7 @@ const BusinessConfigSchema = new Schema<IBusinessConfig>({
   prepBaseMinutes: { type: Number, default: 10 },
   prepExtraMinutesPerItem: { type: Number, default: 3 },
   prepFreeItemCount: { type: Number, default: 2 },
+  invoiceSettings: { type: Schema.Types.Mixed, default: () => ({}) },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
@@ -1258,13 +1272,17 @@ export const BranchModel = mongoose.model<IBranch>("Branch", BranchSchema);
 export interface IDiscountCode extends Document {
   code: string;
   discountPercentage: number;
+  productDiscounts?: Array<{
+    productId: string;
+    discountPercentage: number;
+  }>;
   reason: string;
   employeeId: string;
   isActive: number;
   usageCount: number;
   visibleToCustomers: boolean;
   expiryDate?: Date;
-  usageLimit?: number;
+  usageLimit?: number | null;
   minPurchase?: number;
   carType?: string;
   carColor?: string;
@@ -1276,10 +1294,20 @@ export interface IDiscountCode extends Document {
 const DiscountCodeSchema = new Schema<IDiscountCode>({
   code: { type: String, required: true, unique: true },
   discountPercentage: { type: Number, required: true },
+  productDiscounts: {
+    type: [{
+      productId: { type: String, required: true },
+      discountPercentage: { type: Number, required: true, min: 0, max: 100 },
+    }],
+    default: [],
+  },
   reason: { type: String, required: true },
   employeeId: { type: String, required: true },
   isActive: { type: Number, default: 1, required: true },
   usageCount: { type: Number, default: 0, required: true },
+  usageLimit: { type: Number, default: null },
+  expiryDate: { type: Date, default: null },
+  minPurchase: { type: Number, default: null },
   visibleToCustomers: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
 });
@@ -3008,6 +3036,11 @@ export const insertPasswordResetTokenSchema = z.object({
 export const insertDiscountCodeSchema = z.object({
   code: z.string(),
   discountPercentage: z.number(),
+  productDiscounts: z.array(z.object({
+    productId: z.string().min(1),
+    discountPercentage: z.number().min(0).max(100),
+  })).optional(),
+  usageLimit: z.number().int().positive().nullable().optional(),
   reason: z.string(),
   employeeId: z.string(),
   isActive: z.number().optional(),

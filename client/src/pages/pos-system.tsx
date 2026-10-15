@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import { useTranslate } from "@/lib/useTranslate";
+import { calculateCouponDiscount } from "@shared/coupon-discounts";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
 import { ShadowHtml } from "@/components/shadow-html";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -1030,11 +1031,13 @@ export default function PosSystem() {
   // Discount coupon (e.g. TECH10 — خصم خاص)
   const [discountCode, setDiscountCode] = useState("");
   const [isValidatingDiscount, setIsValidatingDiscount] = useState(false);
-  const [appliedDiscount, setAppliedDiscount] = useState<{ code: string; percentage: number; reason?: string } | null>(null);
+  const [appliedDiscount, setAppliedDiscount] = useState<{ code: string; percentage: number; reason?: string; productDiscounts?: Array<{ productId: string; discountPercentage: number }> } | null>(null);
 
   const couponDiscountAmount = useMemo(
-    () => (appliedDiscount ? calculateTotalAfterPoints * appliedDiscount.percentage / 100 : 0),
-    [appliedDiscount, calculateTotalAfterPoints]
+    () => appliedDiscount
+      ? Math.min(calculateTotalAfterPoints, calculateCouponDiscount(orderItems, appliedDiscount, getPosItemUnitPriceEarly))
+      : 0,
+    [appliedDiscount, calculateTotalAfterPoints, orderItems]
   );
 
   const calculateGrandTotal = useMemo(
@@ -1084,15 +1087,30 @@ export default function PosSystem() {
       const response = await fetch("/api/discount-codes/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, amount: calculateTotalAfterPoints }),
+        body: JSON.stringify({
+          code,
+          amount: calculateTotalAfterPoints,
+          items: orderItems.map((item) => ({
+            productId: item.coffeeItem.id,
+            quantity: item.quantity,
+            unitPrice: getPosItemUnitPriceEarly(item),
+          })),
+        }),
       });
       const data = await response.json();
       if (response.ok && data.valid) {
-        setAppliedDiscount({ code: data.code, percentage: data.discountPercentage, reason: data.reason });
+        setAppliedDiscount({
+          code: data.code,
+          percentage: data.discountPercentage,
+          reason: data.reason,
+          productDiscounts: data.productDiscounts || [],
+        });
         setDiscountCode(data.code);
         toast({
           title: tc("تم تطبيق الكوبون", "Coupon applied"),
-          description: `${data.reason || data.code} — ${data.discountPercentage}%`,
+          description: data.productDiscounts?.length
+            ? tc("سيطبق الخصم على المنتجات المحددة فقط", "Discount applies only to selected products")
+            : `${data.reason || data.code} — ${data.discountPercentage}%`,
         });
       } else {
         setAppliedDiscount(null);
@@ -1362,7 +1380,9 @@ export default function PosSystem() {
       const rawTotal = calculateTotal;
       const pointsDiscountAmt = usePoints && customerPoints >= 100 ? pointsDiscount : 0;
       const afterPoints = Math.max(0, rawTotal - pointsDiscountAmt);
-      const couponDiscountAmt = appliedDiscount ? afterPoints * appliedDiscount.percentage / 100 : 0;
+      const couponDiscountAmt = appliedDiscount
+        ? Math.min(afterPoints, calculateCouponDiscount(orderItems, appliedDiscount, getPosItemUnitPriceEarly))
+        : 0;
       const discount = pointsDiscountAmt + couponDiscountAmt;
       const itemDiscountsAmt = computeTotalItemDiscounts(orderItems, itemDiscounts);
       const manualDiscAmt = computeOrderDiscountAmount(Math.max(0, rawTotal - discount - itemDiscountsAmt), manualDiscount);
@@ -1452,7 +1472,9 @@ export default function PosSystem() {
       const rawTotal = calculateTotal;
       const pointsDiscountAmt = usePoints && customerPoints >= 100 ? pointsDiscount : 0;
       const afterPoints = Math.max(0, rawTotal - pointsDiscountAmt);
-      const couponDiscountAmt = appliedDiscount ? afterPoints * appliedDiscount.percentage / 100 : 0;
+      const couponDiscountAmt = appliedDiscount
+        ? Math.min(afterPoints, calculateCouponDiscount(orderItems, appliedDiscount, getPosItemUnitPriceEarly))
+        : 0;
       const discount = pointsDiscountAmt + couponDiscountAmt;
       // Apply new engine discounts on top
       const itemDiscountsAmt = computeTotalItemDiscounts(orderItems, itemDiscounts);
@@ -3228,7 +3250,7 @@ export default function PosSystem() {
                   <div className="flex items-center justify-between gap-2 bg-green-50 dark:bg-green-950/30 border border-green-300 dark:border-green-700 rounded-lg px-2 py-1.5">
                     <div className="min-w-0 flex-1">
                       <p className="text-[11px] sm:text-xs font-black text-green-700 dark:text-green-300 truncate" data-testid="text-applied-coupon">
-                        {appliedDiscount.code} — {appliedDiscount.percentage}%
+                        {appliedDiscount.code} — {appliedDiscount.productDiscounts?.length ? tc("خصم حسب المنتج", "product discounts") : `${appliedDiscount.percentage}%`}
                       </p>
                       {appliedDiscount.reason && (
                         <p className="text-[9px] sm:text-[10px] text-green-600 dark:text-green-400 truncate">
@@ -3291,7 +3313,7 @@ export default function PosSystem() {
                 )}
                 {appliedDiscount && couponDiscountAmount > 0 && (
                   <div className="flex justify-between text-[10px] sm:text-sm text-green-600" data-testid="text-coupon-discount-line">
-                    <span className="font-bold">{tc('كوبون', 'Coupon')} {appliedDiscount.code} ({appliedDiscount.percentage}%)</span>
+                    <span className="font-bold">{tc('كوبون', 'Coupon')} {appliedDiscount.code} {appliedDiscount.productDiscounts?.length ? `(${tc("حسب المنتج", "by product")})` : `(${appliedDiscount.percentage}%)`}</span>
                     <span className="font-bold flex items-center gap-1">- {couponDiscountAmount.toFixed(2)} <SarIcon size={11} /></span>
                   </div>
                 )}
@@ -3966,7 +3988,7 @@ export default function PosSystem() {
                 )}
                 {appliedDiscount && couponDiscountAmount > 0 && (
                   <div className="flex justify-between text-sm text-green-600">
-                    <span className="font-bold">{tc('كوبون', 'Coupon')} {appliedDiscount.code} ({appliedDiscount.percentage}%)</span>
+                    <span className="font-bold">{tc('كوبون', 'Coupon')} {appliedDiscount.code} {appliedDiscount.productDiscounts?.length ? `(${tc("حسب المنتج", "by product")})` : `(${appliedDiscount.percentage}%)`}</span>
                     <span className="font-bold">- {couponDiscountAmount.toFixed(2)} {t('pos.currency')}</span>
                   </div>
                 )}
