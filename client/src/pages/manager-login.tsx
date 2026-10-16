@@ -8,30 +8,16 @@ import { AtSign, Lock, Loader2, Eye, EyeOff } from "lucide-react";
 import type { Employee } from "@shared/schema";
 import clunyLogoStaff from "@assets/cluny-logo-customer.png";
 import { useTranslate } from "@/lib/useTranslate";
+import { useVerifiedEmployeeSessionRedirect } from "@/hooks/use-verified-employee-session";
 
 export default function ManagerLogin() {
+  useVerifiedEmployeeSessionRedirect(true);
   const [, setLocation] = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const tc = useTranslate();
-
-  // Auto-redirect if already logged in
-  useState(() => {
-    const stored = localStorage.getItem("currentEmployee");
-    if (stored) {
-      try {
-        const emp = JSON.parse(stored);
-        const managerRoles = ["admin", "owner", "manager", "branch_manager"];
-        if (managerRoles.includes(emp.role)) {
-          if (emp.role === "admin") setLocation("/admin/dashboard");
-          else if (emp.role === "owner") setLocation("/owner/dashboard");
-          else setLocation("/manager/dashboard");
-        }
-      } catch {}
-    }
-  });
 
   const loginMutation = useMutation({
     mutationFn: async (credentials: { username: string; password: string }) => {
@@ -42,11 +28,12 @@ export default function ManagerLogin() {
         credentials: "include",
       });
 
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error("Login failed");
+        throw new Error(data?.error || tc("فشل تسجيل الدخول", "Login failed"));
       }
 
-      return response.json() as Promise<Employee>;
+      return data as Employee;
     },
     onSuccess: (employee: any) => {
       const managerRoles = ["admin", "owner", "manager", "branch_manager"];
@@ -70,8 +57,8 @@ export default function ManagerLogin() {
         setLocation("/manager/dashboard");
       }
     },
-    onError: () => {
-      setError(tc("اسم المستخدم أو كلمة المرور غير صحيحة", "Invalid username or password"));
+    onError: (err: any) => {
+      setError(err?.message || tc("اسم المستخدم أو كلمة المرور غير صحيحة", "Invalid username or password"));
       setPassword("");
     },
   });

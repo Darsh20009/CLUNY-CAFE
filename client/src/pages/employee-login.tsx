@@ -11,29 +11,10 @@ import type { Employee } from "@shared/schema";
 import { Html5QrcodeScanner } from "html5-qrcode";
 import clunyLogoStaff from "@assets/cluny-logo-customer.png";
 import { useTranslate } from "@/lib/useTranslate";
-
-function useAutoRedirectIfLoggedIn() {
-  const [, setLocation] = useLocation();
-  useEffect(() => {
-    const stored = localStorage.getItem("currentEmployee");
-    if (stored) {
-      try {
-        const emp = JSON.parse(stored);
-        if (emp?.role) {
-          if (emp.role === "admin") setLocation("/admin/dashboard");
-          else if (emp.role === "owner") setLocation("/owner/dashboard");
-          else if (emp.role === "manager" || emp.role === "branch_manager") setLocation("/manager/dashboard");
-          else if (emp.role === "cleaner") setLocation("/employee/attendance");
-          else setLocation("/employee/home");
-        }
-      } catch {}
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-}
+import { useVerifiedEmployeeSessionRedirect } from "@/hooks/use-verified-employee-session";
 
 export default function EmployeeLogin() {
-  useAutoRedirectIfLoggedIn();
+  useVerifiedEmployeeSessionRedirect();
   const [, setLocation] = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -52,20 +33,6 @@ export default function EmployeeLogin() {
       setDeferredPrompt(e);
     };
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    const stored = localStorage.getItem("currentEmployee");
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        if (parsed?.id) {
-          const r = parsed.role;
-          if (r === "admin" || r === "owner") window.location.href = "/admin/dashboard";
-          else if (r === "manager" || r === "branch_manager") window.location.href = "/manager/dashboard";
-          else if (r === "cleaner") window.location.href = "/employee/attendance";
-          else window.location.href = "/employee/home";
-          return;
-        }
-      } catch {}
-    }
     return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
   }, []);
 

@@ -348,6 +348,7 @@ function AppRouter() {
       <Route path="/manager/product-reservations"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><ManagerLayout><EmployeeProductReservations /></ManagerLayout></AuthGuard></Route>
 
       {/* Manager auth routes (public) */}
+      <Route path="/manager/login"><ManagerLogin /></Route>
       <Route path="/manager"><ManagerLogin /></Route>
       <Route path="/manager/forgot-password"><ManagerForgotPassword /></Route>
 
@@ -422,6 +423,7 @@ function AppRouter() {
       <Route path="/executive"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><ManagerLayout><ExecutiveDashboard /></ManagerLayout></AuthGuard></Route>
 
       {/* Admin redirect */}
+      <Route path="/admin/login"><Redirect to="/manager/login" /></Route>
       <Route path="/admin"><Redirect to="/admin/dashboard" /></Route>
 
       {/* Admin protected routes */}
