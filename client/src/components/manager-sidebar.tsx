@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
 import {
@@ -33,9 +33,9 @@ interface NavItem {
   roles?: string[];
 }
 
-const NAV_GROUPS: { label: string; labelEn: string; color: string; items: NavItem[] }[] = [
+const NAV_GROUPS: { label: string; labelEn: string; icon: any; items: NavItem[] }[] = [
   {
-    label: "التقارير", labelEn: "Reports", color: "#2D9B6E",
+    label: "التقارير", labelEn: "Reports", icon: BarChart3,
     items: [
       { label: "تحاليلي اليومي", labelEn: "My Daily Analytics", icon: TrendingUp, path: "/manager/tahalyli", badge: "AI" },
       { label: "تقارير المنتجات التفصيلية", labelEn: "Product Reports", icon: BarChart2, path: "/manager/product-reports", badge: "جديد" },
@@ -53,7 +53,7 @@ const NAV_GROUPS: { label: string; labelEn: string; color: string; items: NavIte
     ]
   },
   {
-    label: "المخزون", labelEn: "Inventory", color: "#2D9B6E",
+    label: "المخزون", labelEn: "Inventory", icon: Warehouse,
     items: [
       { label: "دورة المخزون الذكي", labelEn: "Inventory Cycle", icon: RefreshCw, path: "/manager/inventory/cycle" },
       { label: "الجرد الذكي", labelEn: "Smart Stocktake", icon: ClipboardList, path: "/manager/inventory/stocktake" },
@@ -69,7 +69,7 @@ const NAV_GROUPS: { label: string; labelEn: string; color: string; items: NavIte
     ]
   },
   {
-    label: "المنتجات", labelEn: "Products", color: "#2D9B6E",
+    label: "المنتجات", labelEn: "Products", icon: Coffee,
     items: [
       { label: "الطاولات", labelEn: "Tables", icon: Table, path: "/manager/tables" },
       { label: "إدارة المأكولات والمشروبات", labelEn: "Menu", icon: Coffee, path: "/employee/menu-management" },
@@ -80,7 +80,7 @@ const NAV_GROUPS: { label: string; labelEn: string; color: string; items: NavIte
     ]
   },
   {
-    label: "الإدارة", labelEn: "Management", color: "#2D9B6E",
+    label: "الإدارة", labelEn: "Management", icon: Settings,
     items: [
       { label: "الموظفون", labelEn: "Employees", icon: Users, path: "/admin/employees" },
       { label: "الحضور", labelEn: "Attendance", icon: UserCheck, path: "/manager/attendance" },
@@ -104,7 +104,7 @@ const NAV_GROUPS: { label: string; labelEn: string; color: string; items: NavIte
     ]
   },
   {
-    label: "التسويق", labelEn: "Marketing", color: "#2D9B6E",
+    label: "التسويق", labelEn: "Marketing", icon: Gift,
     items: [
       { label: "برنامج الولاء", labelEn: "Loyalty", icon: CreditCard, path: "/manager/loyalty" },
       { label: "العروض الترويجية", labelEn: "Promotions", icon: Tag, path: "/manager/promotions" },
@@ -115,31 +115,31 @@ const NAV_GROUPS: { label: string; labelEn: string; color: string; items: NavIte
   },
 ];
 
-function SidebarNavItem({ item, collapsed, depth = 0 }: { item: NavItem; collapsed: boolean; depth?: number }) {
+function SidebarNavItem({ item, collapsed, depth = 0, onNavigate }: { item: NavItem; collapsed: boolean; depth?: number; onNavigate?: (path: string) => void }) {
   const [location, navigate] = useLocation();
   const { i18n } = useTranslation();
   const isAr = i18n.language === "ar";
   const label = isAr ? item.label : item.labelEn;
-  const isActive = location === item.path;
+  const isActive = location === item.path || (!!item.path && location.startsWith(`${item.path}/`));
 
   if (item.children) {
     return (
       <div className="space-y-0.5">
         <button
           className={cn(
-            "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-sm font-medium transition-all",
-            "text-sidebar-foreground/75 hover:text-sidebar-foreground hover:bg-sidebar-accent/70",
+            "w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium transition-colors",
+            "text-slate-700 hover:text-slate-900 hover:bg-slate-50",
             depth > 0 && "pl-8"
           )}
         >
-          <item.icon className="w-4 h-4 flex-shrink-0 text-sidebar-foreground/45" />
+          <item.icon className="w-4 h-4 flex-shrink-0 text-slate-500" />
           {!collapsed && <span className="flex-1 truncate">{label}</span>}
-          {!collapsed && <ChevronDown className="w-3 h-3 opacity-50" />}
+          {!collapsed && <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
         </button>
         {!collapsed && (
-          <div className="ml-4 space-y-0.5">
+          <div className="space-y-0.5">
             {item.children.map(child => (
-              <SidebarNavItem key={child.path} item={child} collapsed={collapsed} depth={depth + 1} />
+              <SidebarNavItem key={child.path} item={child} collapsed={collapsed} depth={depth + 1} onNavigate={onNavigate} />
             ))}
           </div>
         )}
@@ -149,20 +149,20 @@ function SidebarNavItem({ item, collapsed, depth = 0 }: { item: NavItem; collaps
 
   return (
     <button
-      onClick={() => item.path && navigate(item.path)}
+      onClick={() => item.path && (onNavigate ? onNavigate(item.path) : navigate(item.path))}
       className={cn(
-        "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-sm transition-all group relative",
+        "w-full flex items-center gap-3 py-2 text-sm transition-colors group relative",
+        depth > 0 ? "pr-10 pl-4" : "px-4",
         isActive
-          ? "text-primary bg-primary/10 border border-primary/15 font-semibold"
-          : "text-sidebar-foreground/75 hover:text-sidebar-foreground hover:bg-sidebar-accent/70 font-medium",
-        depth > 0 && "pl-6"
+          ? "text-primary bg-primary/5 font-semibold"
+          : "text-slate-600 hover:text-slate-900 hover:bg-slate-50 font-medium",
       )}
       title={collapsed ? label : undefined}
     >
       {isActive && (
-        <span className={cn("absolute top-1/2 -translate-y-1/2 w-1 h-6 bg-primary", isAr ? "right-0 rounded-l-full" : "left-0 rounded-r-full")} />
+        <span className={cn("absolute top-0 bottom-0 w-[3px] bg-primary", isAr ? "right-0 rounded-l-full" : "left-0 rounded-r-full")} />
       )}
-      <item.icon className={cn("w-4 h-4 flex-shrink-0 transition-transform group-hover:scale-105", isActive ? "text-primary" : "text-sidebar-foreground/45")} />
+      <item.icon className={cn("w-4 h-4 flex-shrink-0", isActive ? "text-primary" : "text-slate-400")} />
       {!collapsed && (
         <>
           <span className={cn("flex-1 truncate", isAr ? "text-right" : "text-left")}>{label}</span>
@@ -179,10 +179,24 @@ function SidebarNavItem({ item, collapsed, depth = 0 }: { item: NavItem; collaps
 
 export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, role }: ManagerSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["التقارير", "المخزون"]));
+  const [location, navigate] = useLocation();
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["المخزون"]));
   const { i18n } = useTranslation();
   const isAr = i18n.language === "ar";
   const userRole = role || manager?.role || "manager";
+
+  useEffect(() => {
+    const activeGroup = NAV_GROUPS.find(group =>
+      group.items.some(item =>
+        item.path && (location === item.path || location.startsWith(`${item.path}/`))
+      )
+    );
+    if (!activeGroup) return;
+    setExpandedGroups((previous) => {
+      if (previous.has(activeGroup.label)) return previous;
+      return new Set(previous).add(activeGroup.label);
+    });
+  }, [location]);
 
   const filterItemsByRole = (items: NavItem[]) =>
     items.filter(item => !item.roles || item.roles.includes(userRole));
@@ -210,49 +224,69 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
     });
   };
 
+  const handleNavigate = (path: string) => {
+    navigate(path);
+    onMobileClose?.();
+  };
+
   const sidebarContent = (
-    <div className={cn("flex flex-col h-full bg-sidebar text-sidebar-foreground border-l border-sidebar-border overflow-hidden transition-all duration-300 shadow-[0_8px_36px_rgba(24,55,44,.06)]", collapsed ? "w-[60px]" : "w-[248px]")}>
+    <div dir={isAr ? "rtl" : "ltr"} className={cn("flex flex-col h-full bg-white text-slate-800 border-slate-200 overflow-hidden transition-all duration-200", isAr ? "border-l" : "border-r", collapsed ? "w-[60px]" : "w-56")}>
       {/* Header */}
-      <div className={cn("flex items-center border-b border-sidebar-border/80 flex-shrink-0", collapsed ? "justify-center px-2 py-4" : "justify-between px-4 py-4")}>
+      <div className={cn("flex items-center border-b border-slate-100 flex-shrink-0", collapsed ? "justify-center px-2 py-4" : "justify-between px-5 py-4")}>
         {!collapsed && (
-          <div className="flex items-center gap-2 min-w-0">
-            <img src={brand.logoStaff} alt={brand.nameEn} className="w-9 h-9 rounded-xl object-contain flex-shrink-0 bg-card ring-1 ring-border/70" />
+          <div className="flex items-center gap-2.5 min-w-0">
+            <img src={brand.logoStaff} alt={brand.nameEn} className="w-8 h-8 rounded-lg object-contain flex-shrink-0" />
             <div className="min-w-0">
-              <div className="text-sidebar-foreground text-sm font-bold tracking-wide truncate">{brand.nameEn}</div>
-              <div className="text-sidebar-foreground/55 text-[10px] truncate">{manager?.fullName || (isAr ? "مدير" : "Manager")}</div>
+              <div className="text-slate-900 text-sm font-black tracking-wide truncate">{isAr ? brand.shortNameAr : brand.shortNameEn}</div>
+              <div className="text-slate-500 text-[10px] truncate">{manager?.fullName || (isAr ? "مدير" : "Manager")}</div>
             </div>
           </div>
         )}
         <button
           onClick={() => mobileOpen ? onMobileClose?.() : setCollapsed(!collapsed)}
-          className="w-9 h-9 flex items-center justify-center rounded-xl text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent flex-shrink-0 transition-colors"
+          className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 flex-shrink-0 transition-colors"
+          aria-label={mobileOpen ? (isAr ? "إغلاق القائمة" : "Close navigation") : (isAr ? "طي القائمة" : "Collapse navigation")}
         >
           {mobileOpen ? <X className="w-4 h-4" /> : collapsed ? <Menu className="w-4 h-4" /> : <X className="w-3 h-3" />}
         </button>
       </div>
 
       {/* Navigation */}
-      <div className="flex-1 overflow-y-auto py-3 space-y-1 scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent px-3">
-        <div className="space-y-1 border-b border-sidebar-border/80 pb-3 mb-2">
+      <div className="flex-1 overflow-y-auto py-2 scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
+        <div className="mb-2">
           {topItems.map(item => (
-            <SidebarNavItem key={item.path} item={item} collapsed={collapsed} />
+            <button key={item.path} onClick={() => handleNavigate(item.path!)} className={cn(
+              "relative w-full flex items-center gap-3 py-2 text-sm transition-colors",
+              isAr ? "px-4" : "px-4",
+              location === item.path || (!!item.path && location.startsWith(`${item.path}/`))
+                ? "bg-primary/5 text-primary font-semibold"
+                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+            )}>
+              {(location === item.path || (!!item.path && location.startsWith(`${item.path}/`))) && <span className={cn("absolute top-0 bottom-0 w-[3px] bg-primary", isAr ? "right-0" : "left-0")} />}
+              <item.icon className={cn("w-4 h-4 shrink-0", location === item.path || (!!item.path && location.startsWith(`${item.path}/`)) ? "text-primary" : "text-slate-400")} />
+              {!collapsed && <span className={cn("flex-1 truncate", isAr ? "text-right" : "text-left")}>{isAr ? item.label : item.labelEn}</span>}
+            </button>
           ))}
         </div>
+        <div className="mx-4 my-1 border-t border-slate-100" />
         {visibleGroups.map(group => (
           <div key={group.label}>
             {!collapsed && (
               <button
                 onClick={() => toggleGroup(group.label)}
-                className="w-full flex items-center justify-between px-2 py-2 text-xs font-semibold tracking-wide text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
+                className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
               >
-                <span>{isAr ? group.label : group.labelEn}</span>
-                {expandedGroups.has(group.label) ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                <span className="flex items-center gap-2.5">
+                  <group.icon className={cn("w-4 h-4 shrink-0", expandedGroups.has(group.label) ? "text-primary" : "text-slate-500")} />
+                  {isAr ? group.label : group.labelEn}
+                </span>
+                <ChevronDown className={cn("w-3.5 h-3.5 text-slate-400 transition-transform duration-200", expandedGroups.has(group.label) && "rotate-180")} />
               </button>
             )}
             {(collapsed || expandedGroups.has(group.label)) && (
-              <div className="space-y-0.5 pb-1">
+              <div className="pb-1">
                 {group.items.map(item => (
-                  <SidebarNavItem key={item.path || item.label} item={item} collapsed={collapsed} />
+                  <SidebarNavItem key={item.path || item.label} item={item} collapsed={collapsed} onNavigate={handleNavigate} />
                 ))}
               </div>
             )}
@@ -261,7 +295,7 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
       </div>
 
       {/* Footer */}
-      <div className="border-t border-sidebar-border/80 p-2 flex-shrink-0 space-y-1">
+      <div className="border-t border-slate-100 flex-shrink-0 py-1">
         <button
           onClick={() => {
             const newLang = isAr ? "en" : "ar";
@@ -270,20 +304,20 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
             document.documentElement.dir = newLang === "ar" ? "rtl" : "ltr";
             document.documentElement.lang = newLang;
           }}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/70 transition-all text-sm"
+          className="w-full flex items-center gap-3 px-4 py-2.5 text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition-colors text-sm"
           title={collapsed ? (isAr ? "English" : "عربي") : undefined}
           data-testid="button-sidebar-language-toggle"
         >
           <Globe className="w-4 h-4 flex-shrink-0" />
-          {!collapsed && <span className="font-medium">{isAr ? "English" : "عربي"}</span>}
+          {!collapsed && <span className={cn("flex-1 font-medium", isAr ? "text-right" : "text-left")}>{isAr ? "English" : "عربي"}</span>}
         </button>
         <button
           onClick={onLogout}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sidebar-foreground/70 hover:text-destructive hover:bg-destructive/10 transition-all text-sm"
+          className="w-full flex items-center gap-3 px-4 py-2.5 text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors text-sm"
           title={collapsed ? (isAr ? "تسجيل الخروج" : "Logout") : undefined}
         >
           <LogOut className="w-4 h-4 flex-shrink-0" />
-          {!collapsed && <span className="font-medium">{isAr ? "تسجيل الخروج" : "Logout"}</span>}
+          {!collapsed && <span className={cn("flex-1 font-medium", isAr ? "text-right" : "text-left")}>{isAr ? "تسجيل الخروج" : "Logout"}</span>}
         </button>
       </div>
     </div>
@@ -292,7 +326,7 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
   return (
     <>
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex h-screen sticky top-0 flex-shrink-0">
+      <aside className="hidden lg:flex h-[100dvh] sticky top-0 flex-shrink-0">
         {sidebarContent}
       </aside>
 
@@ -300,7 +334,7 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
       {mobileOpen && (
         <>
           <div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={onMobileClose} />
-          <aside className="fixed right-0 top-0 h-full z-50 flex lg:hidden">
+          <aside className={cn("fixed top-0 h-[100dvh] z-50 flex lg:hidden shadow-2xl", isAr ? "right-0" : "left-0")}>
             {sidebarContent}
           </aside>
         </>
@@ -326,7 +360,7 @@ export function MobileBottomNav({ manager }: { manager: any }) {
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-30 lg:hidden bg-background/95 border-t border-border/80 shadow-[0_-8px_24px_rgba(24,55,44,.08)] backdrop-blur-xl">
+    <nav className="fixed bottom-0 left-0 right-0 z-30 lg:hidden bg-white border-t border-slate-100 shadow-md">
       <div className="flex items-center justify-around px-1 py-1 safe-area-pb">
         {items.map(item => {
           const isActive = location === item.path;
@@ -334,7 +368,7 @@ export function MobileBottomNav({ manager }: { manager: any }) {
             <button
               key={item.path}
               onClick={() => navigate(item.path)}
-              className={cn("flex flex-col items-center gap-1 px-2 py-2 rounded-xl flex-1 transition-colors", isActive ? "bg-primary/10" : "hover:bg-muted/70")}
+              className={cn("flex flex-col items-center gap-1 px-2 py-2 rounded-xl flex-1 transition-colors", isActive ? "bg-primary/5" : "hover:bg-slate-50")}
             >
               <item.icon className={cn("w-5 h-5 transition-transform", isActive ? "text-primary" : "text-muted-foreground")} />
               <span className={cn("text-[10px] font-medium", isActive ? "text-primary" : "text-muted-foreground")}>{item.label}</span>

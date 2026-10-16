@@ -17,7 +17,6 @@ import SarIcon from "@/components/sar-icon";
 import DashboardAnalyticsPanel from "@/components/dashboard-analytics-panel";
 import TopProductsWidget from "@/components/top-products-widget";
 import { useTranslate } from "@/lib/useTranslate";
-import { ManagerSidebar, MobileBottomNav } from "@/components/manager-sidebar";
 import { apiRequest } from "@/lib/queryClient";
 
 const COLORS = ["#2D9B6E", "#3b82f6", "#f59e0b", "#ec4899", "#8b5cf6", "#06b6d4"];
@@ -25,30 +24,17 @@ const COLORS = ["#2D9B6E", "#3b82f6", "#f59e0b", "#ec4899", "#8b5cf6", "#06b6d4"
 export default function AdminDashboard() {
   const [, navigate] = useLocation();
   const tc = useTranslate();
-  const [manager, setManager] = useState<any>(null);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [aiInsights, setAiInsights] = useState<string[]>([]);
   const [loadingInsights, setLoadingInsights] = useState(false);
 
   useEffect(() => {
     document.title = tc("لوحة تحكم الإدارة", "Admin Dashboard") + " - CLUNY CAFE";
-    const stored = localStorage.getItem("currentEmployee");
-    if (stored) {
-      try { setManager(JSON.parse(stored)); } catch {}
-    }
   }, []);
 
   const { data: employees = [] } = useQuery<any[]>({ queryKey: ['/api/employees'] });
   const { data: orders = [] } = useQuery<any[]>({ queryKey: ['/api/orders'] });
   const { data: attendance = [] } = useQuery<any[]>({ queryKey: ['/api/attendance'], retry: false });
   const { data: leaveRequests = [] } = useQuery<any[]>({ queryKey: ['/api/leave-requests'], retry: false });
-  const { data: businessConfig } = useQuery<any>({ queryKey: ['/api/business-config'] });
-
-  const handleLogout = () => {
-    localStorage.removeItem("currentEmployee");
-    navigate("/manager/login");
-  };
-
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -171,48 +157,7 @@ export default function AdminDashboard() {
   );
 
   return (
-    <div className="flex min-h-[100dvh] overflow-hidden bg-background" dir={tc('rtl','ltr')}>
-      <ManagerSidebar
-        manager={manager}
-        onLogout={handleLogout}
-        mobileOpen={mobileMenuOpen}
-        onMobileClose={() => setMobileMenuOpen(false)}
-        role={manager?.role}
-      />
-
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0 bg-background">
-        {/* Header */}
-        <header className="flex-shrink-0 bg-background/90 border-b border-border/80 px-4 lg:px-6 py-3 flex items-center justify-between gap-3 shadow-sm backdrop-blur-xl">
-          <div className="flex items-center gap-3">
-            <button
-              className="lg:hidden w-10 h-10 flex items-center justify-center rounded-xl bg-card border border-border text-muted-foreground hover:text-foreground hover:bg-muted"
-              onClick={() => setMobileMenuOpen(true)}
-            >
-              <BarChart3 className="w-4 h-4" />
-            </button>
-            <div>
-              <div className="flex items-center gap-2">
-                <div className="text-gray-900 font-bold text-sm">{tc("مرحباً،", "Hello,")} <span className="text-[#2D9B6E]">{manager?.fullName || tc("المدير", "Manager")}</span></div>
-                <span className="text-[10px] px-2 py-0.5 rounded-full font-medium border bg-[#EDF7F2] text-[#2D9B6E] border-[#D8EEE3]">
-                  {manager?.role === 'admin' ? tc('مدير عام', 'Admin') : manager?.role === 'owner' ? tc('مالك', 'Owner') : tc('مدير', 'Manager')}
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground">{tc("نظرة شاملة على أداء الكافيه", "Complete cafe overview")}</p>
-            </div>
-          </div>
-          <h1 className="hidden md:block text-sm font-semibold text-foreground">{tc("لوحة التحكم", "Dashboard")}</h1>
-          <div className="flex items-center gap-2">
-            <Badge variant="secondary" className="text-xs font-medium text-[#2D9B6E] bg-[#EDF7F2] border border-[#D8EEE3]">
-              {businessConfig?.businessName || "CLUNY CAFE"}
-            </Badge>
-            <Button variant="outline" size="sm" onClick={() => navigate('/admin/settings')}>
-              <Settings className="w-4 h-4" />
-            </Button>
-          </div>
-        </header>
-
-        {/* Main Content */}
-        <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-5 space-y-5 pb-24 lg:pb-5">
+    <div className="px-4 lg:px-6 py-5 space-y-5 pb-6">
 
           {/* KPI Cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -473,10 +418,6 @@ export default function AdminDashboard() {
               </CardContent>
             </Card>
           </div>
-        </div>
-
-        <MobileBottomNav manager={manager} />
-      </div>
     </div>
   );
 }

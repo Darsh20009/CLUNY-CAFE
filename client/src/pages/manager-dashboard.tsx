@@ -16,12 +16,11 @@ import { LoadingState, EmptyState, ErrorState } from "@/components/ui/states";
 import BranchLocationPicker from "@/components/branch-location-picker";
 import CouponManagement from "@/components/coupon-management";
 import { DeliveryManagement } from "@/components/delivery-management";
-import { ManagerSidebar, MobileBottomNav } from "@/components/manager-sidebar";
 import { 
  Coffee, Users, ShoppingBag, TrendingUp, DollarSign, 
  Package, MapPin, Layers, ArrowLeft, Calendar, Warehouse,
  UserCheck, Receipt, BarChart3, Download, TrendingDown, Activity, Plus, Trash2, ExternalLink, Edit2, Search,
- Gift, Star, Banknote, Menu, Zap, Clock, Target, ChevronUp, ChevronDown, LogOut
+ Gift, Star, Banknote, Zap, Clock, Target, ChevronUp, ChevronDown, LogOut
 } from "lucide-react";
 import * as XLSX from 'xlsx';
 import { 
@@ -124,7 +123,6 @@ export default function ManagerDashboard() {
  const { toast } = useToast();
  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
  const [ordersDisplayLimit, setOrdersDisplayLimit] = useState(20);
- const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
  const deleteOrdersMutation = useMutation({
    mutationFn: async (ids: string[]) => {
@@ -795,29 +793,9 @@ export default function ManagerDashboard() {
 
  return (
  <>
- <div className="flex h-screen overflow-hidden bg-background" style={{ fontFamily: "'Cairo', sans-serif" }}>
-
-   {/* ─── SIDEBAR ─── */}
-   <ManagerSidebar
-     manager={manager}
-     onLogout={handleLogout}
-     mobileOpen={mobileMenuOpen}
-     onMobileClose={() => setMobileMenuOpen(false)}
-     role={manager?.role}
-   />
-
-   {/* ─── MAIN CONTENT ─── */}
-   <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-
      {/* TOP HEADER */}
      <header className="flex-shrink-0 bg-background border-b border-border px-4 lg:px-6 py-3 flex items-center justify-between gap-3">
        <div className="flex items-center gap-3">
-         <button
-           className="lg:hidden w-9 h-9 flex items-center justify-center rounded-xl bg-muted text-muted-foreground hover:text-foreground"
-           onClick={() => setMobileMenuOpen(true)}
-         >
-           <Menu className="w-5 h-5" />
-         </button>
          <div className="hidden sm:block">
            <div className="flex items-center gap-2">
              <div className="text-foreground font-bold text-sm">{greeting}، <span className="text-[#2D9B6E]">{manager.fullName}</span></div>
@@ -1907,9 +1885,6 @@ export default function ManagerDashboard() {
          </div>
        </div>
      </main>
-   </div>
- </div>
- <MobileBottomNav manager={manager} />
  {import.meta.env.DEV && <DemoDataManager open={demoManagerOpen} onOpenChange={setDemoManagerOpen} />}
  </>
  );

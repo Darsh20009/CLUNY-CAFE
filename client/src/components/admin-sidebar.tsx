@@ -10,12 +10,21 @@ import {
 import { Button } from '@/components/ui/button';
 import { brand } from "@/lib/brand";
 
-export function AdminSidebar() {
+interface AdminSidebarProps {
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+  onMobileOpen?: () => void;
+}
+
+export function AdminSidebar({ mobileOpen, onMobileClose, onMobileOpen }: AdminSidebarProps) {
   const [location, navigate] = useLocation();
   const { i18n } = useTranslation();
   const isAr = i18n.language !== 'en';
   const [collapsed, setCollapsed] = useState<string[]>([]);
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [localMobileOpen, setLocalMobileOpen] = useState(false);
+  const isMobileOpen = mobileOpen ?? localMobileOpen;
+  const closeMobile = onMobileClose ?? (() => setLocalMobileOpen(false));
+  const openMobile = onMobileOpen ?? (() => setLocalMobileOpen(true));
 
   const { data: unreadData } = useQuery<{ count: number }>({
     queryKey: ['/api/notifications/unread-count'],
@@ -27,12 +36,14 @@ export function AdminSidebar() {
   const groups = [
     {
       label: isAr ? "الرئيسية" : "Main",
+      icon: LayoutDashboard,
       items: [
         { label: isAr ? 'لوحة التحكم' : 'Dashboard', icon: LayoutDashboard, path: '/admin/dashboard' },
       ]
     },
     {
       label: isAr ? "العمليات" : "Operations",
+      icon: ClipboardList,
       items: [
         { label: isAr ? 'إدارة المأكولات والمشروبات' : 'Menu Management', icon: Coffee, path: '/employee/menu-management' },
         { label: isAr ? 'إدارة الطلبات' : 'Orders', icon: ClipboardList, path: '/manager/orders' },
@@ -43,6 +54,7 @@ export function AdminSidebar() {
     },
     {
       label: isAr ? "الإدارة" : "Management",
+      icon: Users,
       items: [
         { label: isAr ? 'الموظفون' : 'Employees', icon: Users, path: '/admin/employees' },
         { label: isAr ? 'الفروع' : 'Branches', icon: GitBranch, path: '/admin/branches' },
@@ -51,6 +63,7 @@ export function AdminSidebar() {
     },
     {
       label: isAr ? "التقارير والتحليلات" : "Reports & Analytics",
+      icon: BarChart2,
       items: [
         { label: isAr ? 'تقارير المنتجات التفصيلية' : 'Product Reports', icon: BarChart2, path: '/manager/product-reports', badge: isAr ? 'جديد' : 'New' },
         { label: isAr ? 'التقارير الإدارية' : 'Admin Reports', icon: FileText, path: '/admin/reports' },
@@ -59,6 +72,7 @@ export function AdminSidebar() {
     },
     {
       label: isAr ? "التواصل" : "Communication",
+      icon: Bell,
       items: [
         { label: isAr ? 'إرسال الإشعارات' : 'Send Notifications', icon: Bell, path: '/admin/notifications', isNotifications: true },
         { label: isAr ? 'التسويق البريدي' : 'Email Marketing', icon: Mail, path: '/admin/email' },
@@ -66,12 +80,14 @@ export function AdminSidebar() {
     },
     {
       label: isAr ? "المالية والأمان" : "Finance & Security",
+      icon: CreditCard,
       items: [
         { label: isAr ? 'سجل الدفعات والنظام' : 'Payments & System', icon: CreditCard, path: '/admin/payment-logs' },
       ]
     },
     {
       label: isAr ? "الإعدادات" : "Settings",
+      icon: Settings,
       items: [
         { label: isAr ? 'الإعدادات' : 'Settings', icon: Settings, path: '/admin/settings' },
         { label: isAr ? 'إدارة API' : 'API Management', icon: Code2, path: '/admin/api' },
@@ -85,27 +101,30 @@ export function AdminSidebar() {
 
   const SidebarContent = () => (
     <>
-      <div className="p-5 border-b border-sidebar-border">
-        <div className="flex items-center gap-3">
-          <img src={brand.logoStaff} alt={brand.nameEn} className="w-9 h-9 object-contain rounded-xl bg-card p-1 ring-1 ring-border/70" />
+      <div className="px-5 py-4 border-b border-slate-100">
+        <div className="flex items-center gap-2.5">
+          <img src={brand.logoStaff} alt={brand.nameEn} className="w-8 h-8 object-contain rounded-lg" />
           <div>
-            <h2 className="text-[12px] font-extrabold tracking-[.14em] text-sidebar-foreground leading-tight">{brand.nameEn}</h2>
-            <p className="text-[10px] text-sidebar-foreground/55">{isAr ? 'مساحة الإدارة' : 'Admin workspace'}</p>
+            <h2 className="text-sm font-black tracking-wide text-slate-900 leading-tight">{isAr ? brand.shortNameAr : brand.shortNameEn}</h2>
+            <p className="text-[10px] text-slate-500">{isAr ? 'مساحة الإدارة' : 'Admin workspace'}</p>
           </div>
         </div>
       </div>
 
-      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+      <nav className="flex-1 py-2 overflow-y-auto">
         {groups.map((group) => {
           const isCollapsed = collapsed.includes(group.label);
           return (
             <div key={group.label} className="mb-1">
               <button
                 onClick={() => toggleGroup(group.label)}
-                className="w-full flex items-center justify-between px-2 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
+                className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
               >
-                <span>{group.label}</span>
-                {isCollapsed ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
+                <span className="flex items-center gap-2.5">
+                  <group.icon className={`w-4 h-4 shrink-0 ${collapsed ? 'text-primary' : 'text-slate-500'}`} />
+                  {group.label}
+                </span>
+                {isCollapsed ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronUp className="w-3.5 h-3.5 text-slate-400" />}
               </button>
               {!isCollapsed && (
                 <div className="space-y-0.5">
@@ -116,25 +135,26 @@ export function AdminSidebar() {
                     return (
                       <button
                         key={item.path}
-                        onClick={() => { navigate(item.path); setMobileOpen(false); }}
-                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all text-right ${
+                         onClick={() => { navigate(item.path); closeMobile(); }}
+                        className={`relative w-full flex items-center gap-3 py-2 px-4 transition-colors text-sm ${
                           isActive
-                            ? 'bg-primary text-primary-foreground shadow-sm'
-                            : 'text-foreground hover:bg-primary/10'
+                          ? 'bg-primary/5 text-primary font-semibold'
+                          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                         }`}
                         data-testid={`sidebar-link-${item.path.split('/').pop()}`}
                       >
+                        {isActive && <span className={`absolute top-0 bottom-0 w-[3px] bg-primary ${isAr ? 'right-0' : 'left-0'}`} />}
                         <div className="relative shrink-0">
-                          <Icon className="w-3.5 h-3.5" />
+                          <Icon className={`w-4 h-4 ${isActive ? 'text-primary' : 'text-slate-400'}`} />
                           {showBadge && (
                             <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-3.5 px-0.5 rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center">
                               {unreadCount > 99 ? '99+' : unreadCount}
                             </span>
                           )}
                         </div>
-                        <span className="font-medium text-[13px] flex-1 truncate">{item.label}</span>
+                        <span className={`font-medium text-[13px] flex-1 truncate ${isAr ? 'text-right' : 'text-left'}`}>{item.label}</span>
                         {item.badge && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/20 text-primary font-bold shrink-0">{item.badge}</span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-bold shrink-0">{item.badge}</span>
                         )}
                         {showBadge && (
                           <span className="min-w-[18px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
@@ -151,15 +171,15 @@ export function AdminSidebar() {
         })}
       </nav>
 
-      <div className="p-3 border-t border-border">
+      <div className="py-1 border-t border-slate-100">
         <Button
           onClick={async () => {
             await fetch('/api/employees/logout', { method: 'POST' });
             localStorage.removeItem("qirox-restore-key");
             navigate('/employee/login');
           }}
-          variant="outline"
-          className="w-full justify-start text-sm"
+          variant="ghost"
+          className="w-full justify-start rounded-none px-4 py-2.5 text-sm text-slate-500 hover:text-red-600 hover:bg-red-50"
           data-testid="button-logout"
         >
           <LogOut className="w-4 h-4 ml-2" />
@@ -173,24 +193,25 @@ export function AdminSidebar() {
     <>
       {/* Mobile toggle button - only visible on small screens */}
       <button
-        onClick={() => setMobileOpen(true)}
-        className="lg:hidden fixed top-3 right-3 z-50 w-10 h-10 flex items-center justify-center rounded-xl bg-sidebar text-sidebar-foreground border border-sidebar-border shadow-lg"
+        onClick={openMobile}
+        aria-label={isAr ? "فتح القائمة" : "Open navigation"}
+        className={`lg:hidden fixed top-3 right-3 z-50 w-9 h-9 flex items-center justify-center rounded-lg bg-white text-slate-600 border border-slate-200 shadow-sm hover:bg-slate-50 ${onMobileOpen ? 'hidden' : ''}`}
       >
         <Menu className="w-4 h-4" />
       </button>
 
       {/* Mobile overlay */}
-      {mobileOpen && (
+      {isMobileOpen && (
         <div
-          className="lg:hidden fixed inset-0 bg-black/40 z-40 backdrop-blur-sm"
-          onClick={() => setMobileOpen(false)}
+          className="lg:hidden fixed inset-0 bg-black/40 z-40"
+          onClick={closeMobile}
         />
       )}
 
       {/* Mobile drawer */}
-      <div className={`lg:hidden fixed top-0 right-0 h-[100dvh] w-72 bg-sidebar border-l border-sidebar-border flex flex-col z-50 transition-transform duration-300 ${mobileOpen ? 'translate-x-0' : 'translate-x-full'}`}>
-        <div className="absolute top-3 left-3">
-          <button onClick={() => setMobileOpen(false)} className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-sidebar-accent">
+      <div className={`lg:hidden fixed top-0 ${isAr ? 'right-0 border-l' : 'left-0 border-r'} h-[100dvh] w-56 bg-white border-slate-200 flex flex-col z-50 transition-transform duration-300 ${isMobileOpen ? 'translate-x-0' : isAr ? 'translate-x-full' : '-translate-x-full'}`}>
+        <div className={`absolute top-3 ${isAr ? 'left-3' : 'right-3'}`}>
+          <button onClick={closeMobile} aria-label={isAr ? "إغلاق القائمة" : "Close navigation"} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -198,7 +219,7 @@ export function AdminSidebar() {
       </div>
 
       {/* Desktop sidebar */}
-      <div className="hidden lg:flex w-64 bg-sidebar border-l border-sidebar-border flex-col h-[100dvh] sticky top-0">
+      <div className={`hidden lg:flex w-56 bg-white ${isAr ? 'border-l' : 'border-r'} border-slate-200 flex-col h-[100dvh] sticky top-0`}>
         <SidebarContent />
       </div>
     </>

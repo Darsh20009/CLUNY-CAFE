@@ -13,7 +13,7 @@ import {
   Coffee, Database, Trash2, RefreshCw, AlertTriangle, 
   ShoppingCart, Users, Package, GitBranch, Settings,
   Calendar, CreditCard, Table, Clock, ChevronLeft, ChevronRight,
-  Eye, BarChart3, Shield, ArrowRight, Utensils, Menu, TrendingUp, Store,
+  Eye, BarChart3, Shield, ArrowRight, Utensils, TrendingUp, Store,
   MonitorSmartphone, ChefHat, LayoutGrid, FileBarChart2, Wallet, MapPin, ExternalLink,
   Activity, Wifi, Globe
 } from "lucide-react";
@@ -23,7 +23,6 @@ import type { Employee } from "@shared/schema";
 import SarIcon from "@/components/sar-icon";
 import DashboardAnalyticsPanel from "@/components/dashboard-analytics-panel";
 import TopProductsWidget from "@/components/top-products-widget";
-import { ManagerSidebar, MobileBottomNav } from "@/components/manager-sidebar";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Cell, PieChart, Pie, Legend
@@ -93,7 +92,6 @@ export default function OwnerDashboard() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [employee, setEmployee] = useState<Employee | null>(null);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [stats, setStats] = useState<DatabaseStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
@@ -393,23 +391,9 @@ export default function OwnerDashboard() {
   }
 
   return (
-    <div className="flex min-h-[100dvh] overflow-hidden bg-background" dir={tc('rtl','ltr')}>
-      <ManagerSidebar
-        manager={employee as any}
-        onLogout={() => { localStorage.removeItem("currentEmployee"); setLocation("/employee/gateway"); }}
-        mobileOpen={mobileMenuOpen}
-        onMobileClose={() => setMobileMenuOpen(false)}
-        role={employee?.role}
-      />
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+    <>
       <header className="flex-shrink-0 bg-background/90 border-b border-border/80 shadow-sm px-4 lg:px-6 py-3 flex items-center justify-between gap-3 backdrop-blur-xl">
         <div className="flex items-center gap-3">
-          <button
-            className="lg:hidden w-10 h-10 flex items-center justify-center rounded-xl bg-card border border-border text-muted-foreground hover:text-foreground hover:bg-muted"
-            onClick={() => setMobileMenuOpen(true)}
-          >
-            <Menu className="w-5 h-5" />
-          </button>
           <div>
             <div className="flex items-center gap-2">
               <div className="text-gray-900 font-bold text-sm">{tc("مرحباً،", "Hello,")} <span className="text-[#2D9B6E]">{employee?.fullName}</span></div>
@@ -1130,8 +1114,6 @@ export default function OwnerDashboard() {
         )}
         </div>
         </main>
-        <MobileBottomNav manager={employee as any} />
-      </div>
-    </div>
+    </>
   );
 }

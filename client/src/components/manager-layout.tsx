@@ -11,8 +11,25 @@ interface ManagerLayoutProps {
   children: ReactNode;
 }
 
+const managerPageTitles: Record<string, [string, string]> = {
+  "/manager/dashboard": ["لوحة المدير", "Manager dashboard"],
+  "/owner/dashboard": ["لوحة المالك", "Owner dashboard"],
+  "/manager/orders": ["الطلبات", "Orders"],
+  "/manager/attendance": ["الحضور والانصراف", "Attendance"],
+  "/manager/accounting": ["المحاسبة", "Accounting"],
+  "/manager/coupons": ["أكواد الخصم", "Discount codes"],
+  "/manager/loyalty": ["برنامج الولاء", "Loyalty program"],
+  "/manager/promotions": ["العروض", "Promotions"],
+  "/manager/delivery": ["التوصيل", "Delivery"],
+  "/manager/unified-reports": ["التقارير", "Reports"],
+  "/manager/inventory": ["المخزون", "Inventory"],
+  "/manager/tables": ["الطاولات", "Tables"],
+  "/manager/reservations": ["حجوزات الطاولات", "Reservations"],
+  "/admin/settings": ["إعدادات المتجر", "Store settings"],
+};
+
 export function ManagerLayout({ children }: ManagerLayoutProps) {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const { i18n } = useTranslation();
   const isAr = i18n.language.startsWith("ar");
@@ -23,6 +40,7 @@ export function ManagerLayout({ children }: ManagerLayoutProps) {
 
   const manager = session?.employee || session?.manager || null;
   const role = manager?.role || "manager";
+  const pageTitle = managerPageTitles[location]?.[isAr ? 0 : 1] || (isAr ? "مساحة التشغيل" : "Operations workspace");
 
   const handleLogout = async () => {
     await fetch("/api/employees/logout", { method: "POST" });
@@ -31,7 +49,7 @@ export function ManagerLayout({ children }: ManagerLayoutProps) {
   };
 
   return (
-    <div className="flex min-h-[100dvh] bg-background overflow-hidden" dir={isAr ? "rtl" : "ltr"}>
+    <div className="flex h-[100dvh] bg-[#f8f9fa] text-foreground overflow-hidden" dir={isAr ? "rtl" : "ltr"}>
       <ManagerSidebar
         manager={manager}
         onLogout={handleLogout}
@@ -39,31 +57,34 @@ export function ManagerLayout({ children }: ManagerLayoutProps) {
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
       />
-      <main className="flex-1 min-w-0 min-h-[100dvh] overflow-auto pb-20 lg:pb-0 relative">
-        <header className="sticky top-0 z-30 flex h-[62px] items-center justify-between gap-3 border-b border-border/80 bg-background/90 px-3 sm:px-5 backdrop-blur-xl">
-          <div className="flex min-w-0 items-center gap-3">
+      <main className="flex-1 min-w-0 min-h-0 overflow-auto pb-16 lg:pb-0 relative flex flex-col">
+        <header className="sticky top-0 z-30 flex min-h-[58px] items-center gap-3 border-b border-slate-200 bg-white px-3 sm:px-4 py-2 shrink-0">
+          <div className="flex min-w-0 items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => setMobileOpen(true)}
               aria-label={isAr ? "فتح القائمة" : "Open navigation"}
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-card text-foreground transition-colors hover:bg-muted lg:hidden"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 lg:hidden"
             >
-              <Menu className="h-4 w-4" />
+              <Menu className="h-5 w-5" />
             </button>
-            <img src={brand.logoStaff} alt={brand.nameEn} className="h-8 w-8 shrink-0 object-contain" />
-            <div className="min-w-0">
-              <p className="truncate text-[11px] font-bold tracking-[.16em] text-primary">{brand.nameEn}</p>
-              <p className="truncate text-xs text-muted-foreground">{isAr ? "مساحة التشغيل" : "Operations workspace"}</p>
+            <div className="hidden sm:flex items-center gap-2 border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white select-none">
+              <img src={brand.logoStaff} alt={brand.nameEn} className="h-6 w-6 shrink-0 object-contain" />
+              <span className="text-sm text-slate-700 font-medium max-w-[160px] truncate">
+                {isAr ? brand.nameAr : brand.nameEn}
+              </span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="hidden rounded-full border border-primary/15 bg-primary/5 px-3 py-1 text-xs font-medium text-primary sm:inline-flex">
-              {isAr ? "متصل بالنظام" : "System online"}
-            </span>
+
+          <div className="flex-1 min-w-0 text-center text-sm font-semibold text-slate-700">
+            <div className="truncate">{pageTitle}</div>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
             <ManagerNotificationCenter />
           </div>
         </header>
-        {children}
+        <div className="flex-1 min-h-0 overflow-auto">{children}</div>
       </main>
       <MobileBottomNav manager={manager} />
     </div>

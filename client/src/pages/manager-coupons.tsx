@@ -5,7 +5,8 @@ import { useTranslation } from "react-i18next";
 export default function ManagerCouponsPage() {
   const { i18n } = useTranslation();
   const isAr = i18n.language.startsWith("ar");
-  const { data: manager, isLoading, isError } = useQuery<any>({ queryKey: ["/api/verify-session"] });
+  const { data: session, isLoading, isError } = useQuery<any>({ queryKey: ["/api/verify-session"] });
+  const manager = session?.employee || session?.manager || (session?.id ? session : null);
 
   return (
     <div className="min-h-full bg-[#F7F9F8] p-4 sm:p-6 lg:p-8" dir={isAr ? "rtl" : "ltr"}>

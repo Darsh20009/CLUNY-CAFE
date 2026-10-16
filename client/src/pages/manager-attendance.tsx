@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import * as XLSX from 'xlsx';
 import type { Employee } from "@shared/schema";
-import { MobileBottomNav } from "@/components/MobileBottomNav";
 import AppleMap, { MapLocation } from "@/components/apple-map";
 
 
@@ -1427,7 +1426,6 @@ export default function ManagerAttendance() {
           </div>
         )}
       </div>
-      <MobileBottomNav />
     </div>
   );
 }

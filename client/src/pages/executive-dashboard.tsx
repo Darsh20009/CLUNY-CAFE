@@ -12,9 +12,8 @@ import {
   Coffee, Package, BarChart3, Calendar, ArrowUpRight, ArrowDownRight,
   Wallet, CreditCard, Building2, ChefHat, Settings, LogOut,
   FileText, PieChart, Activity, Target, Award, Sparkles,
-  GitCompare, UserCheck, Clock, Briefcase, Menu
+  GitCompare, UserCheck, Clock, Briefcase
 } from "lucide-react";
-import { ManagerSidebar, MobileBottomNav } from "@/components/manager-sidebar";
 import { 
   AreaChart, Area, BarChart, Bar, 
   PieChart as RechartsPie, Pie, Cell,
@@ -29,7 +28,6 @@ export default function ExecutiveDashboard() {
   const [, setLocation] = useLocation();
   const [manager, setManager] = useState<Employee | null>(null);
   const [dateFilter, setDateFilter] = useState<"today" | "week" | "month" | "year">("month");
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const storedEmployee = localStorage.getItem("currentEmployee");
@@ -263,29 +261,10 @@ export default function ExecutiveDashboard() {
     };
   })();
 
-  const handleLogout = () => {
-    localStorage.removeItem("currentEmployee");
-    setLocation("/employee/gateway");
-  };
-
   return (
-    <div className="flex h-screen overflow-hidden bg-background" style={{ fontFamily: "'Cairo', sans-serif" }}>
-      <ManagerSidebar
-        manager={manager as any}
-        onLogout={handleLogout}
-        mobileOpen={mobileMenuOpen}
-        onMobileClose={() => setMobileMenuOpen(false)}
-        role={manager?.role}
-      />
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+    <>
       <header className="flex-shrink-0 bg-background border-b border-border px-4 lg:px-6 py-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <button
-            className="lg:hidden w-9 h-9 flex items-center justify-center rounded-xl bg-muted text-muted-foreground hover:text-foreground"
-            onClick={() => setMobileMenuOpen(true)}
-          >
-            <Menu className="w-5 h-5" />
-          </button>
           <div className="hidden sm:block">
             <div className="flex items-center gap-2">
               <div className="text-foreground font-bold text-sm">{tc("مرحباً،", "Hello,")} <span className="text-[#2D9B6E]">{manager.fullName}</span></div>
@@ -747,8 +726,6 @@ export default function ExecutiveDashboard() {
         </div>
       </div>
       </main>
-      <MobileBottomNav manager={manager as any} />
-      </div>
-    </div>
+    </>
   );
 }
