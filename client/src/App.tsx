@@ -110,6 +110,8 @@ const AIAutomation = lazy(() => import("@/pages/ai-automation"));
 const EcosystemHub = lazy(() => import("@/pages/ecosystem-hub"));
 const AdminReports = lazy(() => import("@/pages/admin-reports"));
 const AdminSettings = lazy(() => import("@/pages/admin-settings"));
+const AdminSetupWizard = lazy(() => import("@/pages/admin-setup-wizard"));
+const ManagerCouponsPage = lazy(() => import("@/pages/manager-coupons"));
 const AdminBranches = lazy(() => import("@/pages/admin-branches"));
 const AdminEmail = lazy(() => import("@/pages/admin-email"));
 const AdminPaymentLogs = lazy(() => import("@/pages/admin-payment-logs"));
@@ -174,6 +176,7 @@ const GeneralCheckin = lazy(() => import("@/pages/general-checkin"));
 const OnboardingPage = lazy(() => import("@/pages/onboarding"));
 const PaymentTerminalControl = lazy(() => import("@/pages/payment-terminal-control"));
 const SystemDiagnostics = lazy(() => import("@/pages/system-diagnostics"));
+const SystemQualityDashboard = lazy(() => import("@/pages/system-quality-dashboard"));
 import clunyLogo from "@assets/cluny-logo-customer.png";
 import clunyLogoStaff from "@assets/cluny-logo-staff.png";
 import { brand } from "@/lib/brand";
@@ -352,6 +355,7 @@ function AppRouter() {
       <Route path="/manager/employees"><AuthGuard userType="employee" allowedRoles={["manager", "admin", "owner"]}><ManagerEmployees /></AuthGuard></Route>
       <Route path="/manager/drivers"><AuthGuard userType="manager"><ManagerDrivers /></AuthGuard></Route>
       <Route path="/manager/dashboard"><AuthGuard userType="manager"><ManagerDashboard /></AuthGuard></Route>
+      <Route path="/manager/coupons"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><ManagerLayout><ManagerCouponsPage /></ManagerLayout></AuthGuard></Route>
       <Route path="/manager/tables"><AuthGuard userType="manager"><ManagerTables /></AuthGuard></Route>
       <Route path="/manager/attendance"><AuthGuard userType="manager"><ManagerAttendance /></AuthGuard></Route>
       <Route path="/manager/inventory"><AuthGuard userType="manager"><InventorySmartPage /></AuthGuard></Route>
@@ -411,6 +415,7 @@ function AppRouter() {
       <Route path="/manager/product-reports"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><ManagerLayout><ProductReports /></ManagerLayout></AuthGuard></Route>
       <Route path="/manager/payment-terminal"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner", "cashier", "branch_manager"]}><PaymentTerminalControl /></AuthGuard></Route>
       <Route path="/manager/system-diagnostics"><AuthGuard userType="manager" allowedRoles={["manager", "admin", "owner"]}><SystemDiagnostics /></AuthGuard></Route>
+      <Route path="/manager/system-quality"><AuthGuard userType="manager" allowedRoles={["admin", "owner"]}><ManagerLayout><SystemQualityDashboard /></ManagerLayout></AuthGuard></Route>
       {/* Owner protected routes */}
       <Route path="/owner/dashboard"><AuthGuard userType="manager" allowedRoles={["owner", "admin"]}><OwnerDashboard /></AuthGuard></Route>
       <Route path="/owner/branch/:branchId"><AuthGuard userType="manager" allowedRoles={["owner", "admin"]}><BranchAnalytics /></AuthGuard></Route>
@@ -424,6 +429,7 @@ function AppRouter() {
       <Route path="/admin/employees"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminEmployees /></AdminLayout></AuthGuard></Route>
       <Route path="/admin/reports"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminReports /></AdminLayout></AuthGuard></Route>
       <Route path="/admin/settings"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminSettings /></AdminLayout></AuthGuard></Route>
+      <Route path="/admin/setup-wizard"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminSetupWizard /></AdminLayout></AuthGuard></Route>
       <Route path="/admin/branches"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminBranches /></AdminLayout></AuthGuard></Route>
       <Route path="/admin/email"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminEmail /></AdminLayout></AuthGuard></Route>
       <Route path="/admin/payment-logs"><AuthGuard userType="manager" allowedRoles={["owner", "admin", "manager"]}><AdminLayout><AdminPaymentLogs /></AdminLayout></AuthGuard></Route>

@@ -393,7 +393,7 @@ export default function OwnerDashboard() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background" dir={tc('rtl','ltr')} style={{ fontFamily: "'Cairo', sans-serif" }}>
+    <div className="flex h-screen overflow-hidden bg-[#F7F9F8]" dir={tc('rtl','ltr')} style={{ fontFamily: "'Cairo', sans-serif" }}>
       <ManagerSidebar
         manager={employee as any}
         onLogout={() => { localStorage.removeItem("currentEmployee"); setLocation("/employee/gateway"); }}
@@ -402,27 +402,25 @@ export default function OwnerDashboard() {
         role={employee?.role}
       />
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-      <header className="flex-shrink-0 bg-background border-b border-border px-4 lg:px-6 py-3 flex items-center justify-between gap-3">
+      <header className="flex-shrink-0 bg-white border-b border-gray-200 shadow-sm px-4 lg:px-6 py-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <button
-            className="lg:hidden w-9 h-9 flex items-center justify-center rounded-xl bg-muted text-muted-foreground hover:text-foreground"
+            className="lg:hidden w-9 h-9 flex items-center justify-center rounded-lg bg-gray-50 text-gray-600 hover:text-gray-900 hover:bg-gray-100"
             onClick={() => setMobileMenuOpen(true)}
           >
             <Menu className="w-5 h-5" />
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <div className="text-foreground font-bold text-sm">{tc("مرحباً،", "Hello,")} <span className="text-[#2D9B6E]">{employee?.fullName}</span></div>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium border ${
-                employee?.role === 'admin' ? 'bg-purple-500/15 text-purple-400 border-purple-500/30' :
-                'bg-amber-500/15 text-amber-400 border-amber-500/30'
-              }`}>
+              <div className="text-gray-900 font-bold text-sm">{tc("مرحباً،", "Hello,")} <span className="text-[#2D9B6E]">{employee?.fullName}</span></div>
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-medium border bg-[#EDF7F2] text-[#2D9B6E] border-[#D8EEE3]">
                 {employee?.role === 'admin' ? tc('مدير عام', 'Admin') : tc('مالك', 'Owner')}
               </span>
             </div>
             <p className="text-xs text-muted-foreground">{tc("إدارة قاعدة البيانات والصلاحيات", "Database & permissions management")}</p>
           </div>
         </div>
+        <h1 className="hidden md:block text-sm font-semibold text-gray-700">{tc("لوحة المالك", "Owner dashboard")}</h1>
         <div className="flex items-center gap-2 flex-wrap">
           <Button variant="outline" size="sm" onClick={() => setLocation("/employee/menu-management")} data-testid="button-owner-manage-drinks">
             <Coffee className="w-4 h-4 ml-2" />{tc("المشروبات", "Drinks")}

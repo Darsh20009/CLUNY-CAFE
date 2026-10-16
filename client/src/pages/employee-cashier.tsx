@@ -1980,7 +1980,7 @@ export default function EmployeeCashier() {
  {/* Hidden auto-print — same ReceiptInvoice component as the orders page, variant="auto" fires when QR codes are ready */}
  {pendingAutoPrintOrder && (
    <div style={{ position: 'fixed', left: '-9999px', top: 0, width: '80mm', pointerEvents: 'none', opacity: 0 }} aria-hidden="true">
-     <ReceiptInvoice key={pendingAutoPrintOrder._autoPrintKey} order={pendingAutoPrintOrder} variant="auto" />
+     <ReceiptInvoice key={pendingAutoPrintOrder._autoPrintKey} order={pendingAutoPrintOrder} variant="auto" surface="cashier" />
    </div>
  )}
 

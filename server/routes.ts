@@ -24457,6 +24457,58 @@ ${existingIngredients ? `المكونات الحالية: ${existingIngredients}
     } catch (e: any) { res.status(500).json({ error: "Internal server error" }); }
   });
 
+  // Recent server-error requests. Return only operational fields; never expose
+  // user IDs, IP addresses, user agents, or request bodies in the log viewer.
+  app.get("/api/error-logs", requireAuth, requireManager, async (req: AuthRequest, res) => {
+    try {
+      const requestedHours = Number(req.query.hours);
+      const hours = [1, 24, 168].includes(requestedHours) ? requestedHours : 24;
+      const requestedLimit = Number(req.query.limit);
+      const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(200, Math.floor(requestedLimit))) : 50;
+      const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+      const filter: any = { isError: true, createdAt: { $gte: since } };
+      const role = req.employee?.role;
+      const isSuperAdmin = role === "owner" || role === "admin";
+      if (!isSuperAdmin) {
+        const tenantId = req.employee?.tenantId || "demo-tenant";
+        filter.$or = [{ tenantId }, { tenantId: { $exists: false } }];
+      }
+
+      const { ApiMetricModel } = await import("@shared/schema");
+      const [records, total] = await Promise.all([
+        ApiMetricModel.find(filter)
+          .sort({ createdAt: -1 })
+          .limit(limit)
+          .select("id method path statusCode durationMs errorMessage createdAt")
+          .lean(),
+        ApiMetricModel.countDocuments(filter),
+      ]);
+
+      const logs = records.map((record: any) => {
+        const message = typeof record.errorMessage === "string"
+          ? record.errorMessage
+              .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+              .replace(/(password|token|secret|api[_-]?key)\s*[:=]\s*[^,;\s]+/gi, "$1=[redacted]")
+              .slice(0, 300)
+          : "";
+        return {
+          id: String(record.id || record._id),
+          method: String(record.method || ""),
+          path: String(record.path || ""),
+          statusCode: Number(record.statusCode) || 0,
+          durationMs: Number(record.durationMs) || 0,
+          errorMessage: message,
+          createdAt: record.createdAt,
+        };
+      });
+
+      res.json({ logs, total, hours, retentionDays: 7 });
+    } catch (error) {
+      console.error("Error loading API error logs:", error);
+      res.status(500).json({ error: "Failed to load error logs" });
+    }
+  });
+
   // Clear cache (manager only)
   app.post("/api/performance/cache/clear", requireAuth, requireManager, async (req: AuthRequest, res) => {
     try {

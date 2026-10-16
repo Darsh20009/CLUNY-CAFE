@@ -137,19 +137,40 @@ export function InvoiceTemplateSettings() {
               <p className="text-xs text-muted-foreground">{tc("القالب الافتراضي يحافظ على تنسيق كلوني؛ ويمكنك تغيير العناصر الظاهرة في أي نمط.", "The default preserves CLUNY's receipt layout; visible elements can be changed in either mode.")}</p>
             </div>
             <div className="space-y-2">
+              <Label htmlFor="invoice-template-style">{tc("شكل الفاتورة", "Receipt style")}</Label>
+              <select
+                id="invoice-template-style"
+                value={draft.templateStyle}
+                onChange={(event) => {
+                  const templateStyle = event.target.value as InvoiceSettings["templateStyle"];
+                  setDraft((current) => ({
+                    ...current,
+                    templateStyle,
+                    headerArtwork: templateStyle === "patriotic" ? "campaign" : "none",
+                  }));
+                }}
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+              >
+                <option value="standard">{tc("الشكل العادي الحالي", "Standard receipt")}</option>
+                <option value="patriotic">{tc("بالغوا بالدفاع عن الوطن", "Patriotic campaign")}</option>
+              </select>
+              <p className="text-xs text-muted-foreground">{tc("الشكل الوطني يضع الصورة بعرض الإيصال بالكامل، ثم رقم الطلب تحتها مباشرة.", "The campaign style prints the artwork full-width, with the order number directly below.")}</p>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="invoice-header-artwork">{tc("الصورة أعلى الفاتورة", "Top invoice artwork")}</Label>
               <select
                 id="invoice-header-artwork"
                 value={draft.headerArtwork}
                 onChange={(event) => setDraft((current) => ({ ...current, headerArtwork: event.target.value as InvoiceSettings["headerArtwork"] }))}
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                disabled={draft.mode !== "custom"}
               >
                 <option value="campaign">{tc("صورة «بالغوا بالدفاع عن وطنكم»", "Patriotic campaign image")}</option>
                 <option value="logo">{tc("شعار كلوني", "CLUNY logo")}</option>
                 <option value="custom">{tc("رابط صورة مخصص", "Custom image URL")}</option>
                 <option value="none">{tc("بدون صورة", "No image")}</option>
               </select>
-              {draft.headerArtwork === "custom" && (
+              {draft.mode === "custom" && draft.headerArtwork === "custom" && (
                 <Input
                   value={draft.customArtworkUrl}
                   onChange={(event) => setDraft((current) => ({ ...current, customArtworkUrl: event.target.value }))}
@@ -199,6 +220,7 @@ export function InvoiceTemplateSettings() {
               >
                 <option value="all">{tc("كل الفواتير", "All receipts")}</option>
                 <option value="customer">{tc("فاتورة العميل", "Customer receipt")}</option>
+                <option value="cashier">{tc("إيصال الكاشير", "Cashier receipt")}</option>
                 <option value="staff">{tc("طلبات الموظفين", "Staff orders")}</option>
               </select>
               <Button type="button" variant="outline" onClick={addQr} className="gap-2">
@@ -220,7 +242,12 @@ export function InvoiceTemplateSettings() {
                     <div className="min-w-0 flex-1">
                       <p className="font-medium text-sm">{qr.label}</p>
                       <p className="truncate text-xs text-muted-foreground" dir="ltr">{qr.content}</p>
-                      <p className="text-xs text-muted-foreground">{tc(`مكان العرض: ${qr.surface}`, `Display: ${qr.surface}`)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {tc(
+                          `مكان العرض: ${{ all: "كل الفواتير", customer: "فاتورة العميل", cashier: "إيصال الكاشير", staff: "طلبات الموظفين" }[qr.surface]}`,
+                          `Display: ${{ all: "All receipts", customer: "Customer receipt", cashier: "Cashier receipt", staff: "Staff orders" }[qr.surface]}`,
+                        )}
+                      </p>
                     </div>
                     <Button
                       type="button"

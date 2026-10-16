@@ -889,8 +889,10 @@ export async function buildReceiptCanvas(opts: ReceiptBitmapOpts): Promise<HTMLC
 
   // Artwork is first; the order number follows directly beneath it.
   if (show('headerArtwork') && artworkImg && artworkImg.naturalWidth > 0) {
-    addImg(artworkImg, Math.round(DW * 0.88), Math.round(FS * 19));
-    addGap(6);
+    addImg(artworkImg, CONTENT_W);
+    // Canvas text is drawn from a baseline, so leave enough room for tall glyphs
+    // beneath the full-height campaign poster before rendering the order number.
+    addGap(Math.round(FS * 2.2));
   }
 
   if (show('orderNumber')) {

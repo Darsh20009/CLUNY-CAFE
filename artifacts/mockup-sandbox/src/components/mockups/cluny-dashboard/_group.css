@@ -1,0 +1,42 @@
+@import url("https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Tajawal:wght@400;500;700;800&display=swap");
+
+.cluny-dashboard-preview {
+  --background: 0 0% 100%;
+  --foreground: 0 0% 0%;
+  --card: 0 0% 98%;
+  --card-foreground: 0 0% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 10%;
+  --primary: 155 55% 39%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 85%;
+  --secondary-foreground: 0 0% 20%;
+  --muted: 0 0% 94%;
+  --muted-foreground: 0 0% 45%;
+  --accent: 207 90% 54%;
+  --accent-foreground: 0 0% 100%;
+  --border: 0 0% 90%;
+  --input: 0 0% 92%;
+  --ring: 155 55% 39%;
+  --chart-1: 160 55% 42%;
+  --chart-2: 200 70% 50%;
+  --chart-3: 160 70% 40%;
+  --chart-4: 0 75% 55%;
+  --chart-5: 270 60% 55%;
+  --radius: 0.625rem;
+}
+
+.cluny-dashboard-preview .mock-data-flag {
+  position: fixed;
+  z-index: 100;
+  bottom: 10px;
+  left: 10px;
+  border: 1px solid #d9e5dc;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 5px 10px;
+  color: #647067;
+  font: 600 10px/1.2 "Cairo", sans-serif;
+  box-shadow: 0 2px 8px rgba(20, 40, 28, 0.08);
+  pointer-events: none;
+}

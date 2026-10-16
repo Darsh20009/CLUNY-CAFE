@@ -1,4 +1,4 @@
-export type InvoiceSurface = "customer" | "staff";
+export type InvoiceSurface = "customer" | "cashier" | "staff";
 export type InvoiceQrSurface = "all" | InvoiceSurface;
 
 export interface InvoiceQr {
@@ -11,6 +11,7 @@ export interface InvoiceQr {
 
 export interface InvoiceSettings {
   mode: "default" | "custom";
+  templateStyle: "standard" | "patriotic";
   headerArtwork: "campaign" | "logo" | "custom" | "none";
   customArtworkUrl: string;
   elements: Record<string, boolean>;
@@ -19,7 +20,8 @@ export interface InvoiceSettings {
 
 export const DEFAULT_INVOICE_SETTINGS: InvoiceSettings = {
   mode: "default",
-  headerArtwork: "campaign",
+  templateStyle: "standard",
+  headerArtwork: "none",
   customArtworkUrl: "",
   elements: {
     headerArtwork: true,
@@ -42,9 +44,19 @@ export const DEFAULT_INVOICE_SETTINGS: InvoiceSettings = {
 };
 
 export function normalizeInvoiceSettings(value: any): InvoiceSettings {
+  const mode = value?.mode === "custom" ? "custom" : "default";
+  const templateStyle = value?.templateStyle === "patriotic" ? "patriotic" : "standard";
+  const requestedArtwork = ["campaign", "logo", "custom", "none"].includes(value?.headerArtwork)
+    ? value.headerArtwork
+    : DEFAULT_INVOICE_SETTINGS.headerArtwork;
   return {
     ...DEFAULT_INVOICE_SETTINGS,
     ...(value && typeof value === "object" ? value : {}),
+    mode,
+    templateStyle,
+    headerArtwork: templateStyle === "patriotic"
+      ? (mode === "default" ? "campaign" : requestedArtwork)
+      : (mode === "default" ? "none" : requestedArtwork),
     elements: {
       ...DEFAULT_INVOICE_SETTINGS.elements,
       ...(value?.elements && typeof value.elements === "object" ? value.elements : {}),
@@ -56,7 +68,7 @@ export function normalizeInvoiceSettings(value: any): InvoiceSettings {
             id: qr.id,
             label: String(qr.label || ""),
             content: String(qr.content || ""),
-            surface: ["all", "customer", "staff"].includes(qr.surface) ? qr.surface : "all",
+            surface: ["all", "customer", "cashier", "staff"].includes(qr.surface) ? qr.surface : "all",
             enabled: qr.enabled !== false,
           }))
       : [],

@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Save, Shield, Bell, Palette, Database, Plus, Store, Utensils, Coffee, AlertTriangle, Layout, ShieldAlert, Users, Loader2, Trash2, FolderTree, Flame, Snowflake, Star, Cake, Sparkles, GripVertical, Pencil, CreditCard, Wifi, WifiOff, Eye, EyeOff, ExternalLink, CheckCircle, XCircle, Banknote, Smartphone, Gift, Percent, Tag, Ticket, Download, Globe, Package, ChevronDown, ChevronUp, MonitorSmartphone, MapPin, Navigation, FlaskConical, ShoppingBag, Truck, Timer, Car, Clock, Zap, Volume2, Settings, FileText } from 'lucide-react';
 import { SoundSettingsPanel } from "@/components/sound-settings-panel";
 import { InvoiceTemplateSettings } from "@/components/invoice-template-settings";
+import PrinterSettingsPanel from "@/components/printer-settings-panel";
 import {
   Dialog,
   DialogContent,
@@ -848,6 +849,7 @@ export default function AdminSettings() {
     { key: 'payments',   labelAr: 'الدفع',      labelEn: 'Payments',   icon: CreditCard },
     { key: 'loyalty',    labelAr: 'الولاء',     labelEn: 'Loyalty',    icon: Gift },
     { key: 'invoices',   labelAr: 'الفواتير',   labelEn: 'Invoices',   icon: FileText },
+    { key: 'printing',   labelAr: 'الطباعة',    labelEn: 'Printing',   icon: MonitorSmartphone },
     { key: 'sounds',     labelAr: 'الأصوات',    labelEn: 'Sounds',     icon: Volume2 },
   ];
 
@@ -3656,6 +3658,7 @@ export default function AdminSettings() {
 
       {/* ── Tab: Invoices ── */}
       {activeTab === 'invoices' && <InvoiceTemplateSettings />}
+      {activeTab === 'printing' && <PrinterSettingsPanel />}
 
       {/* Footer Info */}
       <div className="text-center pt-10 text-muted-foreground text-xs font-ibm-arabic">

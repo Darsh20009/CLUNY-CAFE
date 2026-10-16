@@ -104,7 +104,7 @@ export function ReceiptInvoice({ order, variant = "button", surface = "customer"
   })();
   const headerArtworkSrc = (() => {
     if (invoiceSettings.headerArtwork === "campaign") return campaignBanner;
-    if (invoiceSettings.headerArtwork === "logo") return "/logo.png";
+    if (invoiceSettings.headerArtwork === "logo") return "/cluny-logo-invoice.png";
     if (invoiceSettings.headerArtwork === "custom") {
       const url = invoiceSettings.customArtworkUrl.trim();
       return /^https?:\/\//i.test(url) || (url.startsWith("/") && !url.startsWith("//")) ? url : "";
@@ -316,14 +316,15 @@ export function ReceiptInvoice({ order, variant = "button", surface = "customer"
         }}
       >
         {invoiceSettings.elements.headerArtwork !== false && headerArtworkSrc && (
-          <div style={{ padding: "0 0 6px", textAlign: "center" }}>
+          <div style={{ width: "100%", display: "block", padding: "0 0 14px", textAlign: "center", overflow: "visible" }}>
             <img
               src={headerArtworkSrc}
               alt={invoiceSettings.headerArtwork === "campaign" ? "بالغوا بالدفاع عن وطنكم" : "CLUNY"}
               crossOrigin="anonymous"
               style={{
                 width: "100%",
-                maxHeight: invoiceSettings.headerArtwork === "campaign" ? "180px" : "100px",
+                height: "auto",
+                maxHeight: "none",
                 objectFit: "contain",
                 display: "block",
                 margin: "0 auto",
@@ -334,15 +335,15 @@ export function ReceiptInvoice({ order, variant = "button", surface = "customer"
 
         {/* ── 1. Order number ── */}
         {invoiceSettings.elements.orderNumber !== false && (
-          <div style={{ textAlign: "center", fontWeight: 900, fontSize: "22px", letterSpacing: "2px", padding: "6px 0" }}>
+          <div style={{ clear: "both", position: "relative", zIndex: 1, textAlign: "center", fontWeight: 900, fontSize: "22px", lineHeight: 1.4, letterSpacing: "2px", padding: "8px 0 10px" }}>
             #{orderNum}
           </div>
         )}
 
         {/* ── 2. Logo ── */}
-        {invoiceSettings.elements.logo !== false && <div style={{ padding: "6px 0 10px", marginBottom: "4px" }}>
+        {invoiceSettings.elements.logo !== false && invoiceSettings.headerArtwork !== "logo" && <div style={{ padding: "6px 0 10px", marginBottom: "4px" }}>
           <img
-            src="/logo.png"
+            src="/cluny-logo-invoice.png"
             alt="CLUNY CAFE"
             crossOrigin="anonymous"
             style={{ width: "200px", height: "auto", display: "block", margin: "0 auto" }}

@@ -180,32 +180,29 @@ export default function AdminDashboard() {
         role={manager?.role}
       />
 
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0 bg-background">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0 bg-[#F7F9F8]">
         {/* Header */}
-        <header className="flex-shrink-0 bg-card border-b border-border px-4 lg:px-6 py-3 flex items-center justify-between gap-3">
+        <header className="flex-shrink-0 bg-white border-b border-gray-200 px-4 lg:px-6 py-3 flex items-center justify-between gap-3 shadow-sm">
           <div className="flex items-center gap-3">
             <button
-              className="lg:hidden w-9 h-9 flex items-center justify-center rounded-xl bg-muted text-muted-foreground hover:text-foreground"
+              className="lg:hidden w-9 h-9 flex items-center justify-center rounded-lg bg-gray-50 text-gray-600 hover:text-gray-900 hover:bg-gray-100"
               onClick={() => setMobileMenuOpen(true)}
             >
               <BarChart3 className="w-4 h-4" />
             </button>
             <div>
               <div className="flex items-center gap-2">
-                <div className="text-foreground font-bold text-sm">{tc("مرحباً،", "Hello,")} <span className="text-[#2D9B6E]">{manager?.fullName || tc("المدير", "Manager")}</span></div>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium border ${
-                  manager?.role === 'admin' ? 'bg-purple-500/15 text-purple-400 border-purple-500/30' :
-                  manager?.role === 'owner' ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' :
-                  'bg-[#2D9B6E]/15 text-[#2D9B6E] border-[#2D9B6E]/30'
-                }`}>
+                <div className="text-gray-900 font-bold text-sm">{tc("مرحباً،", "Hello,")} <span className="text-[#2D9B6E]">{manager?.fullName || tc("المدير", "Manager")}</span></div>
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-medium border bg-[#EDF7F2] text-[#2D9B6E] border-[#D8EEE3]">
                   {manager?.role === 'admin' ? tc('مدير عام', 'Admin') : manager?.role === 'owner' ? tc('مالك', 'Owner') : tc('مدير', 'Manager')}
                 </span>
               </div>
               <p className="text-xs text-muted-foreground">{tc("نظرة شاملة على أداء الكافيه", "Complete cafe overview")}</p>
             </div>
           </div>
+          <h1 className="hidden md:block text-sm font-semibold text-gray-700">{tc("لوحة التحكم", "Dashboard")}</h1>
           <div className="flex items-center gap-2">
-            <Badge variant="secondary" className="text-xs font-medium text-primary border-primary/20">
+            <Badge variant="secondary" className="text-xs font-medium text-[#2D9B6E] bg-[#EDF7F2] border border-[#D8EEE3]">
               {businessConfig?.businessName || "CLUNY CAFE"}
             </Badge>
             <Button variant="outline" size="sm" onClick={() => navigate('/admin/settings')}>

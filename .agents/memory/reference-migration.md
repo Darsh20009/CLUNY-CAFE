@@ -23,6 +23,9 @@ Dynamic import with `/* @vite-ignore */` is required. The package is excluded fr
 - CLUNY primary: `hsl(155 55% 39%)`, `rgba(45,155,110,...)`, `#2D9B6E`, `#1A6B4A`
 Replace ALL of these globally including inline styles and CSS.
 
+**Use Black Rose as a layout reference, not as CLUNY branding.**
+Copy its navigation order and visual hierarchy when requested, but keep CLUNY's name, logo, colors, and business identity from `brand.ts`.
+
 **CSS :root --primary must match brand.ts**
 The reference CSS had `--primary: 345 70% 42%` (crimson) in `:root`. Must be changed to `155 55% 39%`.
 
@@ -39,3 +42,7 @@ When doing a brand migration, run these in order:
 
 **Why:**  
 Took multiple passes to find all 3 categories of brand references: text strings, Arabic strings, and color values. Each required a separate sed pass.
+
+**Why:** The user wants Black Rose's dashboard structure while retaining CLUNY's complete identity.
+
+**How to apply:** Reuse the reference's layout and grouping only; never copy its logo, business name, palette, or public identity into CLUNY.

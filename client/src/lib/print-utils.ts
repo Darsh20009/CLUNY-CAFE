@@ -809,7 +809,7 @@ async function _buildFastCustomerEscPos(
   const artworkUrl = invoiceSettings.headerArtwork === 'campaign'
     ? campaignBanner
     : invoiceSettings.headerArtwork === 'logo'
-      ? '/logo.png'
+      ? '/cluny-logo-invoice.png'
       : invoiceSettings.headerArtwork === 'custom'
         ? invoiceSettings.customArtworkUrl
         : '';
@@ -901,7 +901,7 @@ async function _buildFastCustomerEscPos(
     splitPayment: data.splitPayment,
     paymentMethod: payLabel,
     ...(data.cashReceived ? { cashReceived: data.cashReceived } : {}),
-    logoDataUrl: invoiceSettings.elements.logo ? '/cluny-logo-invoice.png' : undefined,
+    logoDataUrl: invoiceSettings.elements.logo && invoiceSettings.headerArtwork !== 'logo' ? '/cluny-logo-invoice.png' : undefined,
     headerArtworkDataUrl: invoiceSettings.elements.headerArtwork ? artworkUrl : undefined,
     trackingQrDataUrl: trackingQr || undefined,
     zatcaQrDataUrl: zatcaQr || undefined,
