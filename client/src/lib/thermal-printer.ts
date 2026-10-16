@@ -810,8 +810,12 @@ export interface ReceiptBitmapOpts {
   splitPayment?: { cash: number; card: number };
   paymentMethod: string;
   logoDataUrl?: string;
+  headerArtworkDataUrl?: string;
   trackingQrDataUrl?: string;
   zatcaQrDataUrl?: string;
+  customQrDataUrls?: Array<{ label: string; dataUrl: string }>;
+  invoiceElements?: Record<string, boolean>;
+  notes?: string;
   paperWidth: '58mm' | '80mm';
   feedLines?: number;
 }
@@ -835,19 +839,26 @@ export async function buildReceiptCanvas(opts: ReceiptBitmapOpts): Promise<HTMLC
       img.onload = () => res(img);
       img.onerror = () => res(img);
       setTimeout(() => res(img), 1500);
+      try {
+        if (/^https?:\/\//i.test(src) && new URL(src, window.location.href).origin !== window.location.origin) {
+          img.crossOrigin = 'anonymous';
+        }
+      } catch {}
       img.src = src;
     });
 
   // ── Pre-load images ───────────────────────────────────────────────────────
-  const [logoImg, trackImg, zatcaImg] = await Promise.all([
+  const [logoImg, artworkImg, trackImg, zatcaImg, ...customQrImgs] = await Promise.all([
     opts.logoDataUrl ? loadImg(opts.logoDataUrl) : Promise.resolve(null),
+    opts.headerArtworkDataUrl ? loadImg(opts.headerArtworkDataUrl) : Promise.resolve(null),
     opts.trackingQrDataUrl ? loadImg(opts.trackingQrDataUrl) : Promise.resolve(null),
     opts.zatcaQrDataUrl ? loadImg(opts.zatcaQrDataUrl) : Promise.resolve(null),
+    ...(opts.customQrDataUrls || []).map(qr => loadImg(qr.dataUrl)),
   ]);
 
   // ── Build drawing queue (y-position auto-managed) ────────────────────────
   type DrawOp =
-    | { type: 'img'; img: HTMLImageElement; size: number; }
+    | { type: 'img'; img: HTMLImageElement; size: number; maxHeight?: number; }
     | { type: 'text'; text: string; align: 'center' | 'left' | 'right'; fs: number; bold: boolean; color?: string; }
     | { type: 'row'; label: string; value: string; fs: number; boldLabel?: boolean; boldValue?: boolean; color?: string; }
     | { type: 'line'; thick?: boolean; dashed?: boolean; }
@@ -867,65 +878,75 @@ export async function buildReceiptCanvas(opts: ReceiptBitmapOpts): Promise<HTMLC
     ops.push({ type: 'text', text, align, fs, bold, color });
   const addRow   = (label: string, value: string, fs = FS, boldLabel = false, boldValue = false, color?: string) =>
     ops.push({ type: 'row', label, value, fs, boldLabel, boldValue, color });
-  const addImg   = (img: HTMLImageElement | null, size: number) => {
-    if (img && img.naturalWidth > 0) ops.push({ type: 'img', img, size });
+  const addImg   = (img: HTMLImageElement | null, size: number, maxHeight?: number) => {
+    if (img && img.naturalWidth > 0) ops.push({ type: 'img', img, size, maxHeight });
   };
+  const elements = opts.invoiceElements || {};
+  const show = (key: string) => elements[key] !== false;
 
-  // ── RECEIPT LAYOUT — 2 blank lines at the top of every invoice ────────────
-  addGap(Math.round(FS * 3.2));
-
-  // Logo — centred. 35% of paper width.
-  addImg(logoImg, Math.round(DW * 0.35));
-  addGap(8);
-
-  // Branch / tagline / VAT — no repeated shop name (it's in the logo)
-  if (opts.branchName) addText(opts.branchName, 'center', Math.round(FS * 0.88));
-  if (opts.tagline)    addText(opts.tagline, 'center', Math.round(FS * 0.82), false, '#444');
-  addText(`VAT: ${opts.vatNumber}`, 'center', Math.round(FS * 0.78), false, '#555');
-
-  // ── ONE separator line after brand header ───────────────────────────────
-  addLine(true);
-
-  // Invoice title + order number
-  addText('فاتورة ضريبية مبسطة', 'center', Math.round(FS * 1.05), true);
+  // ── Configurable customer invoice ────────────────────────────────────────
   addGap(Math.round(FS * 0.8));
 
-  const orderNumFmt = String(opts.orderNumber).replace(/\D/g, '').padStart(4, '0') || opts.orderNumber;
-  addText(`#${orderNumFmt}`, 'center', Math.round(FS * 2.4), true);
-  addGap(Math.round(FS * 0.4));
-
-  // Info block — no separator lines
-  addRow('التاريخ:', opts.orderDate, Math.round(FS * 0.88));
-  addRow('الكاشير:', opts.cashierName, Math.round(FS * 0.88));
-  if (opts.customerName && opts.customerName !== 'عميل نقدي') addRow('العميل:', opts.customerName, Math.round(FS * 0.88));
-  if (opts.tableNumber) addRow('الطاولة:', opts.tableNumber, Math.round(FS * 0.88));
-  if (opts.orderType)   addRow('نوع الطلب:', opts.orderType, Math.round(FS * 0.88));
-  addGap(6);
-
-  // Items — no separator lines, small gap between items
-  for (const item of opts.items) {
-    addText(item.name, 'right', Math.round(FS * 0.95), true);
-    if (item.nameEn && item.nameEn.trim() && item.nameEn !== item.name) {
-      addText(item.nameEn, 'right', Math.round(FS * 0.78), false, '#555');
-    }
-    addRow(`${item.qty} × ${item.price.toFixed(2)} ر.س`, `${(item.qty * item.price).toFixed(2)} ر.س`, Math.round(FS * 0.85));
-    if (item.addons?.length) {
-      for (const a of item.addons) addText(`+ ${a}`, 'right', Math.round(FS * 0.78), false, '#555');
-    }
-    addGap(5);
+  // Artwork is first; the order number follows directly beneath it.
+  if (show('headerArtwork') && artworkImg && artworkImg.naturalWidth > 0) {
+    addImg(artworkImg, Math.round(DW * 0.88), Math.round(FS * 19));
+    addGap(6);
   }
 
-  addGap(4);
+  if (show('orderNumber')) {
+    const orderNumFmt = String(opts.orderNumber).replace(/\D/g, '').padStart(4, '0') || opts.orderNumber;
+    addText(`#${orderNumFmt}`, 'center', Math.round(FS * 2.0), true);
+    addGap(Math.round(FS * 0.5));
+  }
 
-  // Totals — no separator lines
-  addRow('قبل الضريبة:', `${opts.subtotal.toFixed(2)} ر.س`, Math.round(FS * 0.88));
-  addRow('ضريبة القيمة المضافة 15%:', `${opts.vat.toFixed(2)} ر.س`, Math.round(FS * 0.88));
-  if (opts.discount && opts.discount > 0)
-    addRow('الخصم:', `-${opts.discount.toFixed(2)} ر.س`, Math.round(FS * 0.88), false, false, '#16a34a');
-  addRow('الإجمالي:', `${opts.total.toFixed(2)} ر.س`, Math.round(FS * 1.05), false, true);
-  addGap(4);
+  // Optional CLUNY logo, independent from the selected header artwork.
+  if (show('logo')) {
+    addImg(logoImg, Math.round(DW * 0.35), Math.round(FS * 5));
+    addGap(8);
+  }
 
-  // Payment — no separator
+  if (show('businessInfo')) {
+    if (opts.branchName) addText(opts.branchName, 'center', Math.round(FS * 0.88));
+    addText(`VAT: ${opts.vatNumber}`, 'center', Math.round(FS * 0.78), false, '#555');
+  }
+  if (show('tagline') && opts.tagline) addText(opts.tagline, 'center', Math.round(FS * 0.82), false, '#444');
+
+  addLine(true);
+
+  addText('فاتورة ضريبية مبسطة', 'center', Math.round(FS * 1.05), true);
+
+  addRow('التاريخ:', opts.orderDate, Math.round(FS * 0.88));
+  if (show('cashier')) addRow('الكاشير:', opts.cashierName, Math.round(FS * 0.88));
+  if (show('businessInfo') && opts.customerName && opts.customerName !== 'عميل نقدي') addRow('العميل:', opts.customerName, Math.round(FS * 0.88));
+  if (opts.tableNumber) addRow('الطاولة:', opts.tableNumber, Math.round(FS * 0.88));
+  if (show('orderType') && opts.orderType) addRow('نوع الطلب:', opts.orderType, Math.round(FS * 0.88));
+  addGap(6);
+
+  if (show('items')) {
+    for (const item of opts.items) {
+      addText(item.name, 'right', Math.round(FS * 0.95), true);
+      if (item.nameEn && item.nameEn.trim() && item.nameEn !== item.name) {
+        addText(item.nameEn, 'right', Math.round(FS * 0.78), false, '#555');
+      }
+      addRow(`${item.qty} × ${item.price.toFixed(2)} ر.س`, `${(item.qty * item.price).toFixed(2)} ر.س`, Math.round(FS * 0.85));
+      if (item.addons?.length) {
+        for (const a of item.addons) addText(`+ ${a}`, 'right', Math.round(FS * 0.78), false, '#555');
+      }
+      addGap(5);
+    }
+    if (show('itemCount')) addText(`عدد الأصناف: ${opts.items.reduce((sum, item) => sum + item.qty, 0)}`, 'right', Math.round(FS * 0.8), false, '#555');
+  }
+
+  if (show('totals')) {
+    addGap(4);
+    addRow('قبل الضريبة:', `${opts.subtotal.toFixed(2)} ر.س`, Math.round(FS * 0.88));
+    addRow('ضريبة القيمة المضافة 15%:', `${opts.vat.toFixed(2)} ر.س`, Math.round(FS * 0.88));
+    if (opts.discount && opts.discount > 0)
+      addRow('الخصم:', `-${opts.discount.toFixed(2)} ر.س`, Math.round(FS * 0.88), false, false, '#16a34a');
+    addRow('الإجمالي:', `${opts.total.toFixed(2)} ر.س`, Math.round(FS * 1.05), false, true);
+    addGap(4);
+  }
+
   const _receiptPayLabel = (() => {
     const m = (opts.paymentMethod || '').toLowerCase();
     if (m === 'cash') return 'نقدي';
@@ -939,39 +960,56 @@ export async function buildReceiptCanvas(opts: ReceiptBitmapOpts): Promise<HTMLC
     if (m === 'loyalty' || m === 'qahwa-card' || m === 'qirox-card') return 'بطاقة ولاء';
     return opts.paymentMethod;
   })();
-  addRow('طريقة الدفع:', _receiptPayLabel, Math.round(FS * 0.88));
-  if (opts.splitPayment) {
+  if (show('paymentMethod')) addRow('طريقة الدفع:', _receiptPayLabel, Math.round(FS * 0.88));
+  if (show('paymentMethod') && opts.splitPayment) {
     if (opts.splitPayment.cash > 0) addRow('  💵 نقدي:', `${opts.splitPayment.cash.toFixed(2)} ر.س`, Math.round(FS * 0.82));
     if (opts.splitPayment.card > 0) addRow('  💳 شبكة:', `${opts.splitPayment.card.toFixed(2)} ر.س`, Math.round(FS * 0.82));
   }
-  if ((opts as any).cashReceived && (opts as any).cashReceived > 0 && !opts.splitPayment) {
+  if (show('paymentMethod') && (opts as any).cashReceived && (opts as any).cashReceived > 0 && !opts.splitPayment) {
     const cr = (opts as any).cashReceived as number;
     addRow('  المستلم:', `${cr.toFixed(2)} ر.س`, Math.round(FS * 0.82));
     addRow('  الباقي:', `${Math.max(0, cr - opts.total).toFixed(2)} ر.س`, Math.round(FS * 0.82), false, false, '#16a34a');
   }
 
-  // ── QR codes: tracking then ZATCA, one below the other, no line between ──
   addGap(10);
-  if (trackImg && trackImg.naturalWidth > 0) {
+  if (show('trackingQr') && trackImg && trackImg.naturalWidth > 0) {
     addImg(trackImg, Math.round(DW * 0.50));
     addGap(6);
     addText('امسح للتتبع وتسجيل النقاط', 'center', Math.round(FS * 0.8), true, '#333');
     addGap(Math.round(FS * 1.2));
   }
-  if (zatcaImg && zatcaImg.naturalWidth > 0) {
+  if (show('zatcaQr') && zatcaImg && zatcaImg.naturalWidth > 0) {
     addGap(6);
     addImg(zatcaImg, Math.round(DW * 0.28));
     addGap(6);
     addText('ZATCA · باركود الضريبة', 'center', Math.round(FS * 0.72), false, '#555');
     addGap(Math.round(FS * 1.2));
   }
+  (opts.customQrDataUrls || []).forEach((qr, index) => {
+    const img = customQrImgs[index];
+    if (!img || img.naturalWidth <= 0) return;
+    addGap(6);
+    addImg(img, Math.round(DW * 0.42));
+    if (qr.label) addText(qr.label, 'center', Math.round(FS * 0.78), false, '#444');
+    addGap(Math.round(FS * 0.8));
+  });
 
   // ── ONE separator line before footer ────────────────────────────────────
   addLine(true);
 
   // Footer
+  if (show('customerNotes') && opts.notes) {
+    addText('ملاحظات العميل:', 'right', Math.round(FS * 0.78), true);
+    addText(opts.notes, 'right', Math.round(FS * 0.82), false, '#444');
+  }
   addText('** شكراً لزيارتكم **', 'center', Math.round(FS * 1.0), true);
-  addText('الأسعار شاملة ضريبة القيمة المضافة 15%', 'center', Math.round(FS * 0.78), false, '#444');
+  if (show('tagline')) {
+    addText('"قهوة تُقال .. وورد يُهدى"', 'center', Math.round(FS * 0.78), false, '#444');
+    addText('CLUNY CAFE', 'center', Math.round(FS * 0.78), true);
+  }
+  if (show('poweredBy')) {
+    addText('Powered by CLUNY SYSTEMS', 'center', Math.round(FS * 0.72), false, '#555');
+  }
 
   addGap(opts.feedLines ? opts.feedLines * 8 : 24);
 
@@ -1031,10 +1069,16 @@ export async function buildReceiptCanvas(opts: ReceiptBitmapOpts): Promise<HTMLC
       ctx.fillText(op.value, PAD, y);
       y += lh;
     } else if (op.type === 'img') {
-      const size = Math.min(op.size, CONTENT_W);
-      const x = Math.floor((DW - size) / 2);
-      ctx.drawImage(op.img, x, y, size, size);
-      y += size + 4;
+      const ratio = op.img.naturalHeight / op.img.naturalWidth;
+      let width = Math.min(op.size, CONTENT_W);
+      let height = width * ratio;
+      if (op.maxHeight && height > op.maxHeight) {
+        height = op.maxHeight;
+        width = height / ratio;
+      }
+      const x = Math.floor((DW - width) / 2);
+      ctx.drawImage(op.img, x, y, width, height);
+      y += height + 4;
     }
   }
 

@@ -1,6 +1,8 @@
 import QRCode from "qrcode";
 import { VAT_RATE } from "@/lib/constants";
 import brand from "@/lib/brand";
+import campaignBanner from "@assets/IMG_4520_2_1792086884882.jpg";
+import { DEFAULT_INVOICE_SETTINGS, normalizeInvoiceSettings } from "@/lib/invoice-template";
 
 // ── ZATCA QR pre-generation cache ────────────────────────────────────────────
 // Key: `zatca:${orderNumber}:${total}` → SVG string
@@ -146,6 +148,22 @@ interface KitchenOrderData {
   notes?: string;
   priority?: 'normal' | 'urgent';
   timestamp: string;
+}
+
+let _invoiceSettingsCache: { expiresAt: number; value: ReturnType<typeof normalizeInvoiceSettings> } | undefined;
+async function _loadInvoiceSettings() {
+  if (_invoiceSettingsCache && _invoiceSettingsCache.expiresAt > Date.now()) return _invoiceSettingsCache.value;
+  try {
+    const response = await fetch("/api/business-config", { credentials: "include", cache: "no-store" });
+    if (!response.ok) throw new Error(`business config request failed (${response.status})`);
+    const config = await response.json();
+    const value = normalizeInvoiceSettings(config?.invoiceSettings ?? DEFAULT_INVOICE_SETTINGS);
+    _invoiceSettingsCache = { expiresAt: Date.now() + 15_000, value };
+    return value;
+  } catch (error) {
+    console.warn("[InvoicePrint] Could not load saved invoice settings; using defaults.", error);
+    return normalizeInvoiceSettings(DEFAULT_INVOICE_SETTINGS);
+  }
 }
 
 // ── iframe-based print queue (never touches the main page DOM during print) ──
@@ -787,6 +805,14 @@ async function _buildFastCustomerEscPos(
   feedLines: number,
 ): Promise<Uint8Array> {
   const { buildReceiptBitmapEscPos } = await import('./thermal-printer');
+  const invoiceSettings = await _loadInvoiceSettings();
+  const artworkUrl = invoiceSettings.headerArtwork === 'campaign'
+    ? campaignBanner
+    : invoiceSettings.headerArtwork === 'logo'
+      ? '/logo.png'
+      : invoiceSettings.headerArtwork === 'custom'
+        ? invoiceSettings.customArtworkUrl
+        : '';
 
   const totalAmount = parseNumber(data.total);
   const subtotalBeforeVat = totalAmount / (1 + VAT_RATE);
@@ -804,21 +830,34 @@ async function _buildFastCustomerEscPos(
     vatAmount: vatAmount.toFixed(2),
   });
 
-  // Generate both QR codes in parallel — ~50ms total
+  // Generate enabled QR codes in parallel — ~50ms total
   // Use plain daily-number in tracking URL so the QR has no %23 encoding issues
   const trackingNum = String(data.orderNumber).replace(/\D/g, '') || String(data.orderNumber);
-  const [trackingQr, zatcaQr] = await Promise.all([
+  const visibleCustomQrs = invoiceSettings.customQrs.filter(qr =>
+    qr.enabled && (qr.surface === 'all' || qr.surface === 'customer') && qr.content.trim(),
+  );
+  const [trackingQr, zatcaQr, ...customQrDataUrls] = await Promise.all([
     (async () => {
+      if (!invoiceSettings.elements.trackingQr) return '';
       try {
         const url = `${window.location.origin}/track/${trackingNum}`;
         return await QRCode.toDataURL(url, { width: 180, margin: 1, errorCorrectionLevel: 'M' });
       } catch { return ''; }
     })(),
     (async () => {
+      if (!invoiceSettings.elements.zatcaQr) return '';
       try {
         return await QRCode.toDataURL(zatcaPayload, { width: 140, margin: 1, errorCorrectionLevel: 'M' });
       } catch { return ''; }
     })(),
+    ...visibleCustomQrs.map(async qr => {
+      try {
+        return await QRCode.toDataURL(qr.content, { width: 180, margin: 1, errorCorrectionLevel: 'M' });
+      } catch {
+        console.warn(`[InvoicePrint] Could not generate custom QR "${qr.label}".`);
+        return '';
+      }
+    }),
   ]);
 
   const payLabel = (() => {
@@ -862,9 +901,16 @@ async function _buildFastCustomerEscPos(
     splitPayment: data.splitPayment,
     paymentMethod: payLabel,
     ...(data.cashReceived ? { cashReceived: data.cashReceived } : {}),
-    logoDataUrl: '/cluny-logo-invoice.png',
+    logoDataUrl: invoiceSettings.elements.logo ? '/cluny-logo-invoice.png' : undefined,
+    headerArtworkDataUrl: invoiceSettings.elements.headerArtwork ? artworkUrl : undefined,
     trackingQrDataUrl: trackingQr || undefined,
     zatcaQrDataUrl: zatcaQr || undefined,
+    customQrDataUrls: visibleCustomQrs
+      .map((qr, index) => ({ label: qr.label, dataUrl: customQrDataUrls[index] }))
+      .filter(qr => !!qr.dataUrl),
+    invoiceElements: invoiceSettings.elements,
+    notes: data.notes || undefined,
+    tagline: brand.taglineAr,
     paperWidth,
     feedLines,
   });
@@ -1744,45 +1790,19 @@ export async function printCashierReceipt(data: TaxInvoiceData & { deliveryType?
 export async function printAllReceipts(data: TaxInvoiceData & { deliveryType?: string; deliveryTypeAr?: string }): Promise<void> {
   // Try thermal printer (WebUSB) first
   try {
-    const { loadPrinterSettings, buildEscPosReceipt, buildEscPosKitchenTicketBitmap, thermalPrint } = await import('./thermal-printer');
+    const { loadPrinterSettings, buildEscPosKitchenTicketBitmap, thermalPrint } = await import('./thermal-printer');
     const printerSettings = loadPrinterSettings();
 
     if (printerSettings.enabled && printerSettings.autoPrint) {
-      const { date: fmtDate, time: fmtTime } = formatDate(data.date);
-      const dateStr = `${fmtDate} ${fmtTime}`;
-      const totalAmount = parseNumber(data.total);
-      const subtotalBeforeTax = totalAmount / (1 + VAT_RATE);
-      const vatAmount = totalAmount - subtotalBeforeTax;
-
       const orderTypeLabel = data.orderTypeName || (data.orderType === 'dine_in' ? 'محلي' : data.orderType === 'takeaway' ? 'سفري' : data.orderType === 'delivery' ? 'توصيل' : data.deliveryTypeAr || '');
 
-      // Build ESC/POS receipt
-      const escData = buildEscPosReceipt({
-        shopName: COMPANY_NAME,
-        vatNumber: data.vatNumber || VAT_NUMBER,
-        branchName: data.branchName,
-        address: data.branchAddress,
-        orderNumber: data.orderNumber,
-        date: dateStr,
-        cashierName: data.employeeName,
-        customerName: data.customerName !== 'عميل نقدي' ? data.customerName : undefined,
-        tableNumber: data.tableNumber,
-        orderType: orderTypeLabel || undefined,
-        items: data.items.map(item => ({
-          name: item.coffeeItem.nameAr,
-          qty: item.quantity,
-          price: parseNumber(item.coffeeItem.price),
-          addons: getItemAddons(item).map((a: any) => a.nameAr),
-        })),
-        subtotal: subtotalBeforeTax,
-        vat: vatAmount,
-        total: totalAmount,
-        discount: data.invoiceDiscount ? parseNumber(data.invoiceDiscount) : undefined,
-        paymentMethod: data.paymentMethod,
-        paperWidth: printerSettings.paperWidth,
-        feedLines: printerSettings.feedLines,
-        arabicEncoding: printerSettings.arabicEncoding,
-      });
+      // Use the same configurable canvas template as all other thermal receipts.
+      const escData = await _buildFastCustomerEscPos(
+        data,
+        orderTypeLabel,
+        printerSettings.paperWidth,
+        printerSettings.feedLines ?? 4,
+      );
 
       // pass empty fallbackHtml so browser fallback does nothing here —
       // we handle browser printing separately with the new format below
