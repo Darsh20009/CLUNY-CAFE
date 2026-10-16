@@ -39,6 +39,11 @@ Thumbs.db
 dist-ssr
 *.local
 
+# Payment private key material must be provided through Replit Secrets
+*.key
+*.p12
+*.pfx
+
 # TypeScript
 *.tsbuildinfonode_modules/
 .next/

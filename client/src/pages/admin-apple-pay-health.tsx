@@ -41,11 +41,15 @@ export default function AdminApplePayHealth() {
 
   const report = data?.report || {};
   const wellKnownOk = !!report.wellKnownFile?.exists;
-  const certOk = !!report.localFiles?.paymentProcessingCertificateExists;
-  const geideaOk = !!report.geideaConfig?.hasPublicKey && !!report.geideaConfig?.hasApiPassword;
+  const certOk = !!report.merchantIdentityCertificateConfigured;
+  const geideaOk = report.geideaConfig?.provider === 'geidea'
+    && !!report.geideaConfig?.hasPublicKey
+    && !!report.geideaConfig?.hasApiPassword
+    && report.geideaConfig?.applePayEnabled !== false;
   const expectedDomain = report.expectedApplePayDomain || 'cluny.cafe';
   const merchantId = report.geideaConfig?.applePayMerchantId || 'merchant.cluny.cafe';
-  const allOk = wellKnownOk && certOk && geideaOk && expectedDomain === 'cluny.cafe' && merchantId === 'merchant.cluny.cafe';
+  const normalizedDomain = expectedDomain.replace(/^www\./i, '').toLowerCase();
+  const allOk = wellKnownOk && certOk && geideaOk && normalizedDomain === 'cluny.cafe' && merchantId === 'merchant.cluny.cafe';
 
   return (
     <div className="min-h-screen space-y-5 bg-gradient-to-b from-background via-primary/5 to-background p-4 sm:space-y-8 sm:p-6" dir="rtl">
@@ -137,10 +141,10 @@ export default function AdminApplePayHealth() {
                 <CardDescription>فحص وجود الشهادة وبيئة Apple Pay.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3 p-4 pt-2 sm:p-6 sm:pt-0">
-                <ValueRow label="شهادة الدفع" value={certOk ? 'موجودة' : 'غير موجودة'} ok={certOk} testId="row-payment-certificate" />
+                <ValueRow label="شهادة هوية التاجر" value={certOk ? 'صالحة ومهيأة' : 'غير مهيأة أو غير صالحة'} ok={certOk} testId="row-payment-certificate" />
                 <ValueRow label="APPLE_PAY_DOMAIN" value={report.envVars?.APPLE_PAY_DOMAIN} ok={report.envVars?.APPLE_PAY_DOMAIN === 'SET'} testId="row-env-apple-pay-domain" />
                 <ValueRow label="APPLE_PAY_MERCHANT_ID" value={report.envVars?.APPLE_PAY_MERCHANT_ID} ok={report.envVars?.APPLE_PAY_MERCHANT_ID === 'SET'} testId="row-env-apple-pay-merchant-id" />
-                <ValueRow label="Identity Cert Path" value={report.envVars?.APPLE_PAY_MERCHANT_IDENTITY_CERT_PATH} testId="row-env-apple-pay-cert-path" />
+                <ValueRow label="شهادة P12 عبر الأسرار" value={report.envVars?.APPLE_PAY_MERCHANT_CERT_P12_B64} ok={report.envVars?.APPLE_PAY_MERCHANT_CERT_P12_B64 === 'SET'} testId="row-env-apple-pay-cert-path" />
               </CardContent>
             </Card>
           </div>

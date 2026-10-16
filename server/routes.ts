@@ -4011,6 +4011,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Merchant validation is performed DIRECTLY with Apple using mTLS (Merchant Identity Certificate).
   // Geidea does NOT provide a merchant-session proxy endpoint — per their docs the merchant
   // must validate with Apple themselves and then submit the encrypted token to Geidea.
+  app.get("/api/payments/apple-pay/diagnose", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      if (!req.employee || !['admin', 'owner', 'manager'].includes(req.employee.role)) {
+        return res.status(403).json({ error: "غير مصرح" });
+      }
+
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const config = await BusinessConfigModel.findOne({ tenantId }).lean();
+      const pg = (config as any)?.paymentGateway;
+      const configuredDomain = (
+        pg?.geidea?.applePayDomain ||
+        process.env.APPLE_PAY_DOMAIN ||
+        'www.cluny.cafe'
+      ).replace(/^https?:\/\//i, '').split('/')[0].toLowerCase();
+      const merchantId =
+        pg?.geidea?.applePayMerchantId ||
+        process.env.APPLE_PAY_MERCHANT_ID ||
+        'merchant.cluny.cafe';
+      const host = (req.get('host') || '').replace(/:\d+$/, '').toLowerCase();
+      const isClunyDomain = host === 'cluny.cafe' || host === 'www.cluny.cafe';
+      const wellKnownName = isClunyDomain
+        ? 'apple-developer-merchantid-domain-association-cluny'
+        : 'apple-developer-merchantid-domain-association';
+      const path = await import('node:path');
+      const fs = await import('node:fs/promises');
+      let wellKnownSize = 0;
+      try {
+        const file = await fs.stat(path.resolve(process.cwd(), 'public', '.well-known', wellKnownName));
+        wellKnownSize = file.size;
+      } catch {}
+
+      let merchantIdentityCertificateConfigured = false;
+      const p12Secret = process.env.APPLE_PAY_MERCHANT_CERT_P12_B64?.trim();
+      if (p12Secret) {
+        try {
+          const tls = await import('node:tls');
+          const pfx = Buffer.from(p12Secret, 'base64');
+          tls.createSecureContext({
+            pfx,
+            ...(process.env.APPLE_PAY_MERCHANT_CERT_PASSWORD
+              ? { passphrase: process.env.APPLE_PAY_MERCHANT_CERT_PASSWORD }
+              : {}),
+          });
+          merchantIdentityCertificateConfigured = true;
+        } catch {}
+      }
+
+      const hasPublicKey = !!pg?.geidea?.publicKey;
+      const hasApiPassword = !!pg?.geidea?.apiPassword;
+      const hasMerchantId = !!merchantId;
+      const hasDomain = !!configuredDomain;
+      const report = {
+        expectedApplePayDomain: configuredDomain,
+        serverDomain: host || 'unknown',
+        wellKnownFile: { exists: wellKnownSize > 0, size: wellKnownSize },
+        merchantIdentityCertificateConfigured,
+        geideaConfig: {
+          provider: pg?.provider || 'none',
+          hasPublicKey,
+          hasApiPassword,
+          applePayEnabled: pg?.applePayEnabled !== false,
+          applePayMerchantId: merchantId,
+          baseUrl: pg?.geidea?.baseUrl || 'https://api.merchant.geidea.net',
+        },
+        envVars: {
+          APPLE_PAY_DOMAIN: hasDomain ? 'SET' : 'NOT SET',
+          APPLE_PAY_MERCHANT_ID: hasMerchantId ? 'SET' : 'NOT SET',
+          APPLE_PAY_MERCHANT_CERT_P12_B64: merchantIdentityCertificateConfigured ? 'SET' : 'NOT SET',
+        },
+        geideaEndpoints: [],
+      };
+      return res.json({ timestamp: new Date().toISOString(), report });
+    } catch {
+      return res.status(500).json({ error: "تعذر فحص إعدادات Apple Pay" });
+    }
+  });
+
   app.post("/api/payments/apple-pay/validate-merchant", async (req, res) => {
     try {
       const { validationUrl, amount = 1, currency = 'SAR', orderRef } = req.body;
@@ -4021,47 +4098,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const pg = (config as any)?.paymentGateway;
       if (!pg || pg.provider !== 'geidea') return res.status(400).json({ error: "جيديا غير مفعّلة" });
 
-      // ── Load Merchant Identity Certificate ──────────────────────────────────
-      // This is the certificate from Apple Developer → Merchant IDs →
-      // merchant.cluny.cafe → Merchant Identity Certificate.
-      //
-      // Preferred: PEM cert + key checked into server/certs/ (already provisioned
-      // for merchant.cluny.cafe, valid Apr 2026 – May 2028).
-      // Fallback: a base64-encoded .p12 via APPLE_PAY_MERCHANT_CERT_P12_B64 (+
-      // optional APPLE_PAY_MERCHANT_CERT_PASSWORD), for environments that don't
-      // ship the PEM files.
-      const fs = await import('node:fs');
-      const path = await import('node:path');
-      const certPemPath = path.join(process.cwd(), 'server', 'certs', 'applepay_merchant_id.pem');
-      const certKeyPath = path.join(process.cwd(), 'server', 'certs', 'applepay_merchant_id.key');
+      // Merchant Identity material must only come from Replit Secrets.
+      // Never load certificates or private keys from source-controlled files or MongoDB.
+      const certP12B64 = process.env.APPLE_PAY_MERCHANT_CERT_P12_B64?.trim();
+      const certPassword = process.env.APPLE_PAY_MERCHANT_CERT_PASSWORD || undefined;
+      if (!certP12B64) {
+        console.error('[Apple Pay] Merchant Identity Certificate is not configured in Replit Secrets');
+        return res.status(503).json({
+          error: "شهادة Apple Pay غير مهيأة. أضف شهادة Merchant Identity الجديدة عبر الأسرار الآمنة.",
+          setup_required: true,
+        });
+      }
 
-      let tlsCert: Buffer | undefined;
-      let tlsKey: Buffer | undefined;
-      let pfx: Buffer | undefined;
-      let passphrase: string | undefined;
-
-      if (fs.existsSync(certPemPath) && fs.existsSync(certKeyPath)) {
-        tlsCert = fs.readFileSync(certPemPath);
-        tlsKey = fs.readFileSync(certKeyPath);
-      } else {
-        const certP12B64 =
-          process.env.APPLE_PAY_MERCHANT_CERT_P12_B64 ||
-          (pg.geidea as any)?.applePayMerchantCertP12B64 ||
-          '';
-        const certPassword =
-          process.env.APPLE_PAY_MERCHANT_CERT_PASSWORD ||
-          (pg.geidea as any)?.applePayMerchantCertPassword ||
-          '';
-
-        if (!certP12B64) {
-          console.error('[Apple Pay] Merchant Identity Certificate not configured');
-          return res.status(500).json({
-            error: "Merchant Identity Certificate not configured. Export from Keychain Access as .p12, base64-encode it, and set APPLE_PAY_MERCHANT_CERT_P12_B64.",
-            setup_required: true,
-          });
-        }
-        pfx = Buffer.from(certP12B64, 'base64');
-        passphrase = certPassword;
+      const pfx = Buffer.from(certP12B64, 'base64');
+      if (!pfx.length) {
+        return res.status(503).json({
+          error: "صيغة شهادة Apple Pay غير صالحة. أعد رفع ملف P12 بعد تدويره.",
+          setup_required: true,
+        });
+      }
+      const passphrase = certPassword;
+      try {
+        const tls = await import('node:tls');
+        tls.createSecureContext({ pfx, ...(passphrase ? { passphrase } : {}) });
+      } catch {
+        return res.status(503).json({
+          error: "شهادة Apple Pay غير صالحة أو كلمة مرورها غير صحيحة.",
+          setup_required: true,
+        });
       }
 
       const merchantIdentifier =
@@ -4125,7 +4189,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             'Content-Type': 'application/json',
             'Content-Length': Buffer.byteLength(validationBody),
           },
-          ...(pfx ? { pfx, passphrase } : { cert: tlsCert, key: tlsKey }),
+          pfx,
+          ...(passphrase ? { passphrase } : {}),
         };
 
         const appleReq = https.request(options, (appleRes) => {

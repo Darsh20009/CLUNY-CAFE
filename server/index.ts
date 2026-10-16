@@ -688,10 +688,11 @@ app.get('/healthz', (_req, res) => {
 
 app.get('/health', (_req, res) => {
   const dbStatus = getDbStatus();
+  const databaseReady = mongoose.connection.readyState === 1;
   res.status(200).json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    database: isDbConnected ? 'connected' : 'disconnected',
+    database: databaseReady ? 'connected' : 'disconnected',
     readyState: mongoose.connection.readyState,
     dualDb: {
       enabled: hasSecondaryDb(),
@@ -705,7 +706,8 @@ app.get('/health', (_req, res) => {
 
 // Middleware to ensure DB connection for API routes
 app.use('/api', (req, res, next) => {
-  if (!isDbConnected && mongoose.connection.readyState !== 1) {
+  if (mongoose.connection.readyState !== 1) {
+    isDbConnected = false;
     console.error(`🚨 API Request failed: Database not connected (State: ${mongoose.connection.readyState})`);
     // Attempt to reconnect in background
     connectDatabase();
@@ -902,29 +904,30 @@ app.use((req, res, next) => {
       console.error('⚠️ Auto-migration of main branch skipped:', err);
     }
 
-    // ── Ensure Geidea credentials are always set and test mode is OFF ───────────
+    // ── Sync Geidea credentials only when explicitly provided in Replit Secrets.
+    // Never put merchant credentials in source or overwrite admin settings with defaults.
     try {
       const { BusinessConfigModel: BCM } = await import("./models");
-      const GEIDEA_PUBLIC_KEY   = process.env.GEIDEA_PUBLIC_KEY   || '5bf49a11-693b-4d3c-9d85-4f757d03cc1c';
-      const GEIDEA_API_PASSWORD = process.env.GEIDEA_API_PASSWORD || 'c37321b2-9785-4439-8e53-61005f13fab3';
-      const GEIDEA_BASE_URL     = process.env.GEIDEA_BASE_URL     || 'https://api.ksamerchant.geidea.net';
+      const geideaPublicKey = process.env.GEIDEA_PUBLIC_KEY?.trim();
+      const geideaApiPassword = process.env.GEIDEA_API_PASSWORD?.trim();
 
-      await BCM.updateOne(
-        { tenantId: 'demo-tenant' },
-        {
-          $set: {
-            'paymentGateway.provider':                   'geidea',
-            'paymentGateway.geidea.publicKey':           GEIDEA_PUBLIC_KEY,
-            'paymentGateway.geidea.apiPassword':         GEIDEA_API_PASSWORD,
-            'paymentGateway.geidea.baseUrl':             GEIDEA_BASE_URL,
-            'paymentGateway.geidea.applePayMerchantId': process.env.APPLE_PAY_MERCHANT_ID || 'merchant.cluny.cafe',
-            'paymentGateway.paymentTestMode':            false,
-            'paymentGateway.qahwaCardEnabled':           true,
-          }
-        },
-        { upsert: false }
-      );
-      console.log('✅ Geidea payment gateway configured — test mode OFF');
+      if (geideaPublicKey && geideaApiPassword) {
+        const updates: Record<string, unknown> = {
+          'paymentGateway.provider': 'geidea',
+          'paymentGateway.geidea.publicKey': geideaPublicKey,
+          'paymentGateway.geidea.apiPassword': geideaApiPassword,
+          'paymentGateway.paymentTestMode': false,
+        };
+        const geideaBaseUrl = process.env.GEIDEA_BASE_URL?.trim();
+        const applePayMerchantId = process.env.APPLE_PAY_MERCHANT_ID?.trim();
+        if (geideaBaseUrl) updates['paymentGateway.geidea.baseUrl'] = geideaBaseUrl;
+        if (applePayMerchantId) updates['paymentGateway.geidea.applePayMerchantId'] = applePayMerchantId;
+
+        await BCM.updateOne({ tenantId: 'demo-tenant' }, { $set: updates }, { upsert: false });
+        console.log('✅ Geidea credentials synced from Replit Secrets');
+      } else {
+        console.warn('[Geidea] Credentials are not set in Replit Secrets; leaving existing payment settings unchanged.');
+      }
     } catch (err) {
       console.error('⚠️ Could not configure Geidea gateway:', err);
     }
