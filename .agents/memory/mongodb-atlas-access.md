@@ -7,4 +7,4 @@ Replit workspace and deployment outbound IPs are not stable. Allowlisting one ob
 
 **Why:** the app has repeatedly lost Atlas connectivity, preventing its data and payment configuration from loading; a broad network rule is only acceptable alongside least-privilege database access.
 
-**How to apply:** when diagnosing Atlas access, check Network Access and the database user's role in Atlas, confirm the actual database name in Browse Collections, and avoid relying on a static Replit egress address.
+**How to apply:** when diagnosing Atlas access, check Network Access and the database user's role in Atlas, confirm the actual database name in Browse Collections, and avoid relying on a static Replit egress address. Also check `.replit` for same-named `userenv.shared` entries: a stale inline URI can override the secret value.
