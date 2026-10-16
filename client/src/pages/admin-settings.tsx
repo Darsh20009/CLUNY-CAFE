@@ -1020,14 +1020,14 @@ export default function AdminSettings() {
 
       {/* Tab Navigation */}
       <div className="sticky top-0 z-20 bg-white dark:bg-background border-b -mx-3 px-3 sm:-mx-6 sm:px-6 mb-4 sm:mb-6">
-        <div className="flex items-center gap-0 overflow-x-auto scrollbar-none">
+        <div className="grid grid-cols-4 gap-1 py-1 sm:flex sm:flex-wrap sm:items-center sm:gap-0">
           {settingsTabs.map(tab => {
             const Icon = tab.icon;
             return (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`flex flex-col sm:flex-row items-center gap-0.5 sm:gap-2 px-2.5 sm:px-4 py-2 sm:py-3.5 text-[10px] sm:text-sm font-medium whitespace-nowrap border-b-2 transition-all shrink-0 ${
+                className={`flex w-full flex-col items-center justify-center gap-0.5 px-1 py-2 text-[10px] font-medium whitespace-nowrap border-b-2 transition-all sm:w-auto sm:flex-row sm:gap-2 sm:px-4 sm:py-3.5 sm:text-sm ${
                   activeTab === tab.key
                     ? 'border-primary text-primary'
                     : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
