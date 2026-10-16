@@ -4,74 +4,8 @@ import "./index.css";
 import { applyBrandColors } from "./lib/brand";
 import { installRiyalSymbol } from "./lib/riyal-symbol";
 
-// ── One-time global storage wipe ──────────────────────────────────────────
-// Bump CLIENT_RESET_VERSION to force every device that opens the app to clear
-// its cookies, localStorage, sessionStorage, IndexedDB, caches and service
-// workers exactly once. The flag itself is preserved so it only runs once
-// per device per version.
-const CLIENT_RESET_VERSION = "2026-04-21-v2-logo";
-(function maybeWipeClientStorage() {
-  try {
-    const KEY = "__qirox_reset_version";
-    if (localStorage.getItem(KEY) === CLIENT_RESET_VERSION) return;
-
-    // 1) Cookies for this origin (all paths/domains we can reach)
-    try {
-      const host = window.location.hostname;
-      const domains = ["", host, "." + host];
-      const paths = ["/", window.location.pathname];
-      document.cookie.split(";").forEach((c) => {
-        const name = c.split("=")[0].trim();
-        if (!name) return;
-        domains.forEach((d) => {
-          paths.forEach((p) => {
-            document.cookie =
-              name +
-              "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=" +
-              p +
-              (d ? "; domain=" + d : "");
-          });
-        });
-      });
-    } catch {}
-
-    // 2) Web storage
-    try { sessionStorage.clear(); } catch {}
-    try { localStorage.clear(); } catch {}
-
-    // 3) IndexedDB
-    try {
-      const idb: any = (indexedDB as any);
-      if (idb && typeof idb.databases === "function") {
-        idb.databases().then((dbs: any[]) => {
-          (dbs || []).forEach((db) => {
-            if (db && db.name) indexedDB.deleteDatabase(db.name);
-          });
-        }).catch(() => {});
-      }
-    } catch {}
-
-    // 4) Cache Storage (PWA caches)
-    try {
-      if ("caches" in window) {
-        caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => {});
-      }
-    } catch {}
-
-    // 5) Service Workers
-    try {
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker
-          .getRegistrations()
-          .then((regs) => regs.forEach((r) => r.unregister()))
-          .catch(() => {});
-      }
-    } catch {}
-
-    // Mark this version as wiped so we don't loop on every load
-    try { localStorage.setItem(KEY, CLIENT_RESET_VERSION); } catch {}
-  } catch {}
-})();
+// Preserve browser storage: IndexedDB and localStorage contain offline menu,
+// pending orders, and crash-recovery snapshots. Never clear them during startup.
 
 // ── Kiosk zoom-lock safety net ──────────────────────────────────────────────
 // This is a POS/kiosk app, not a content site — pinch-zoom must never be

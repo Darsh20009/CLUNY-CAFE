@@ -76,6 +76,17 @@ class SyncEngineClass {
     const res = await fetch('/api/coffee-items', { credentials: 'include' });
     if (!res.ok) return;
     const items: any[] = await res.json();
+    if (!Array.isArray(items)) return;
+
+    // An empty remote catalog can mean the wrong/unavailable database was
+    // selected. Keep the last known-good offline menu rather than deleting it.
+    if (items.length === 0) {
+      const cachedProductCount = await db.products.where('tenantId').equals(tenantId).count();
+      if (cachedProductCount > 0) {
+        console.warn('[Sync] Remote menu is empty; preserving the local offline menu.');
+        return;
+      }
+    }
 
     await db.transaction('rw', db.products, async () => {
       await db.products.where('tenantId').equals(tenantId).delete();
@@ -115,6 +126,16 @@ class SyncEngineClass {
     const res = await fetch('/api/tables', { credentials: 'include' });
     if (!res.ok) return;
     const tables: any[] = await res.json();
+    if (!Array.isArray(tables)) return;
+
+    // Keep cached tables if a wrong or empty remote database returns no rows.
+    if (tables.length === 0) {
+      const cachedTableCount = await db.cafeTables.where('tenantId').equals(tenantId).count();
+      if (cachedTableCount > 0) {
+        console.warn('[Sync] Remote tables are empty; preserving the local offline tables.');
+        return;
+      }
+    }
 
     await db.transaction('rw', db.cafeTables, async () => {
       await db.cafeTables.where('tenantId').equals(tenantId).delete();
