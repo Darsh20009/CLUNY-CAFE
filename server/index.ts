@@ -271,7 +271,24 @@ async function connectDatabase() {
     }
   } catch (error) {
     isDbConnected = false;
-    console.error("❌ MongoDB connection error:", error);
+    const err = error as Error & {
+      code?: string;
+      cause?: Error;
+    };
+
+    console.error("❌ MongoDB connection error:", {
+      name: err.name,
+      code: err.code,
+      message: err.message.replace(
+        /mongodb(\+srv)?:\/\/[^ ]+/gi,
+        "[REDACTED_URI]"
+      ),
+      causeName: err.cause?.name,
+      causeMessage: err.cause?.message?.replace(
+        /mongodb(\+srv)?:\/\/[^ ]+/gi,
+        "[REDACTED_URI]"
+      ),
+    });
     
     if (connectionRetries < MAX_RETRIES) {
       connectionRetries++;
