@@ -53,11 +53,15 @@ async function connectDatabase() {
   isInitializing = true;
   
   const options = {
-    serverSelectionTimeoutMS: 5000,
+    serverSelectionTimeoutMS: 8000,
     socketTimeoutMS: 45000,
     heartbeatFrequencyMS: 10000,
-    maxPoolSize: 200,
-    minPoolSize: 20,
+    dbName: process.env.MONGODB_DATABASE,
+    // Atlas free/shared clusters have a 500-connection ceiling. Keep each
+    // app instance's replica-set pool small instead of opening hundreds.
+    maxPoolSize: 10,
+    minPoolSize: 0,
+    maxConnecting: 2,
     waitQueueTimeoutMS: 10000,
     connectTimeoutMS: 10000,
     maxIdleTimeMS: 60000,
@@ -72,6 +76,9 @@ async function connectDatabase() {
     console.log("✅ MongoDB connected successfully");
     // Connect secondary DB in background (non-blocking)
     initSecondaryConnection().catch(() => {});
+    // Avoid mutating the recovered production database from the Replit
+    // development preview while we verify its contents.
+    if (process.env.NODE_ENV === "production" || process.env.ALLOW_STARTUP_DATA_MUTATIONS === "true") {
     // Drop old unique index on orderNumber (allows wrap-around counter at 1000)
     try {
       const { OrderModel } = await import("@shared/schema");
@@ -133,23 +140,25 @@ async function connectDatabase() {
       const bcrypt = await import("bcryptjs");
       const { v4: uuidv4 } = await import("uuid");
       const { EmployeeModel } = await import("@shared/schema");
-      const ownerPass = process.env.PORTAL_DEFAULT_PASSWORD || "123456";
-      const adminPass = process.env.ADMIN_DEFAULT_PASSWORD || "123456";
-      const ownerPasswordHash = await bcrypt.hash(ownerPass, 10);
-      const adminPasswordHash = await bcrypt.hash(adminPass, 10);
+      const ownerPass = process.env.PORTAL_DEFAULT_PASSWORD;
+      const adminPass = process.env.ADMIN_DEFAULT_PASSWORD;
 
       // Sync admin password
-      const adminResult = await EmployeeModel.updateOne(
-        { username: "admin" },
-        { $set: { password: adminPasswordHash, isActivated: 1, isActive: 1 } }
-      );
-      if (adminResult.matchedCount > 0) {
-        console.log(`✅ Portal account 'admin' password synced`);
+      if (adminPass) {
+        const adminPasswordHash = await bcrypt.hash(adminPass, 10);
+        const adminResult = await EmployeeModel.updateOne(
+          { username: "admin" },
+          { $set: { password: adminPasswordHash, isActivated: 1, isActive: 1 } }
+        );
+        if (adminResult.matchedCount > 0) {
+          console.log(`✅ Portal account 'admin' password synced`);
+        }
       }
 
       // Create or sync owner account
       const ownerExists = await EmployeeModel.findOne({ username: "owner" });
-      if (!ownerExists) {
+      if (!ownerExists && ownerPass) {
+        const ownerPasswordHash = await bcrypt.hash(ownerPass, 10);
         await EmployeeModel.create({
           id: uuidv4(),
           tenantId: "demo-tenant",
@@ -163,7 +172,8 @@ async function connectDatabase() {
           isActive: 1,
         });
         console.log(`✅ Owner account created`);
-      } else {
+      } else if (ownerExists && ownerPass) {
+        const ownerPasswordHash = await bcrypt.hash(ownerPass, 10);
         await EmployeeModel.updateOne({ username: "owner" }, { $set: { password: ownerPasswordHash, isActivated: 1, isActive: 1 } });
         console.log(`✅ Portal account 'owner' password synced`);
       }
@@ -268,6 +278,9 @@ async function connectDatabase() {
       console.log("✅ Discount code TECH10 (خصم خاص 10%) is ready (hidden by default)");
     } catch (err) {
       console.error("TECH10 seed error:", err);
+    }
+    } else {
+      console.log("ℹ️ Skipping startup data migrations and seed writes in development.");
     }
   } catch (error) {
     isDbConnected = false;
@@ -650,6 +663,16 @@ app.use(
     name: 'cluny.sid', // custom cookie name
     store: MongoStore.create({
       mongoUrl: MONGODB_URI!,
+      dbName: process.env.MONGODB_DATABASE,
+      // connect-mongo creates a separate MongoClient; cap it independently.
+      mongoOptions: {
+        maxPoolSize: 5,
+        minPoolSize: 0,
+        maxConnecting: 2,
+        serverSelectionTimeoutMS: 8000,
+        connectTimeoutMS: 10000,
+        maxIdleTimeMS: 60000,
+      },
       collectionName: 'sessions',
       ttl: 30 * 24 * 60 * 60,
       autoRemove: 'native',
