@@ -8,7 +8,6 @@ import {
   TrendingUp, ShoppingCart, ChevronDown, ChevronUp, X, Menu
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import clunyLogoStaff from "@assets/cluny-logo-customer.png";
 import { brand } from "@/lib/brand";
 
 export function AdminSidebar() {
@@ -86,12 +85,12 @@ export function AdminSidebar() {
 
   const SidebarContent = () => (
     <>
-      <div className="p-5 border-b border-border">
+      <div className="p-5 border-b border-sidebar-border">
         <div className="flex items-center gap-3">
-          <img src={clunyLogoStaff} alt={brand.platformNameEn} className="w-9 h-9 object-contain rounded-lg" />
+          <img src={brand.logoStaff} alt={brand.nameEn} className="w-9 h-9 object-contain rounded-xl bg-card p-1 ring-1 ring-border/70" />
           <div>
-            <h2 className="text-base font-bold text-foreground leading-tight">{isAr ? brand.platformNameAr : brand.platformNameEn}</h2>
-            <p className="text-[10px] text-muted-foreground">{isAr ? 'لوحة التحكم الإدارية' : 'Admin Dashboard'}</p>
+            <h2 className="text-[12px] font-extrabold tracking-[.14em] text-sidebar-foreground leading-tight">{brand.nameEn}</h2>
+            <p className="text-[10px] text-sidebar-foreground/55">{isAr ? 'مساحة الإدارة' : 'Admin workspace'}</p>
           </div>
         </div>
       </div>
@@ -175,7 +174,7 @@ export function AdminSidebar() {
       {/* Mobile toggle button - only visible on small screens */}
       <button
         onClick={() => setMobileOpen(true)}
-        className="lg:hidden fixed top-3 right-3 z-50 w-9 h-9 flex items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-lg"
+        className="lg:hidden fixed top-3 right-3 z-50 w-10 h-10 flex items-center justify-center rounded-xl bg-sidebar text-sidebar-foreground border border-sidebar-border shadow-lg"
       >
         <Menu className="w-4 h-4" />
       </button>
@@ -189,9 +188,9 @@ export function AdminSidebar() {
       )}
 
       {/* Mobile drawer */}
-      <div className={`lg:hidden fixed top-0 right-0 h-full w-72 bg-background border-l border-border flex flex-col z-50 transition-transform duration-300 ${mobileOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+      <div className={`lg:hidden fixed top-0 right-0 h-[100dvh] w-72 bg-sidebar border-l border-sidebar-border flex flex-col z-50 transition-transform duration-300 ${mobileOpen ? 'translate-x-0' : 'translate-x-full'}`}>
         <div className="absolute top-3 left-3">
-          <button onClick={() => setMobileOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted">
+          <button onClick={() => setMobileOpen(false)} className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-sidebar-accent">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -199,7 +198,7 @@ export function AdminSidebar() {
       </div>
 
       {/* Desktop sidebar */}
-      <div className="hidden lg:flex w-64 bg-background border-l border-border flex-col h-screen sticky top-0">
+      <div className="hidden lg:flex w-64 bg-sidebar border-l border-sidebar-border flex-col h-[100dvh] sticky top-0">
         <SidebarContent />
       </div>
     </>

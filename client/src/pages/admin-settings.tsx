@@ -1019,7 +1019,7 @@ export default function AdminSettings() {
       </div>
 
       {/* Tab Navigation */}
-      <div className="sticky top-0 z-20 bg-white dark:bg-background border-b -mx-3 px-3 sm:-mx-6 sm:px-6 mb-4 sm:mb-6">
+      <div className="sticky top-[62px] z-20 bg-background/95 backdrop-blur-xl border-b border-border -mx-3 px-3 sm:-mx-6 sm:px-6 mb-4 sm:mb-6">
         <div className="grid grid-cols-4 gap-1 py-1 sm:flex sm:flex-wrap sm:items-center sm:gap-0">
           {settingsTabs.map(tab => {
             const Icon = tab.icon;
@@ -1027,7 +1027,7 @@ export default function AdminSettings() {
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`flex w-full flex-col items-center justify-center gap-0.5 px-1 py-2 text-[10px] font-medium whitespace-nowrap border-b-2 transition-all sm:w-auto sm:flex-row sm:gap-2 sm:px-4 sm:py-3.5 sm:text-sm ${
+                className={`flex min-h-14 w-full flex-col items-center justify-center gap-0.5 px-1 py-2 text-[10px] font-medium leading-tight text-center whitespace-normal border-b-2 transition-colors sm:min-h-0 sm:w-auto sm:flex-row sm:gap-2 sm:px-4 sm:py-3.5 sm:text-sm ${
                   activeTab === tab.key
                     ? 'border-primary text-primary'
                     : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
@@ -2632,7 +2632,7 @@ export default function AdminSettings() {
               </div>
               {pgPaymentTestMode && (
                 <div className="mt-3 p-2 bg-amber-100 dark:bg-amber-900/20 rounded text-[11px] text-amber-800 dark:text-amber-300 font-medium">
-                  ⚠️ {tc("وضع الاختبار مفعّل — تذكر تعطيله قبل الاستخدام الفعلي","Test mode is active — remember to disable it before going live")}
+                  <AlertTriangle className="w-4 h-4 shrink-0" /> {tc("وضع الاختبار مفعّل — تذكر تعطيله قبل الاستخدام الفعلي","Test mode is active — remember to disable it before going live")}
                 </div>
               )}
             </div>
@@ -2858,7 +2858,7 @@ export default function AdminSettings() {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-orange-100 dark:bg-orange-900/20 rounded-lg">
-                  <span className="text-xl">⚙️</span>
+                  <Settings className="h-5 w-5 text-primary" />
                 </div>
                 <div>
                   <CardTitle className="text-xl font-bold">{tc("رسوم الخدمة","Service Fees")} <span className="text-sm font-normal text-orange-600 dark:text-orange-400">{tc("(الطلبات الأونلاين فقط)","(Online orders only)")}</span></CardTitle>
@@ -2939,7 +2939,7 @@ export default function AdminSettings() {
                   {tc("مثال","Example")}: {tc("طلب بقيمة","Order of")} 8 {tc("ريال","SAR")} → {tc("رسوم","fee")} {serviceFeeAmount.toFixed(2)} {tc("ريال","SAR")} | {tc("طلب بقيمة","Order of")} {(serviceFeeLowOrderThreshold - 0.01).toFixed(2)} {tc("ريال","SAR")} → {tc("رسوم","fee")} {serviceFeeLowOrderAmount.toFixed(2)} {tc("ريال","SAR")}
                 </div>
                 <div className="flex items-center gap-2 text-xs text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/10 rounded-lg p-2.5 border border-orange-200 dark:border-orange-900/30">
-                  <span>🌐</span>
+                  <Globe className="h-4 w-4 shrink-0" />
                   <span>{tc("تُطبَّق على الأونلاين فقط — طلبات نقاط البيع","Applied to online orders only — POS transactions")} <strong>{tc("لا تشمل","do not include")}</strong> {tc("رسوم الخدمة","service fees")}</span>
                 </div>
               </div>
@@ -2991,7 +2991,7 @@ export default function AdminSettings() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-bold text-amber-700 dark:text-amber-400">{tc("نقاط لكل مشروب","Points per Drink")} ☕</Label>
+                  <Label className="text-xs font-bold text-amber-700 dark:text-amber-400">{tc("نقاط لكل مشروب","Points per Drink")}</Label>
                   <Input
                     type="number"
                     value={pointsPerDrink}
@@ -3032,7 +3032,7 @@ export default function AdminSettings() {
                   />
                 </div>
                 <div className="space-y-1.5 sm:col-span-2 lg:col-span-4">
-                  <Label className="text-xs font-bold text-green-700 dark:text-green-400">{tc("نقاط للحصول على مشروب مجاني","Points for Free Drink")} ☕🎁</Label>
+                  <Label className="text-xs font-bold text-green-700 dark:text-green-400">{tc("نقاط للحصول على مشروب مجاني","Points for Free Drink")}</Label>
                   <Input
                     type="number"
                     value={pointsForFreeDrink}

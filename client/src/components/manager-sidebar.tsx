@@ -37,7 +37,7 @@ const NAV_GROUPS: { label: string; labelEn: string; color: string; items: NavIte
   {
     label: "التقارير", labelEn: "Reports", color: "#2D9B6E",
     items: [
-      { label: "تحاليلي اليومي", labelEn: "My Daily Analytics", icon: TrendingUp, path: "/manager/tahalyli", badge: "✨" },
+      { label: "تحاليلي اليومي", labelEn: "My Daily Analytics", icon: TrendingUp, path: "/manager/tahalyli", badge: "AI" },
       { label: "تقارير المنتجات التفصيلية", labelEn: "Product Reports", icon: BarChart2, path: "/manager/product-reports", badge: "جديد" },
       { label: "التقارير", labelEn: "Reports", icon: FileText, path: "/admin/reports" },
       { label: "التقارير الموحدة", labelEn: "Unified Reports", icon: Building2, path: "/manager/unified-reports" },
@@ -128,11 +128,11 @@ function SidebarNavItem({ item, collapsed, depth = 0 }: { item: NavItem; collaps
         <button
           className={cn(
             "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-sm font-medium transition-all",
-            "text-gray-600 hover:text-gray-900 hover:bg-gray-50",
+            "text-sidebar-foreground/75 hover:text-sidebar-foreground hover:bg-sidebar-accent/70",
             depth > 0 && "pl-8"
           )}
         >
-          <item.icon className="w-4 h-4 flex-shrink-0 text-gray-400" />
+          <item.icon className="w-4 h-4 flex-shrink-0 text-sidebar-foreground/45" />
           {!collapsed && <span className="flex-1 truncate">{label}</span>}
           {!collapsed && <ChevronDown className="w-3 h-3 opacity-50" />}
         </button>
@@ -153,21 +153,21 @@ function SidebarNavItem({ item, collapsed, depth = 0 }: { item: NavItem; collaps
       className={cn(
         "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-sm transition-all group relative",
         isActive
-          ? "text-[#2D9B6E] bg-[#EDF7F2] border border-[#D8EEE3] font-semibold"
-          : "text-gray-600 hover:text-gray-900 hover:bg-gray-50 font-medium",
+          ? "text-primary bg-primary/10 border border-primary/15 font-semibold"
+          : "text-sidebar-foreground/75 hover:text-sidebar-foreground hover:bg-sidebar-accent/70 font-medium",
         depth > 0 && "pl-6"
       )}
       title={collapsed ? label : undefined}
     >
       {isActive && (
-        <span className={cn("absolute top-1/2 -translate-y-1/2 w-1 h-6 bg-[#2D9B6E]", isAr ? "right-0 rounded-l-full" : "left-0 rounded-r-full")} />
+        <span className={cn("absolute top-1/2 -translate-y-1/2 w-1 h-6 bg-primary", isAr ? "right-0 rounded-l-full" : "left-0 rounded-r-full")} />
       )}
-      <item.icon className={cn("w-4 h-4 flex-shrink-0 transition-transform group-hover:scale-105", isActive ? "text-[#2D9B6E]" : "text-gray-400")} />
+      <item.icon className={cn("w-4 h-4 flex-shrink-0 transition-transform group-hover:scale-105", isActive ? "text-primary" : "text-sidebar-foreground/45")} />
       {!collapsed && (
         <>
           <span className={cn("flex-1 truncate", isAr ? "text-right" : "text-left")}>{label}</span>
           {item.badge && (
-            <span className={cn("min-w-4 h-4 rounded-full px-1 text-[10px] flex items-center justify-center font-bold flex-shrink-0", item.badge === "!" ? "bg-red-500 text-white" : "bg-[#E8F5EE] text-[#2D9B6E]")}>
+            <span className={cn("min-w-4 h-4 rounded-full px-1 text-[10px] flex items-center justify-center font-bold flex-shrink-0", item.badge === "!" ? "bg-destructive text-destructive-foreground" : "bg-primary/10 text-primary")}>
               {item.badge}
             </span>
           )}
@@ -211,29 +211,29 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
   };
 
   const sidebarContent = (
-    <div className={cn("flex flex-col h-full bg-white text-gray-900 border-l border-gray-200 overflow-hidden transition-all duration-300 shadow-sm", collapsed ? "w-[60px]" : "w-[248px]")}>
+    <div className={cn("flex flex-col h-full bg-sidebar text-sidebar-foreground border-l border-sidebar-border overflow-hidden transition-all duration-300 shadow-[0_8px_36px_rgba(24,55,44,.06)]", collapsed ? "w-[60px]" : "w-[248px]")}>
       {/* Header */}
-      <div className={cn("flex items-center border-b border-gray-100 flex-shrink-0", collapsed ? "justify-center px-2 py-4" : "justify-between px-4 py-4")}>
+      <div className={cn("flex items-center border-b border-sidebar-border/80 flex-shrink-0", collapsed ? "justify-center px-2 py-4" : "justify-between px-4 py-4")}>
         {!collapsed && (
           <div className="flex items-center gap-2 min-w-0">
-            <img src={brand.logoStaff} alt={brand.nameAr} className="w-9 h-9 rounded-lg object-contain flex-shrink-0 bg-white" />
+            <img src={brand.logoStaff} alt={brand.nameEn} className="w-9 h-9 rounded-xl object-contain flex-shrink-0 bg-card ring-1 ring-border/70" />
             <div className="min-w-0">
-              <div className="text-gray-900 text-sm font-bold truncate">{brand.nameAr}</div>
-              <div className="text-gray-500 text-[10px] truncate">{manager?.fullName || "مدير"}</div>
+              <div className="text-sidebar-foreground text-sm font-bold tracking-wide truncate">{brand.nameEn}</div>
+              <div className="text-sidebar-foreground/55 text-[10px] truncate">{manager?.fullName || (isAr ? "مدير" : "Manager")}</div>
             </div>
           </div>
         )}
         <button
           onClick={() => mobileOpen ? onMobileClose?.() : setCollapsed(!collapsed)}
-          className="w-8 h-8 flex items-center justify-center rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-100 flex-shrink-0"
+          className="w-9 h-9 flex items-center justify-center rounded-xl text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent flex-shrink-0 transition-colors"
         >
           {mobileOpen ? <X className="w-4 h-4" /> : collapsed ? <Menu className="w-4 h-4" /> : <X className="w-3 h-3" />}
         </button>
       </div>
 
       {/* Navigation */}
-      <div className="flex-1 overflow-y-auto py-3 space-y-1 scrollbar-thin scrollbar-thumb-gray-200 scrollbar-track-transparent px-3">
-        <div className="space-y-1 border-b border-gray-100 pb-3 mb-2">
+      <div className="flex-1 overflow-y-auto py-3 space-y-1 scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent px-3">
+        <div className="space-y-1 border-b border-sidebar-border/80 pb-3 mb-2">
           {topItems.map(item => (
             <SidebarNavItem key={item.path} item={item} collapsed={collapsed} />
           ))}
@@ -243,7 +243,7 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
             {!collapsed && (
               <button
                 onClick={() => toggleGroup(group.label)}
-                className="w-full flex items-center justify-between px-2 py-2 text-xs font-semibold text-gray-500 hover:text-gray-800 transition-colors"
+                className="w-full flex items-center justify-between px-2 py-2 text-xs font-semibold tracking-wide text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
               >
                 <span>{isAr ? group.label : group.labelEn}</span>
                 {expandedGroups.has(group.label) ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
@@ -261,7 +261,7 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
       </div>
 
       {/* Footer */}
-      <div className="border-t border-gray-100 p-2 flex-shrink-0 space-y-1">
+      <div className="border-t border-sidebar-border/80 p-2 flex-shrink-0 space-y-1">
         <button
           onClick={() => {
             const newLang = isAr ? "en" : "ar";
@@ -270,7 +270,7 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
             document.documentElement.dir = newLang === "ar" ? "rtl" : "ltr";
             document.documentElement.lang = newLang;
           }}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-50 transition-all text-sm"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/70 transition-all text-sm"
           title={collapsed ? (isAr ? "English" : "عربي") : undefined}
           data-testid="button-sidebar-language-toggle"
         >
@@ -279,7 +279,7 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
         </button>
         <button
           onClick={onLogout}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-gray-600 hover:text-red-600 hover:bg-red-50 transition-all text-sm"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sidebar-foreground/70 hover:text-destructive hover:bg-destructive/10 transition-all text-sm"
           title={collapsed ? (isAr ? "تسجيل الخروج" : "Logout") : undefined}
         >
           <LogOut className="w-4 h-4 flex-shrink-0" />
@@ -312,19 +312,21 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
 /* Mobile bottom navigation bar */
 export function MobileBottomNav({ manager }: { manager: any }) {
   const [location, navigate] = useLocation();
+  const { i18n } = useTranslation();
+  const isAr = i18n.language.startsWith("ar");
   const managerRole = manager?.role || "manager";
   const homePath = ['owner', 'admin'].includes(managerRole) ? '/owner/dashboard' : '/manager/dashboard';
 
   const items = [
-    { label: "الرئيسية", icon: LayoutDashboard, path: homePath, color: "#2D9B6E" },
-    { label: "الطلبات", icon: ClipboardList, path: "/employee/orders", color: "#3b82f6" },
-    { label: "المخزون", icon: Warehouse, path: "/manager/inventory", color: "#f59e0b" },
-    { label: "التقارير", icon: BarChart2, path: "/manager/unified-reports", color: "#14b8a6" },
-    { label: "المحاسبة", icon: Wallet, path: "/manager/accounting", color: "#8b5cf6" },
+    { label: isAr ? "الرئيسية" : "Home", icon: LayoutDashboard, path: homePath },
+    { label: isAr ? "الطلبات" : "Orders", icon: ClipboardList, path: "/employee/orders" },
+    { label: isAr ? "المخزون" : "Stock", icon: Warehouse, path: "/manager/inventory" },
+    { label: isAr ? "التقارير" : "Reports", icon: BarChart2, path: "/manager/unified-reports" },
+    { label: isAr ? "المحاسبة" : "Finance", icon: Wallet, path: "/manager/accounting" },
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-30 lg:hidden bg-white border-t border-gray-200 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
+    <nav className="fixed bottom-0 left-0 right-0 z-30 lg:hidden bg-background/95 border-t border-border/80 shadow-[0_-8px_24px_rgba(24,55,44,.08)] backdrop-blur-xl">
       <div className="flex items-center justify-around px-1 py-1 safe-area-pb">
         {items.map(item => {
           const isActive = location === item.path;
@@ -332,10 +334,10 @@ export function MobileBottomNav({ manager }: { manager: any }) {
             <button
               key={item.path}
               onClick={() => navigate(item.path)}
-              className={cn("flex flex-col items-center gap-1 px-3 py-2 rounded-xl flex-1 transition-all", isActive ? "bg-[#EDF7F2]" : "")}
+              className={cn("flex flex-col items-center gap-1 px-2 py-2 rounded-xl flex-1 transition-colors", isActive ? "bg-primary/10" : "hover:bg-muted/70")}
             >
-              <item.icon className="w-5 h-5 transition-transform" style={{ color: isActive ? "#2D9B6E" : "#9ca3af" }} />
-              <span className="text-[10px] font-medium" style={{ color: isActive ? "#2D9B6E" : "#6b7280" }}>{item.label}</span>
+              <item.icon className={cn("w-5 h-5 transition-transform", isActive ? "text-primary" : "text-muted-foreground")} />
+              <span className={cn("text-[10px] font-medium", isActive ? "text-primary" : "text-muted-foreground")}>{item.label}</span>
             </button>
           );
         })}

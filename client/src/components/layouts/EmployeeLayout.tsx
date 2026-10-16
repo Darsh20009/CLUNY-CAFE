@@ -133,7 +133,7 @@ export function EmployeeLayout({
 
   return (
     <SidebarProvider defaultOpen={false} style={sidebarStyle as React.CSSProperties}>
-      <div className="flex h-screen w-full" dir={i18n.language === "ar" ? "rtl" : "ltr"}>
+      <div className="flex min-h-[100dvh] w-full bg-background" dir={i18n.language === "ar" ? "rtl" : "ltr"}>
         <Sidebar side="right" collapsible="icon">
           <SidebarHeader className="border-b p-4">
             <div className="flex items-center gap-3">
@@ -197,7 +197,7 @@ export function EmployeeLayout({
         </Sidebar>
 
         <div className="flex flex-col flex-1 min-w-0">
-          <header className="sticky top-0 z-50 flex h-14 items-center justify-between gap-2 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4">
+          <header className="sticky top-0 z-50 flex h-[62px] items-center justify-between gap-2 border-b border-border/80 bg-background/90 backdrop-blur-xl px-3 sm:px-5">
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
@@ -250,7 +250,7 @@ export function EmployeeLayout({
             )}
           </header>
 
-          <main className="flex-1 overflow-hidden pb-14 sm:pb-0">
+          <main className="flex-1 min-w-0 overflow-hidden pb-14 sm:pb-0">
             {isSplitView ? (
               <div className="flex h-full w-full divide-x divide-x-reverse">
                 <div className="w-1/2 overflow-auto">

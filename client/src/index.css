@@ -135,38 +135,38 @@ a, button, input, select, textarea, label, [role="button"] {
      Light Grey Background with Dark Accents
      ═══════════════════════════════════════════════════════════════ */
   
-  /* Base Colors - Clean White & Dark */
-  --background: 0 0% 100%; /* Pure white background */
-  --foreground: 0 0% 0%; /* Absolute black text */
-  --border: 0 0% 90%; /* Subtle border */
-  --card: 0 0% 98%; /* Slightly grey cards */
-  --card-foreground: 0 0% 10%; 
+  /* Black Rose light surfaces, recolored with CLUNY's brand signals */
+  --background: 0 0% 100%;
+  --foreground: 0 0% 0%;
+  --border: 0 0% 90%;
+  --card: 0 0% 98%;
+  --card-foreground: 0 0% 10%;
   --card-border: 0 0% 92%;
 
   /* Sidebar - Light/Glass Theme */
-  --sidebar: 0 0% 98%; 
-  --sidebar-foreground: 0 0% 10%; 
+  --sidebar: 0 0% 98%;
+  --sidebar-foreground: 0 0% 10%;
   --sidebar-border: 0 0% 90%;
-  --sidebar-primary: 0 0% 0%;
+  --sidebar-primary: 155 55% 34%;
   --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 0 0% 94%;
   --sidebar-accent-foreground: 0 0% 0%;
-  --sidebar-ring: 0 0% 20%;
+  --sidebar-ring: 155 55% 39%;
 
   /* Primary - Teal Green (CLUNY brand color #2D9B6E) */
   --primary: 155 55% 39%;
   --primary-foreground: 0 0% 100%;
 
-  /* Secondary - Neutral Grey */
-  --secondary: 0 0% 85%; 
+  /* Secondary — neutral reference surface */
+  --secondary: 0 0% 85%;
   --secondary-foreground: 0 0% 20%;
 
   /* Muted */
   --muted: 0 0% 60%;
   --muted-foreground: 0 0% 45%;
 
-  /* Accent - Ocean Blue */
-  --accent: 207 90% 54%; 
+  /* CLUNY secondary accent from brand.ts */
+  --accent: 207 90% 54%;
   --accent-foreground: 0 0% 100%;
 
   /* Ring */
@@ -237,11 +237,11 @@ a, button, input, select, textarea, label, [role="button"] {
 
   /* Popover / dropdown background */
   --popover: 0 0% 100%;
-  --popover-foreground: 0 0% 10%;
-  --popover-border: 0 0% 90%;
+  --popover-foreground: 166 20% 15%;
+  --popover-border: 155 13% 86%;
 
   /* Input surface */
-  --input: 0 0% 92%;
+  --input: 155 13% 86%;
 }
 
 .dark {
@@ -257,21 +257,21 @@ a, button, input, select, textarea, label, [role="button"] {
      🌙 CLUNY CAFE DARK MODE - Modern Night Theme
      ═══════════════════════════════════════════════════════════════ */
   
-  --background: 220 25% 10%; /* Deep navy */
-  --foreground: 0 0% 100%; /* Pure white text */
-  --border: 220 20% 18%; /* Subtle dark border */
-  --card: 220 22% 14%; /* Elevated card surface */
-  --card-foreground: 0 0% 92%; /* Light text */
-  --card-border: 220 18% 20%; /* Card border */
+  --background: 220 25% 10%;
+  --foreground: 0 0% 100%;
+  --border: 220 20% 18%;
+  --card: 220 22% 14%;
+  --card-foreground: 0 0% 92%;
+  --card-border: 220 18% 20%;
 
-  --sidebar: 180 40% 12%; /* Deep teal sidebar */
-  --sidebar-foreground: 0 0% 92%; /* Light text */
-  --sidebar-border: 180 35% 16%; /* Dark border */
-  --sidebar-primary: 160 55% 50%; /* Bright green */
-  --sidebar-primary-foreground: 0 0% 100%; /* White text */
-  --sidebar-accent: 180 30% 20%; /* Elevated accent */
-  --sidebar-accent-foreground: 0 0% 90%; /* Light text */
-  --sidebar-ring: 160 55% 50%; /* Green ring */
+  --sidebar: 180 40% 12%;
+  --sidebar-foreground: 0 0% 92%;
+  --sidebar-border: 180 35% 16%;
+  --sidebar-primary: 155 55% 48%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 180 30% 20%;
+  --sidebar-accent-foreground: 0 0% 90%;
+  --sidebar-ring: 155 55% 48%;
 
   --popover: 220 22% 14%; /* Card surface */
   --popover-foreground: 0 0% 92%; /* Light text */
@@ -286,8 +286,8 @@ a, button, input, select, textarea, label, [role="button"] {
   --muted: 220 12% 35%; /* Muted gray */
   --muted-foreground: 220 10% 60%; /* Gray text */
 
-  --accent: 200 70% 55%; /* Bright blue accent */
-  --accent-foreground: 0 0% 100%; /* Light text */
+  --accent: 207 90% 54%;
+  --accent-foreground: 0 0% 100%;
 
   --destructive: 0 70% 55%;
   --destructive-foreground: 0 0% 100%;
@@ -298,7 +298,7 @@ a, button, input, select, textarea, label, [role="button"] {
   --warning: 38 95% 55%;
   --warning-foreground: 38 100% 12%;
 
-  --input: 220 20% 16%;
+  --input: 165 16% 22%;
   --ring: 160 55% 48%;
 
   --chart-1: 160 55% 48%;
@@ -412,16 +412,16 @@ a, button, input, select, textarea, label, [role="button"] {
 
   /* Executive KPI Card */
   .kpi-card {
-    background: linear-gradient(135deg, hsl(0 0% 100%) 0%, hsl(40 20% 98%) 100%);
-    border: 1px solid hsl(40 20% 90%);
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
     border-radius: var(--radius);
     padding: 1.5rem;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .kpi-card:hover {
-    box-shadow: var(--shadow-gold);
-    border-color: hsl(43 80% 70%);
+    box-shadow: var(--shadow-sm);
+    border-color: hsl(var(--primary) / .35);
   }
 
   .dark .kpi-card {
@@ -435,8 +435,8 @@ a, button, input, select, textarea, label, [role="button"] {
 
   /* Premium Stat Card */
   .stat-card-premium {
-    background: linear-gradient(145deg, hsl(0 0% 100%) 0%, hsl(40 15% 97%) 100%);
-    border: 1px solid hsl(40 15% 88%);
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
     border-radius: 0.75rem;
     position: relative;
     overflow: hidden;
@@ -449,7 +449,7 @@ a, button, input, select, textarea, label, [role="button"] {
     left: 0;
     right: 0;
     height: 3px;
-    background: linear-gradient(90deg, hsl(43 80% 50%) 0%, hsl(43 85% 60%) 50%, hsl(43 80% 50%) 100%);
+    background: hsl(var(--primary));
   }
 
   /* Gold Gradient Header */
@@ -468,7 +468,7 @@ a, button, input, select, textarea, label, [role="button"] {
   /* Gold Accent Line */
   .gold-accent-line {
     height: 2px;
-    background: linear-gradient(90deg, transparent 0%, hsl(43 80% 50%) 50%, transparent 100%);
+    background: linear-gradient(90deg, transparent 0%, hsl(var(--primary)) 50%, transparent 100%);
   }
 
   /* Premium Navigation Item */
@@ -565,8 +565,8 @@ a, button, input, select, textarea, label, [role="button"] {
   }
 
   .badge-gold {
-    background: linear-gradient(135deg, hsl(43 80% 50%) 0%, hsl(43 85% 55%) 100%);
-    color: hsl(225 30% 12%);
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
   }
 
   .badge-success {
@@ -591,20 +591,20 @@ a, button, input, select, textarea, label, [role="button"] {
 
   /* Premium Button */
   .btn-premium {
-    background: linear-gradient(135deg, hsl(43 80% 50%) 0%, hsl(43 75% 45%) 100%);
-    color: hsl(225 30% 12%);
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
     font-weight: 600;
     padding: 0.625rem 1.25rem;
     border-radius: var(--radius);
     border: none;
     cursor: pointer;
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 2px 4px rgba(212, 175, 55, 0.2);
+    box-shadow: var(--shadow-xs);
   }
 
   .btn-premium:hover {
-    background: linear-gradient(135deg, hsl(43 80% 55%) 0%, hsl(43 75% 50%) 100%);
-    box-shadow: var(--shadow-gold);
+    background: hsl(var(--primary) / .92);
+    box-shadow: var(--shadow-sm);
     transform: translateY(-1px);
   }
 
@@ -647,12 +647,12 @@ a, button, input, select, textarea, label, [role="button"] {
 
   /* Button Animations */
   .btn-primary {
-    background: linear-gradient(135deg, hsl(43, 74%, 52%) 0%, hsl(43, 74%, 45%) 100%);
+    background: hsl(var(--primary));
     transition: all 0.3s ease;
   }
 
   .btn-primary:hover {
-    background: linear-gradient(135deg, hsl(43, 74%, 58%) 0%, hsl(43, 74%, 50%) 100%);
+    background: hsl(var(--primary) / .92);
     transform: translateY(-2px);
   }
 
@@ -985,6 +985,86 @@ a, button, input, select, textarea, label, [role="button"] {
       opacity: 1; 
       transform: translateX(0); 
     }
+  }
+}
+
+/* CLUNY service console — shared finishing layer across staff and customer screens */
+@layer base {
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: 'IBM Plex Sans Arabic', 'Tajawal', sans-serif;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / .18);
+    color: hsl(var(--foreground));
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--primary) / .75);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .card-hover,
+  [data-radix-collection-item],
+  button,
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .card-hover {
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+  }
+
+  .card-hover:hover {
+    transform: translateY(-1px);
+    border-color: hsl(var(--primary) / .24);
+    box-shadow: 0 10px 28px hsl(165 25% 16% / .07);
+  }
+
+  .table-premium thead th {
+    background: hsl(var(--muted) / .72);
+    color: hsl(var(--muted-foreground));
+    border-bottom: 1px solid hsl(var(--border));
+  }
+
+  .table-premium tbody tr:hover {
+    background: hsl(var(--primary) / .035);
+  }
+
+  .table-premium tbody td {
+    border-bottom-color: hsl(var(--border));
+  }
+}
+
+/* Dense controls stay legible at a cashier's pace; settings grids remain discoverable. */
+[data-slot="card"],
+.kpi-card,
+.stat-card-premium,
+.chart-container-premium {
+  border-color: hsl(var(--border));
+  box-shadow: 0 1px 2px hsl(165 25% 16% / .025), 0 6px 18px hsl(165 25% 16% / .025);
+}
+
+input, select, textarea {
+  accent-color: hsl(var(--primary));
+}
+
+@media (max-width: 767px) {
+  .table-premium {
+    min-width: 640px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
   }
 }
 

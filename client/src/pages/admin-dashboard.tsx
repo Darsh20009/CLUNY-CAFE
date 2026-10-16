@@ -171,7 +171,7 @@ export default function AdminDashboard() {
   );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background" dir={tc('rtl','ltr')} style={{ fontFamily: "'Cairo', sans-serif" }}>
+    <div className="flex min-h-[100dvh] overflow-hidden bg-background" dir={tc('rtl','ltr')}>
       <ManagerSidebar
         manager={manager}
         onLogout={handleLogout}
@@ -180,12 +180,12 @@ export default function AdminDashboard() {
         role={manager?.role}
       />
 
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0 bg-[#F7F9F8]">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0 bg-background">
         {/* Header */}
-        <header className="flex-shrink-0 bg-white border-b border-gray-200 px-4 lg:px-6 py-3 flex items-center justify-between gap-3 shadow-sm">
+        <header className="flex-shrink-0 bg-background/90 border-b border-border/80 px-4 lg:px-6 py-3 flex items-center justify-between gap-3 shadow-sm backdrop-blur-xl">
           <div className="flex items-center gap-3">
             <button
-              className="lg:hidden w-9 h-9 flex items-center justify-center rounded-lg bg-gray-50 text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+              className="lg:hidden w-10 h-10 flex items-center justify-center rounded-xl bg-card border border-border text-muted-foreground hover:text-foreground hover:bg-muted"
               onClick={() => setMobileMenuOpen(true)}
             >
               <BarChart3 className="w-4 h-4" />
@@ -200,7 +200,7 @@ export default function AdminDashboard() {
               <p className="text-xs text-muted-foreground">{tc("نظرة شاملة على أداء الكافيه", "Complete cafe overview")}</p>
             </div>
           </div>
-          <h1 className="hidden md:block text-sm font-semibold text-gray-700">{tc("لوحة التحكم", "Dashboard")}</h1>
+          <h1 className="hidden md:block text-sm font-semibold text-foreground">{tc("لوحة التحكم", "Dashboard")}</h1>
           <div className="flex items-center gap-2">
             <Badge variant="secondary" className="text-xs font-medium text-[#2D9B6E] bg-[#EDF7F2] border border-[#D8EEE3]">
               {businessConfig?.businessName || "CLUNY CAFE"}
@@ -212,7 +212,7 @@ export default function AdminDashboard() {
         </header>
 
         {/* Main Content */}
-        <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-5 space-y-5 pb-20 lg:pb-5">
+        <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-5 space-y-5 pb-24 lg:pb-5">
 
           {/* KPI Cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

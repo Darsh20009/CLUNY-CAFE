@@ -25,15 +25,18 @@ export function AdminLayout({ children }: AdminLayoutProps) {
   const pageTitle = pageTitles[location]?.[isAr ? 0 : 1] || (isAr ? 'لوحة الإدارة' : 'Admin');
 
   return (
-    <div className="flex h-screen bg-[#F7F9F8] text-gray-900" dir={isAr ? 'rtl' : 'ltr'}>
+    <div className="flex min-h-[100dvh] bg-background text-foreground" dir={isAr ? 'rtl' : 'ltr'}>
       <AdminSidebar />
-      <main className="flex-1 overflow-auto relative min-w-0">
-        <header className="sticky top-0 z-40 grid grid-cols-3 items-center gap-3 border-b border-gray-200 bg-white/95 px-4 py-3 backdrop-blur">
+      <main className="flex-1 min-h-[100dvh] overflow-auto relative min-w-0">
+        <header className="sticky top-0 z-40 grid min-h-[62px] grid-cols-3 items-center gap-3 border-b border-border/80 bg-background/90 px-3 sm:px-5 backdrop-blur-xl">
           <div className="flex min-w-0 items-center gap-2">
-            <img src={brand.logoStaff} alt={brand.nameAr} className="h-9 w-9 rounded-lg object-contain" />
-            <span className="truncate text-sm font-bold text-gray-900">{brand.nameAr}</span>
+            <img src={brand.logoStaff} alt={brand.nameEn} className="h-9 w-9 rounded-xl bg-card p-1 object-contain ring-1 ring-border/70" />
+            <div className="min-w-0">
+              <span className="block truncate text-[11px] font-bold tracking-[.15em] text-primary">{brand.nameEn}</span>
+              <span className="hidden truncate text-[10px] text-muted-foreground sm:block">{brand.platformNameEn}</span>
+            </div>
           </div>
-          <h1 className="truncate text-center text-sm font-semibold text-gray-700">{pageTitle}</h1>
+          <h1 className="truncate text-center text-sm font-semibold text-foreground">{pageTitle}</h1>
           <div className="flex justify-end">
             <LanguageToggle variant="outline" />
           </div>
