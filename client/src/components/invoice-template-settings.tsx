@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { FileText, ImagePlus, Link2, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,8 @@ export function InvoiceTemplateSettings() {
   const { data: businessConfig, isLoading } = useQuery<any>({ queryKey: ["/api/business-config"] });
   const [draft, setDraft] = useState<InvoiceSettings>(DEFAULT_INVOICE_SETTINGS);
   const [newQr, setNewQr] = useState<{ label: string; content: string; surface: InvoiceQrSurface }>({ label: "", content: "", surface: "all" });
+  const [uploadingArtwork, setUploadingArtwork] = useState(false);
+  const artworkFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (businessConfig?.invoiceSettings) {
@@ -74,6 +76,53 @@ export function InvoiceTemplateSettings() {
 
   const updateElement = (key: string, checked: boolean) => {
     setDraft((current) => ({ ...current, elements: { ...current.elements, [key]: checked } }));
+  };
+
+  const uploadArtwork = async (file?: File) => {
+    if (!file) return;
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowedTypes.includes(file.type)) {
+      toast({ title: tc("نوع الصورة غير مدعوم", "Unsupported image type"), description: tc("استخدم JPG أو PNG أو WebP.", "Use JPG, PNG, or WebP."), variant: "destructive" });
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      toast({ title: tc("الصورة كبيرة جداً", "Image is too large"), description: tc("الحد الأقصى 8 ميجابايت.", "The maximum size is 8 MB."), variant: "destructive" });
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("image", file);
+    setUploadingArtwork(true);
+    try {
+      const response = await fetch("/api/upload-invoice-artwork", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.url) {
+        throw new Error(result.error || tc("تعذر رفع الصورة", "Could not upload the image"));
+      }
+
+      const image = {
+        id: `upload-${Date.now()}-${window.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`,
+        name: file.name.slice(0, 120) || tc("صورة فاتورة", "Invoice image"),
+        url: result.url as string,
+      };
+      setDraft((current) => ({
+        ...current,
+        mode: "custom",
+        headerArtwork: "custom",
+        customArtworkUrl: image.url,
+        artworkLibrary: [...current.artworkLibrary.filter((item) => item.url !== image.url), image],
+      }));
+      toast({ title: tc("تم رفع الصورة", "Image uploaded"), description: tc("احفظ إعدادات الفاتورة لتثبيتها.", "Save invoice settings to keep this selection.") });
+    } catch (error: any) {
+      toast({ title: tc("تعذر رفع الصورة", "Could not upload the image"), description: error?.message || "", variant: "destructive" });
+    } finally {
+      setUploadingArtwork(false);
+      if (artworkFileRef.current) artworkFileRef.current.value = "";
+    }
   };
 
   const addQr = () => {
@@ -161,23 +210,87 @@ export function InvoiceTemplateSettings() {
               <select
                 id="invoice-header-artwork"
                 value={draft.headerArtwork}
-                onChange={(event) => setDraft((current) => ({ ...current, headerArtwork: event.target.value as InvoiceSettings["headerArtwork"] }))}
+                onChange={(event) => setDraft((current) => {
+                  const headerArtwork = event.target.value as InvoiceSettings["headerArtwork"];
+                  return {
+                    ...current,
+                    mode: headerArtwork === "none" ? current.mode : "custom",
+                    headerArtwork,
+                  };
+                })}
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                disabled={draft.mode !== "custom"}
               >
                 <option value="campaign">{tc("صورة «بالغوا بالدفاع عن وطنكم»", "Patriotic campaign image")}</option>
                 <option value="logo">{tc("شعار كلوني", "CLUNY logo")}</option>
-                <option value="custom">{tc("رابط صورة مخصص", "Custom image URL")}</option>
+                <option value="custom">{tc("صورة من المكتبة أو رفع صورة", "Library or uploaded image")}</option>
                 <option value="none">{tc("بدون صورة", "No image")}</option>
               </select>
-              {draft.mode === "custom" && draft.headerArtwork === "custom" && (
-                <Input
-                  value={draft.customArtworkUrl}
-                  onChange={(event) => setDraft((current) => ({ ...current, customArtworkUrl: event.target.value }))}
-                  placeholder="https://..."
-                  dir="ltr"
-                  aria-label={tc("رابط صورة الفاتورة", "Invoice image URL")}
-                />
+              {draft.headerArtwork === "custom" && (
+                <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <select
+                      value={draft.customArtworkUrl}
+                      onChange={(event) => setDraft((current) => ({
+                        ...current,
+                        mode: "custom",
+                        headerArtwork: "custom",
+                        customArtworkUrl: event.target.value,
+                      }))}
+                      className="h-10 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm"
+                      aria-label={tc("اختيار صورة الفاتورة", "Choose invoice artwork")}
+                    >
+                      <option value="">{tc("اختر صورة محفوظة", "Choose a saved image")}</option>
+                      {draft.customArtworkUrl && !draft.artworkLibrary.some((image) => image.url === draft.customArtworkUrl) && (
+                        <option value={draft.customArtworkUrl}>{tc("الرابط الحالي", "Current image URL")}</option>
+                      )}
+                      {draft.artworkLibrary.map((image) => (
+                        <option key={image.id} value={image.url}>{image.name}</option>
+                      ))}
+                    </select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2"
+                      disabled={uploadingArtwork}
+                      onClick={() => artworkFileRef.current?.click()}
+                    >
+                      <ImagePlus className="h-4 w-4" />
+                      {uploadingArtwork ? tc("جاري الرفع...", "Uploading...") : tc("رفع صورة", "Upload image")}
+                    </Button>
+                    <input
+                      ref={artworkFileRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={(event) => uploadArtwork(event.target.files?.[0])}
+                    />
+                  </div>
+                  <Input
+                    value={draft.customArtworkUrl}
+                    onChange={(event) => setDraft((current) => ({
+                      ...current,
+                      mode: "custom",
+                      headerArtwork: "custom",
+                      customArtworkUrl: event.target.value,
+                    }))}
+                    placeholder="https://..."
+                    dir="ltr"
+                    aria-label={tc("رابط صورة الفاتورة", "Invoice image URL")}
+                  />
+                  {draft.customArtworkUrl && (
+                    <div className="overflow-hidden rounded-md border bg-white p-2">
+                      <img
+                        src={draft.customArtworkUrl}
+                        alt={tc("معاينة صورة الفاتورة", "Invoice artwork preview")}
+                        className="mx-auto max-h-64 w-full object-contain"
+                        loading="lazy"
+                      />
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    {tc("الصورة المرفقة جاهزة في القائمة. ارفع JPG أو PNG أو WebP بحد أقصى 8 ميجابايت، ثم احفظ الإعدادات.", "The attached artwork is already in the list. Upload JPG, PNG, or WebP up to 8 MB, then save your settings.")}
+                  </p>
+                </div>
               )}
             </div>
           </div>

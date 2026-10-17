@@ -34,11 +34,35 @@ export default function GeideaCheckoutWidget({
   const [errorMsg, setErrorMsg] = useState("");
   const [hppUrl, setHppUrl] = useState("");
   const mountedRef = useRef(true);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const { data: payCfg } = useQuery<{ paymentTestMode: boolean; provider: string; geideaConfigured: boolean }>({
     queryKey: ["/api/payments/config"],
     staleTime: 30000,
   });
+
+  useEffect(() => {
+    const handlePaymentResult = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.source !== iframeRef.current?.contentWindow) return;
+      if (event.data?.type !== "GEIDEA_PAYMENT_RESULT" || !mountedRef.current) return;
+
+      if (event.data.status === "success") {
+        setStage("success");
+        onSuccess();
+      } else if (event.data.status === "cancelled") {
+        setStage("ready");
+        onCancel();
+      } else {
+        const message = tc("لم تتم عملية الدفع. يرجى المحاولة مرة أخرى.", "Payment was not completed. Please try again.");
+        setErrorMsg(message);
+        setStage("error");
+        onError(message);
+      }
+    };
+
+    window.addEventListener("message", handlePaymentResult);
+    return () => window.removeEventListener("message", handlePaymentResult);
+  }, [onSuccess, onError, onCancel, tc]);
 
   const isTestMode = !!payCfg?.paymentTestMode;
 
@@ -114,37 +138,6 @@ export default function GeideaCheckoutWidget({
         setErrorMsg(tc("فشل في محاكاة الدفع.", "Payment simulation failed."));
       }
     }
-  };
-
-  const handleIframeLoad = (e: React.SyntheticEvent<HTMLIFrameElement>) => {
-    try {
-      const iframe = e.currentTarget;
-      const loc = iframe.contentWindow?.location;
-      if (!loc) return;
-      const href = loc.href;
-      if (!href || href === "about:blank") return;
-      if (href.includes("/payment-return")) {
-        const params = new URLSearchParams(loc.search);
-        const responseCode = params.get("geideaResponseCode") || params.get("responseCode") || params.get("Response") || "";
-        const status = params.get("geideaStatus") || params.get("status") || params.get("Status") || "";
-        if (mountedRef.current) {
-          if (responseCode === "000" || status.toLowerCase() === "success" || status.toLowerCase() === "paid") {
-            setStage("success");
-            onSuccess();
-          } else if (status.toLowerCase() === "cancel" || status.toLowerCase() === "cancelled") {
-            setStage("ready");
-            onCancel();
-          } else {
-            const msg = responseCode
-              ? tc(`تم رفض الدفع (كود: ${responseCode})`, `Payment declined (code: ${responseCode})`)
-              : tc("تعذّر إتمام الدفع", "Payment failed");
-            setErrorMsg(msg);
-            setStage("error");
-            onError(msg);
-          }
-        }
-      }
-    } catch { }
   };
 
   if (stage === "success") {
@@ -258,12 +251,12 @@ export default function GeideaCheckoutWidget({
 
             {/* iframe */}
             <iframe
+              ref={iframeRef}
               src={hppUrl}
               className="flex-1 w-full border-none"
               title="Geidea Payment"
               allow="payment *; camera *"
               sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-top-navigation allow-top-navigation-by-user-activation allow-modals"
-              onLoad={handleIframeLoad}
               data-testid="iframe-geidea-hpp"
             />
           </div>

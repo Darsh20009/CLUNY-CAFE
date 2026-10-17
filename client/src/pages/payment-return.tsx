@@ -34,6 +34,18 @@ export default function PaymentReturnPage() {
     const paymobTxId    = params.get("id");
     const provider      = params.get("provider") || "paymob";
     const session       = params.get("session");
+    const orderNumber   = params.get("orderNumber");
+
+    const notifyGeideaParent = (status: "success" | "failed", confirmedOrderNumber?: string | null) => {
+      try {
+        if (window.parent !== window) {
+          window.parent.postMessage(
+            { type: "GEIDEA_PAYMENT_RESULT", status, orderNumber: confirmedOrderNumber || orderNumber },
+            window.location.origin,
+          );
+        }
+      } catch {}
+    };
 
     const geideaResponseCode  = params.get("geideaResponseCode")  || params.get("responseCode");
     const geideaStatus        = params.get("geideaStatus")        || params.get("status");
@@ -59,6 +71,7 @@ export default function PaymentReturnPage() {
               // Geidea returned with a non-success code
               setStatus("failed");
               setMessage(tc("لم تتم عملية الدفع. يرجى المحاولة مرة أخرى.", "Payment was not completed. Please try again."));
+              notifyGeideaParent("failed");
               return;
             }
             const confirmRes = await fetch("/api/payments/confirm-payment-order", {
@@ -86,12 +99,14 @@ export default function PaymentReturnPage() {
               setDisplayOrderNumber(orderNum);
               setStatus("success");
               setMessage(tc("تمت عملية الدفع بنجاح! شكراً لك.", "Payment successful! Thank you."));
+              notifyGeideaParent("success", orderNum);
               if (!isInIframe()) setTimeout(() => navigate("/my-orders"), 3000);
               return;
             }
             if (confirmData.alreadyUsed) {
               setStatus("success");
               setMessage(tc("تمت عملية الدفع بنجاح! طلبك تم تأكيده.", "Payment successful! Your order is confirmed."));
+              notifyGeideaParent("success");
               if (!isInIframe()) setTimeout(() => navigate("/my-orders"), 3000);
               return;
             }
@@ -101,7 +116,8 @@ export default function PaymentReturnPage() {
           // ── Legacy: verify + sessionStorage fallback ──────────────────────
           const body: any = {
             provider,
-            sessionId: geideaOrderId || geideaMerchantRefId || session,
+            sessionId: session || undefined,
+            orderNumber,
             geideaResponseCode, geideaStatus, geideaOrderId,
             geideaMerchantRefId, geideaAmount, geideaCurrency, geideaSignature,
           };
@@ -111,8 +127,7 @@ export default function PaymentReturnPage() {
             body: JSON.stringify(body),
           });
           const data = await res.json();
-          const isPaidByCode = geideaResponseCode === "000" || geideaStatus === "Success" || geideaStatus === "succeeded";
-          if (data.verified || isPaidByCode) {
+          if (data.verified) {
             const raw = sessionStorage.getItem("pendingOrderData");
             if (raw) {
               try {
@@ -132,14 +147,17 @@ export default function PaymentReturnPage() {
             }
             setStatus("success");
             setMessage(tc("تمت عملية الدفع بنجاح! شكراً لك.", "Payment successful! Thank you."));
+            notifyGeideaParent("success");
             if (!isInIframe()) setTimeout(() => navigate("/my-orders"), 2500);
           } else {
             setStatus("failed");
             setMessage(tc("لم تتم عملية الدفع. يرجى المحاولة مرة أخرى.", "Payment was not completed. Please try again."));
+            notifyGeideaParent("failed");
           }
         } catch {
           setStatus("failed");
           setMessage(tc("حدث خطأ أثناء التحقق من الدفع.", "An error occurred while verifying payment."));
+          notifyGeideaParent("failed");
         }
       })();
       return;

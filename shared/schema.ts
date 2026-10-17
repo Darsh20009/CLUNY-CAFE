@@ -857,6 +857,11 @@ export interface IBusinessConfig extends Document {
     mode?: "default" | "custom";
     headerArtwork?: "campaign" | "logo" | "custom" | "none";
     customArtworkUrl?: string;
+    artworkLibrary?: Array<{
+      id: string;
+      name: string;
+      url: string;
+    }>;
     elements?: Record<string, boolean>;
     customQrs?: Array<{
       id: string;
@@ -885,7 +890,7 @@ const PaymentGatewayConfigSchema = new Schema({
   geidea: {
     publicKey: { type: String },
     apiPassword: { type: String },
-    baseUrl: { type: String, default: 'https://api.merchant.geidea.net' },
+    baseUrl: { type: String, default: 'https://api.ksamerchant.geidea.net' },
     callbackUrl: { type: String },
   },
   paymentTestMode: { type: Boolean, default: false },
@@ -1413,6 +1418,8 @@ export interface IOrder extends Document {
   giftCardAmountUsed?: number;
   giftCardRemainingBalance?: number;
   notes?: string;
+  isBackdated?: boolean;
+  historicalOrderDateOnly?: boolean;
   refundedAmount?: number;
   refundedAt?: Date;
   isFullyRefunded?: boolean;
@@ -1468,6 +1475,8 @@ const OrderSchema = new Schema<IOrder>({
   status: { type: String, default: "pending", required: true },
   channel: { type: String, default: "online" },
   notes: { type: String },
+  isBackdated: { type: Boolean, default: false },
+  historicalOrderDateOnly: { type: Boolean, default: false },
   statusHistory: [{
     status: { type: String, required: true },
     timestamp: { type: Date, default: Date.now },
@@ -6549,6 +6558,7 @@ export interface IPaymentLog extends Document {
   status: 'pending' | 'success' | 'failed' | 'unknown';
   sessionId?: string;
   externalId?: string;
+  merchantReferenceId?: string;
   orderId?: string;
   orderNumber?: string;
   customerPhone?: string;
@@ -6568,6 +6578,7 @@ const PaymentLogSchema = new Schema<IPaymentLog>({
   status: { type: String, default: 'pending' },
   sessionId: String,
   externalId: String,
+  merchantReferenceId: String,
   orderId: String,
   orderNumber: String,
   customerPhone: String,

@@ -423,7 +423,7 @@ export default function AdminSettings() {
   const [neoleapBaseUrl, setNeoleapBaseUrl] = useState("https://api.neoleap.com.sa");
   const [geideaPublicKey, setGeideaPublicKey] = useState("");
   const [geideaApiPassword, setGeideaApiPassword] = useState("");
-  const [geideaBaseUrl, setGeideaBaseUrl] = useState("https://api.merchant.geidea.net");
+  const [geideaBaseUrl, setGeideaBaseUrl] = useState("https://api.ksamerchant.geidea.net");
   const [geideaDiagResult, setGeideaDiagResult] = useState<any>(null);
   const [geideaDiagLoading, setGeideaDiagLoading] = useState(false);
   const [paymobApiKey, setPaymobApiKey] = useState("");
@@ -461,7 +461,7 @@ export default function AdminSettings() {
         setNeoleapBaseUrl(pgConfig.neoleap.baseUrl || 'https://api.neoleap.com.sa');
       }
       if (pgConfig.geidea) {
-        setGeideaBaseUrl(pgConfig.geidea.baseUrl || 'https://api.merchant.geidea.net');
+        setGeideaBaseUrl(pgConfig.geidea.baseUrl || 'https://api.ksamerchant.geidea.net');
       }
       if (pgConfig.paymob) {
         setPaymobIntegrationId(pgConfig.paymob.integrationId || '');

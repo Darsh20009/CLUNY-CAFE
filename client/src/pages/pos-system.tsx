@@ -22,7 +22,7 @@ import {
   Lock, Bell, BellOff, MonitorSmartphone, ScanLine,
   PauseCircle, Receipt, Settings, User, Wallet, RotateCcw,
   Percent, DollarSign, FolderOpen, Hash, Merge, Users, Scissors, Car,
-  Home, MoreHorizontal
+  Home, MoreHorizontal, CalendarDays
 } from "lucide-react";
 import {
   type CartSnapshot, type HeldCart as HeldCartType, type LineItemDiscount, type OrderDiscount,
@@ -87,6 +87,13 @@ const PAYMENT_METHODS = [
   { id: "card", icon: CreditCard, tKey: "pos.payment_card" },
   { id: "split", icon: SplitSquareVertical, tKey: "pos.payment_split" },
 ];
+
+const toDateInputValue = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
 
 export default function PosSystem() {
   const tc = useTranslate();
@@ -166,6 +173,11 @@ export default function PosSystem() {
   const [qrPayOpen, setQrPayOpen] = useState(false);
   const [qrPayOrder, setQrPayOrder] = useState<{ id: string; orderNumber: string; amount: number } | null>(null);
   const [creatingQrPay, setCreatingQrPay] = useState(false);
+  const [showHistoricalOrderDialog, setShowHistoricalOrderDialog] = useState(false);
+  const [historicalDateInput, setHistoricalDateInput] = useState("");
+  const [historicalTimeInput, setHistoricalTimeInput] = useState("");
+  const [historicalOrderAt, setHistoricalOrderAt] = useState<string | null>(null);
+  const [historicalOrderDateOnly, setHistoricalOrderDateOnly] = useState(false);
   const [receiptCountdown, setReceiptCountdown] = useState(0);
   const [lastOrder, setLastOrder] = useState<any>(null);
   const [lastPrintFailed, setLastPrintFailed] = useState(false);
@@ -1371,6 +1383,10 @@ export default function PosSystem() {
   // ── Create a pending PayMob order and show QR code for customer to scan ──
   const handleQrPayCheckout = async () => {
     if (orderItems.length === 0) return;
+    if (historicalOrderAt) {
+      toast({ title: tc('غير متاح', 'Unavailable'), description: tc('الطلبات بتاريخ سابق تُسجّل كطلبات مكتملة ولا تُرسل للدفع الإلكتروني', 'Backdated orders are recorded as completed and cannot use online payment'), variant: 'destructive' });
+      return;
+    }
     if (!navigator.onLine) {
       toast({ title: tc('لا يوجد اتصال', 'Offline'), description: tc('الدفع عبر QR يتطلب الإنترنت', 'QR pay requires internet'), variant: 'destructive' });
       return;
@@ -1446,8 +1462,42 @@ export default function PosSystem() {
     toast({ title: tc('✅ تم استلام الدفع', '✅ Payment received'), description: tc('شكراً، تم تأكيد الفاتورة', 'Thanks, invoice confirmed') });
   };
 
+  const maxHistoricalDate = useMemo(() => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    return toDateInputValue(yesterday);
+  }, []);
+
+  const applyHistoricalOrderDate = () => {
+    if (!historicalDateInput) {
+      toast({ title: tc('التاريخ مطلوب', 'Date required'), description: tc('اختر تاريخ الطلب السابق أولاً', 'Choose the previous order date first'), variant: 'destructive' });
+      return;
+    }
+
+    const effectiveDate = new Date(`${historicalDateInput}T${historicalTimeInput || '12:00'}:00`);
+    if (Number.isNaN(effectiveDate.getTime()) || effectiveDate.getTime() > Date.now()) {
+      toast({ title: tc('تاريخ غير صالح', 'Invalid date'), description: tc('اختر تاريخاً ووقتاً سابقين', 'Choose a date and time in the past'), variant: 'destructive' });
+      return;
+    }
+
+    setHistoricalOrderAt(effectiveDate.toISOString());
+    setHistoricalOrderDateOnly(!historicalTimeInput);
+    setUsePoints(false);
+    setShowHistoricalOrderDialog(false);
+    toast({
+      title: tc('تم تحديد تاريخ الطلب', 'Order date selected'),
+      description: historicalTimeInput
+        ? effectiveDate.toLocaleString(i18n.language === 'ar' ? 'ar-SA-u-ca-gregory' : 'en-GB')
+        : tc('سيُسجل الطلب دون وقت محدد، ويُستخدم منتصف اليوم للتقارير.', 'No time selected; noon is used internally for reporting.'),
+    });
+  };
+
   const handleCheckout = async () => {
     if (orderItems.length === 0) return;
+    if (historicalOrderAt && !navigator.onLine) {
+      toast({ title: tc('لا يوجد اتصال', 'Offline'), description: tc('يلزم الاتصال بالإنترنت لتسجيل طلب بتاريخ سابق', 'Internet is required to record a backdated order'), variant: 'destructive' });
+      return;
+    }
 
     // Validate split payment: ensure all person payments sum to total
     if (paymentMethod === "split") {
@@ -1539,6 +1589,11 @@ export default function PosSystem() {
         tenantId: employee?.tenantId || "demo-tenant",
         employeeId: employee?.id,
         channel: "pos",
+        ...(historicalOrderAt ? {
+          createdAt: historicalOrderAt,
+          historicalOrder: true,
+          historicalOrderDateOnly,
+        } : {}),
         notes: orderNote || undefined,
         ...(splitPaymentData ? { splitPayment: splitPaymentData } : {}),
         ...(pointsUsed > 0 ? {
@@ -1667,7 +1722,7 @@ export default function PosSystem() {
       prewarmZatcaQr({
         orderNumber: orderNumForPrint,
         total: total.toFixed(2),
-        date: new Date().toISOString(),
+        date: historicalOrderAt || new Date().toISOString(),
         vatNumber: businessConfig?.vatNumber,
       });
 
@@ -1683,7 +1738,7 @@ export default function PosSystem() {
 
       setLastOrder({
         orderNumber: orderNumForPrint,
-        date: new Date().toISOString(),
+        date: historicalOrderAt || new Date().toISOString(),
         items: orderItems.map(item => ({
           coffeeItem: {
             nameAr: item.coffeeItem.nameAr,
@@ -1735,7 +1790,7 @@ export default function PosSystem() {
             (orderType as string) === 'online' ? 'أونلاين' :
             (orderType as string) === 'drive_thru' ? 'درايف ثرو' : ''
           ),
-          date: new Date().toISOString(),
+          date: historicalOrderAt || new Date().toISOString(),
           crNumber: businessConfig?.commercialRegistration,
           vatNumber: businessConfig?.vatNumber,
           splitPayment: splitPaymentData,
@@ -1771,6 +1826,8 @@ export default function PosSystem() {
       setTableNumber("");
       setCustomerName("");
       setCustomerPhone("");
+      setHistoricalOrderAt(null);
+      setHistoricalOrderDateOnly(false);
       setCarTypeInput("");
       setCarColorInput("");
       setCarPlateInput("");
@@ -1778,6 +1835,7 @@ export default function PosSystem() {
       setUsePoints(false);
       
       queryClient.invalidateQueries({ queryKey: ["/api/orders/live"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/shifts/active"] });
     } catch (error) {
       console.error("Checkout error:", error);
@@ -3404,6 +3462,7 @@ export default function PosSystem() {
                     <Switch
                       checked={usePoints}
                       onCheckedChange={setUsePoints}
+                      disabled={!!historicalOrderAt}
                       data-testid="toggle-use-points"
                     />
                   </div>
@@ -3436,6 +3495,42 @@ export default function PosSystem() {
                     >{tc("مزامنة","Sync")}</button>
                   )}
                 </div>
+              )}
+
+              {historicalOrderAt ? (
+                <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                  <CalendarDays className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate font-semibold">
+                    {tc('طلب بتاريخ سابق:', 'Backdated order:')} {new Date(historicalOrderAt).toLocaleString(i18n.language === 'ar' ? 'ar-SA-u-ca-gregory' : 'en-GB', historicalOrderDateOnly ? { dateStyle: 'medium' } : { dateStyle: 'medium', timeStyle: 'short' })}
+                  </span>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 shrink-0"
+                    onClick={() => { setHistoricalOrderAt(null); setHistoricalOrderDateOnly(false); }}
+                    aria-label={tc('إلغاء التاريخ السابق', 'Remove backdated date')}
+                    data-testid="button-clear-historical-date"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full gap-2 border-amber-300 text-amber-800 hover:bg-amber-50 dark:text-amber-200"
+                  disabled={!isOnline || syncing}
+                  onClick={() => {
+                    setHistoricalDateInput(maxHistoricalDate);
+                    setHistoricalTimeInput("");
+                    setShowHistoricalOrderDialog(true);
+                  }}
+                  data-testid="button-historical-order"
+                >
+                  <CalendarDays className="h-4 w-4" />
+                  {tc('تسجيل طلب ليوم سابق', 'Record an order for a previous day')}
+                </Button>
               )}
 
               <div className="flex gap-2">
@@ -3877,6 +3972,61 @@ export default function PosSystem() {
           </DialogContent>
         </Dialog>
 
+        {/* Backdated POS order date */}
+        <Dialog open={showHistoricalOrderDialog} onOpenChange={setShowHistoricalOrderDialog}>
+          <DialogContent className="max-w-md" dir={dir}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <CalendarDays className="h-5 w-5 text-amber-600" />
+                {tc('تسجيل طلب ليوم سابق', 'Record an order for a previous day')}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                {tc(
+                  'اختر تاريخ الطلب، ويمكنك تحديد الوقت أو تركه فارغاً. سيظهر في تقارير يومه ويُسجل كمكتمل ومدفوع بالطريقة المختارة. هذا تسجيل فقط؛ لا ينفذ خصماً إلكترونياً ولا يرسل الطلب للمطبخ أو يخصم من المخزون.',
+                  'Choose the order date and optionally a time. It will appear in that day’s reports as completed and paid by the selected method. This only records the sale; it does not charge a card, send the order to the kitchen, or deduct inventory.'
+                )}
+              </p>
+              <div className="space-y-2">
+                <Label htmlFor="historical-order-date">{tc('تاريخ الطلب', 'Order date')}</Label>
+                <Input
+                  id="historical-order-date"
+                  type="date"
+                  value={historicalDateInput}
+                  max={maxHistoricalDate}
+                  onChange={(event) => setHistoricalDateInput(event.target.value)}
+                  data-testid="input-historical-order-date"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="historical-order-time">{tc('الوقت (اختياري)', 'Time (optional)')}</Label>
+                <Input
+                  id="historical-order-time"
+                  type="time"
+                  value={historicalTimeInput}
+                  onChange={(event) => setHistoricalTimeInput(event.target.value)}
+                  data-testid="input-historical-order-time"
+                />
+                {!historicalTimeInput && (
+                  <p className="text-xs text-muted-foreground">
+                    {tc('إذا تركته فارغاً، يُستخدم 12:00 ظهراً داخلياً لإبقاء الطلب ضمن اليوم المختار.', 'If blank, 12:00 PM is used internally to keep the order on the selected date.')}
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button type="button" variant="outline" className="flex-1" onClick={() => setShowHistoricalOrderDialog(false)}>
+                  {tc('إلغاء', 'Cancel')}
+                </Button>
+                <Button type="button" className="flex-1 gap-2" onClick={applyHistoricalOrderDate} data-testid="button-apply-historical-date">
+                  <CalendarDays className="h-4 w-4" />
+                  {tc('تطبيق التاريخ', 'Apply date')}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         {/* Order Review Dialog */}
         <Dialog open={showOrderReview} onOpenChange={setShowOrderReview}>
           <DialogContent className="max-w-lg w-full max-h-[90vh] h-[90vh] flex flex-col p-0 gap-0 overflow-hidden" dir={dir}>
@@ -3890,6 +4040,14 @@ export default function PosSystem() {
                   ? 'راجع الأصناف قبل إتمام الدفع'
                   : 'Review items before completing payment'}
               </p>
+              {historicalOrderAt && (
+                <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                  {tc('طلب سابق:', 'Backdated order:')} {new Date(historicalOrderAt).toLocaleString(i18n.language === 'ar' ? 'ar-SA-u-ca-gregory' : 'en-GB', historicalOrderDateOnly ? { dateStyle: 'medium' } : { dateStyle: 'medium', timeStyle: 'short' })}
+                  <span className="block mt-1 font-normal">
+                    {tc('سيؤثر على تقارير اليوم المختار، ولن يُضاف إلى وردية اليوم.', 'It will affect the selected day’s reports and will not be added to today’s cashier shift.')}
+                  </span>
+                </div>
+              )}
             </DialogHeader>
 
             {/* Items list */}

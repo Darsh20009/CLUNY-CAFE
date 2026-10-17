@@ -155,7 +155,7 @@ class GeideaDriver implements TerminalDriver {
   async getStatus(): Promise<TerminalStatus> {
     if (!this.isConfigured()) return "offline";
     try {
-      const resp = await fetch(`${this.cfg.baseUrl || "https://api.merchant.geidea.net"}/payment-intent/api/v2/direct/health`, {
+      const resp = await fetch(`${this.cfg.baseUrl || "https://api.ksamerchant.geidea.net"}/payment-intent/api/v2/direct/health`, {
         headers: { "Content-Type": "application/json" },
         signal: AbortSignal.timeout(4000),
       });
@@ -178,7 +178,7 @@ class GeideaDriver implements TerminalDriver {
         description: req.description || "CLUNY CAFE Order",
         callbackUrl: req.callbackUrl || `${process.env.SITE_URL || ""}/api/payments/geidea/callback`,
       };
-      const resp = await fetch(`${this.cfg.baseUrl || "https://api.merchant.geidea.net"}/payment-intent/api/v2/direct/order`, {
+      const resp = await fetch(`${this.cfg.baseUrl || "https://api.ksamerchant.geidea.net"}/payment-intent/api/v2/direct/order`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -206,7 +206,7 @@ class GeideaDriver implements TerminalDriver {
   async refund(req: RefundRequest): Promise<RefundResponse> {
     if (!this.isConfigured()) return { success: false, error: "Geidea غير مُهيّأ" };
     try {
-      const resp = await fetch(`${this.cfg.baseUrl || "https://api.merchant.geidea.net"}/payment-intent/api/v2/direct/order/${req.transactionId}/refund`, {
+      const resp = await fetch(`${this.cfg.baseUrl || "https://api.ksamerchant.geidea.net"}/payment-intent/api/v2/direct/order/${req.transactionId}/refund`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

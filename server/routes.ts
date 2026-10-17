@@ -870,6 +870,7 @@ async function logPayment(data: {
   status: 'pending' | 'success' | 'failed' | 'unknown';
   sessionId?: string;
   externalId?: string;
+  merchantReferenceId?: string;
   orderId?: string;
   orderNumber?: string;
   customerPhone?: string;
@@ -1196,6 +1197,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!body.paymentMethod || typeof body.paymentMethod !== 'string') {
         return res.status(400).json({ error: "paymentMethod مطلوب" });
       }
+      const isBackdatedOrder = body.historicalOrder === true;
+      const backdatedEmployee = (req as any).employee || (req as any).session?.employee;
+      let historicalCreatedAt: Date | undefined;
+      if (isBackdatedOrder) {
+        const parsedCreatedAt = new Date(body.createdAt);
+        if (!backdatedEmployee) {
+          return res.status(401).json({ error: "سجّل دخول موظف نقطة البيع لتسجيل طلب بتاريخ سابق" });
+        }
+        if (body.channel !== 'pos') {
+          return res.status(403).json({ error: "إنشاء طلب بتاريخ سابق متاح من نقطة البيع فقط" });
+        }
+        if (!body.createdAt || Number.isNaN(parsedCreatedAt.getTime())) {
+          return res.status(400).json({ error: "تاريخ الطلب السابق غير صالح" });
+        }
+        if (parsedCreatedAt.getTime() > Date.now()) {
+          return res.status(400).json({ error: "لا يمكن تسجيل طلب بتاريخ أو وقت مستقبلي" });
+        }
+        historicalCreatedAt = parsedCreatedAt;
+      }
       // ─────────────────────────────────────────────────────────────────────
 
       // Map payment method aliases
@@ -1224,9 +1244,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'barq': 'barq',
       };
 
-      const tenantId = body.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId();
+      const tenantId = isBackdatedOrder
+        ? (backdatedEmployee.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId())
+        : (body.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId());
 
       const mappedPaymentMethod = paymentMethodMap[body.paymentMethod] || body.paymentMethod || 'other';
+      if (isBackdatedOrder && !['cash', 'pos', 'pos-network', 'split', 'mada'].includes(mappedPaymentMethod)) {
+        return res.status(400).json({ error: "الطلبات السابقة تُسجل بوسيلة دفع يدوية فقط، ولا تبدأ عملية دفع إلكترونية" });
+      }
 
       // Auto-confirm orders from POS channel with immediate payment methods
       const autoConfirmMethods = ['cash', 'pos', 'pos-network', 'mada', 'stc-pay', 'qahwa-card', 'qirox-card', 'split'];
@@ -1237,6 +1262,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Uses findOneAndUpdate with $gte to atomically deduct points — prevents
       // double-spend race conditions when two requests arrive simultaneously.
       const pointsRedeemedInBody = Number(body.pointsRedeemed) || 0;
+      if (isBackdatedOrder && (
+        pointsRedeemedInBody > 0
+        || mappedPaymentMethod === 'qahwa-card'
+        || Boolean(body.giftCardCode)
+      )) {
+        return res.status(400).json({ error: "لا يمكن استخدام نقاط الولاء أو بطاقة هدية عند تسجيل طلب بتاريخ سابق" });
+      }
       if (pointsRedeemedInBody > 0 || mappedPaymentMethod === 'qahwa-card') {
         const cardPhone = body.customerPhone || body.customerInfo?.customerPhone;
         if (cardPhone) {
@@ -1320,9 +1352,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const orderData = {
         ...body,
         tenantId,
+        ...(isBackdatedOrder ? {
+          branchId: ['admin', 'owner'].includes(backdatedEmployee.role)
+            ? (body.branchId || backdatedEmployee.branchId || 'main')
+            : (backdatedEmployee.branchId || body.branchId || 'main'),
+          employeeId: backdatedEmployee.id || backdatedEmployee._id?.toString() || body.employeeId,
+          createdAt: historicalCreatedAt,
+          isBackdated: true,
+          historicalOrderDateOnly: body.historicalOrderDateOnly === true,
+          paymentStatus: 'paid',
+        } : { isBackdated: false, historicalOrderDateOnly: false }),
         totalAmount: (body.totalAmount !== undefined && body.totalAmount !== null) ? Number(body.totalAmount) : (body.total || 0),
         paymentMethod: mappedPaymentMethod,
-        status: shouldAutoConfirm ? 'payment_confirmed' : (body.status || 'pending'),
+        status: isBackdatedOrder ? 'completed' : (shouldAutoConfirm ? 'payment_confirmed' : (body.status || 'pending')),
         estimatedPrepTimeInMinutes: autoPrepTimeMinutes,
         prepTimeSetAt: new Date(),
         customerInfo: body.customerInfo || {
@@ -1405,7 +1447,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       cache.invalidate('reports:unified:');
       
       // Only notify employees when order is confirmed (not when awaiting payment)
-      if (orderData.status !== 'awaiting_payment') {
+      if (!isBackdatedOrder && orderData.status !== 'awaiting_payment') {
         wsManager.broadcastNewOrder(serializedOrder);
       }
 
@@ -1413,7 +1455,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Runs synchronously to prevent data loss if server crashes between response and setImmediate.
       try {
         const shiftEmployeeId = orderData.employeeId || (req as any).employee?._id?.toString() || (req as any).employee?.id;
-        if (shiftEmployeeId && orderData.status !== 'awaiting_payment') {
+        if (shiftEmployeeId && !isBackdatedOrder && orderData.status !== 'awaiting_payment') {
           const activeShift = await CashierShiftModel.findOne({ employeeId: shiftEmployeeId, status: 'open' });
           if (activeShift) {
             const amount = Number(orderData.totalAmount) || 0;
@@ -1472,6 +1514,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // === 3-Layer Notifications: Customer + Admins ===
       setImmediate(async () => {
         try {
+          if (isBackdatedOrder) return;
           const { fireNotify, fireNotifyAdmins } = await import("./notification-engine");
           const customerId = serializedOrder.customerId;
           const orderNum = serializedOrder.orderNumber || serializedOrder.id;
@@ -1498,6 +1541,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // === Auto-Create Delivery Order for home delivery orders ===
       setImmediate(async () => {
         try {
+          if (isBackdatedOrder) return;
           const isDeliveryOrder = (
             serializedOrder.orderType === 'delivery' ||
             serializedOrder.deliveryType === 'delivery' ||
@@ -1545,7 +1589,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const orderUsedPointsNow = Number(body.pointsRedeemed) > 0;
         const GATEWAY_METHODS = ['paymob', 'paymob-card', 'paymob-wallet', 'geidea', 'apple_pay', 'neoleap', 'neoleap-apple-pay'];
         const isNonGatewayPayment = !GATEWAY_METHODS.includes(String(body.paymentMethod)) || Number(serializedOrder.totalAmount) <= 0;
-        if (orderUsedPointsNow && isNonGatewayPayment) {
+        if (!isBackdatedOrder && orderUsedPointsNow && isNonGatewayPayment) {
           const redeemPts = Number(body.pointsRedeemed);
           const redeemValue = Number(body.pointsValue) || parseFloat((redeemPts / 50).toFixed(2));
           const cardPhone = body.customerPhone || body.customerInfo?.customerPhone || body.customerInfo?.phoneNumber;
@@ -1595,7 +1639,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const customerPhone = body.customerPhone || body.customerInfo?.customerPhone;
         const orderUsedPoints = Number(body.pointsRedeemed) > 0;
-        if (customerPhone && !orderUsedPoints) {
+        if (!isBackdatedOrder && customerPhone && !orderUsedPoints) {
           const cleanPhone = customerPhone.replace(/\D/g, '').replace(/^966/, '0').replace(/^9665/, '05');
           const phoneVariants = [cleanPhone, customerPhone, `+966${cleanPhone.slice(1)}`, `966${cleanPhone.slice(1)}`];
 
@@ -1656,6 +1700,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       try {
+        if (isBackdatedOrder) return;
         const orderItems = Array.isArray(order.items)
           ? order.items.map((item: any) => ({
               name: item.nameAr || item.name || item.coffeeItem?.nameAr || 'منتج',
@@ -3309,7 +3354,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         geidea: {
           configured: !!(pg.geidea?.publicKey && pg.geidea?.apiPassword),
           publicKey: maskSecret(pg.geidea?.publicKey),
-          baseUrl: pg.geidea?.baseUrl || 'https://api.merchant.geidea.net',
+          baseUrl: pg.geidea?.baseUrl || 'https://api.ksamerchant.geidea.net',
           callbackUrl: pg.geidea?.callbackUrl || '',
         },
         paymob: {
@@ -3498,7 +3543,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (pg.provider === 'geidea') {
         const publicKey = pg.geidea?.publicKey;
         const apiPassword = pg.geidea?.apiPassword;
-        const baseUrl = (pg.geidea?.baseUrl || 'https://api.merchant.geidea.net').replace(/\/$/, '');
+        const baseUrl = (pg.geidea?.baseUrl || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
 
         if (!publicKey || !apiPassword) {
           return res.status(400).json({ error: "بيانات اعتماد جيديا غير مكتملة" });
@@ -3521,7 +3566,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const signature = createHmac('sha256', apiPassword).update(sigData).digest('base64');
 
           // Build the callback URL
-          const callbackBase = returnUrl || pg.geidea?.callbackUrl || '';
+          const appBaseUrl = getAppBaseUrl(req).replace(/\/+$/, '');
+          const configuredCallbackUrl = String(pg.geidea?.callbackUrl || '').trim();
+          const callbackUrl = /\/api\/payments\/geidea\/callback\/?$/i.test(configuredCallbackUrl)
+            ? configuredCallbackUrl.replace(/\/api\/payments\/geidea\/callback\/?$/i, '/api/payments/geidea/webhook')
+            : configuredCallbackUrl || `${appBaseUrl}/api/payments/geidea/webhook`;
+          const hppReturnUrl = String(
+            returnUrl || `${appBaseUrl}/payment-return?provider=geidea&orderNumber=${encodeURIComponent(String(orderId || ''))}`,
+          ).replace(/&amp;/gi, '&');
 
           // Build customer object — Geidea requires email in the session.
           // If the customer hasn't provided one, generate a guest address from
@@ -3548,7 +3600,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           const geideaBody: any = {
-            amount: amountStr,
+            amount: Number(amountStr),
             currency,
             merchantReferenceId,
             timestamp,
@@ -3561,10 +3613,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // not sent per-session. Omitting it here avoids a failed request + retry.
           };
 
-          if (callbackBase) {
-            geideaBody.callbackUrl = callbackBase;
-            geideaBody.returnUrl = callbackBase;
-          }
+          geideaBody.callbackUrl = callbackUrl;
+          geideaBody.returnUrl = hppReturnUrl;
 
           if (Object.keys(geideaCustomer).length > 0) {
             geideaBody.customer = geideaCustomer;
@@ -3604,6 +3654,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               status: 'pending',
               sessionId,
               externalId: sessionId,
+              merchantReferenceId,
               orderId: req.body.orderId,
               customerPhone: req.body.customerPhone,
               customerEmail: req.body.customerEmail,
@@ -3629,6 +3680,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               amount: Number(amount),
               currency,
               status: 'failed',
+              merchantReferenceId,
               orderId: req.body.orderId,
               customerPhone: req.body.customerPhone,
               errorMessage: errMsg,
@@ -3938,7 +3990,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const publicKey = pg.geidea?.publicKey;
       const apiPassword = pg.geidea?.apiPassword;
-      const baseUrl = (pg.geidea?.baseUrl || 'https://api.merchant.geidea.net').replace(/\/$/, '');
+      const baseUrl = (pg.geidea?.baseUrl || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
 
       if (!publicKey || !apiPassword) {
         return res.status(400).json({ error: "بيانات اعتماد جيديا غير مكتملة" });
@@ -4073,7 +4125,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           hasApiPassword,
           applePayEnabled: pg?.applePayEnabled !== false,
           applePayMerchantId: merchantId,
-          baseUrl: pg?.geidea?.baseUrl || 'https://api.merchant.geidea.net',
+          baseUrl: pg?.geidea?.baseUrl || 'https://api.ksamerchant.geidea.net',
         },
         envVars: {
           APPLE_PAY_DOMAIN: hasDomain ? 'SET' : 'NOT SET',
@@ -4465,104 +4517,93 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/payments/verify", async (req, res) => {
     try {
       const {
-        sessionId, transactionId, provider: reqProvider,
-        // Geidea callback URL params
-        geideaOrderId, geideaResponseCode, geideaStatus, geideaSignature,
-        geideaMerchantRefId, geideaAmount, geideaCurrency,
+        sessionId: requestedSessionId, transactionId, provider: reqProvider,
+        orderNumber, geideaOrderId, geideaMerchantRefId,
       } = req.body;
-
-      if (!sessionId && !geideaOrderId) {
-        return res.status(400).json({ verified: false, error: "معرّف الجلسة مطلوب" });
-      }
 
       const tenantId = getTenantIdFromRequest(req) || await getDefaultTenantId();
       const config = await BusinessConfigModel.findOne({ tenantId });
       const pg = config?.paymentGateway;
       const provider = reqProvider || pg?.provider;
+      let sessionId = requestedSessionId;
+      let paymentInit: any = null;
 
       if (!provider || provider === 'none') {
         return res.json({ verified: false, error: "لا يوجد مزود دفع مفعّل" });
       }
 
       if (provider === 'geidea') {
+        const referenceLookup = orderNumber
+          ? { orderId: String(orderNumber) }
+          : geideaMerchantRefId
+            ? { merchantReferenceId: String(geideaMerchantRefId) }
+            : null;
+        if (referenceLookup) {
+          paymentInit = await PaymentLogModel.findOne({
+            tenantId,
+            provider: 'geidea',
+            event: 'init',
+            ...referenceLookup,
+          }).sort({ createdAt: -1 }).lean();
+          if (paymentInit?.sessionId) sessionId = paymentInit.sessionId;
+        }
+      }
+
+      if (!sessionId && !geideaOrderId && !geideaMerchantRefId) {
+        return res.status(400).json({ verified: false, error: "معرّف الجلسة مطلوب" });
+      }
+
+      if (provider === 'geidea') {
         try {
           const publicKey = pg?.geidea?.publicKey;
           const apiPassword = pg?.geidea?.apiPassword;
-          const baseUrl = (pg?.geidea?.baseUrl || 'https://api.merchant.geidea.net').replace(/\/$/, '');
+          const baseUrl = (pg?.geidea?.baseUrl || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
 
           if (!publicKey || !apiPassword) {
             return res.json({ verified: false, error: "بيانات اعتماد جيديا غير مكتملة" });
           }
 
-          // Method 1: Verify using Geidea callback URL parameters (faster, no extra API call)
-          if (geideaResponseCode !== undefined) {
-            const isPaid = geideaResponseCode === '000' || geideaStatus === 'Success' || geideaStatus === 'succeeded';
-
-            // Optionally verify the HMAC signature for security
-            if (geideaSignature && geideaAmount && geideaCurrency) {
-              const crypto = await import('crypto');
-              // Geidea signature: HMAC-SHA256(merchantId.amount.currency, apiPassword)
-              const signData = `${publicKey}.${geideaAmount}.${geideaCurrency}`;
-              const expectedSig = crypto.createHmac('sha256', apiPassword).update(signData).digest('base64');
-              if (geideaSignature !== expectedSig) {
-                console.warn('[Geidea Verify] Signature mismatch — falling back to API verification');
-                // Signature doesn't match — fall through to API verification below
-              } else {
-                console.log(`[Geidea Verify] Signature OK, status: ${geideaStatus}, code: ${geideaResponseCode}`);
-                return res.json({
-                  verified: isPaid,
-                  transactionId: geideaOrderId || transactionId,
-                  provider: 'geidea',
-                  responseCode: geideaResponseCode,
-                  status: geideaStatus,
-                });
-              }
-            } else {
-              // No signature check — trust responseCode (acceptable for non-sensitive amounts with server-to-server verify below)
-              console.log(`[Geidea Verify] Using responseCode: ${geideaResponseCode}, status: ${geideaStatus}`);
-              return res.json({
-                verified: isPaid,
-                transactionId: geideaOrderId || transactionId,
-                provider: 'geidea',
-                responseCode: geideaResponseCode,
-              });
-            }
-          }
-
-          // Method 2: API verification using the eInvoice ID (session ID = eInvoiceId from init)
-          const eInvoiceId = sessionId;
+          // Always verify with Geidea's server; browser query parameters alone are not proof of payment.
+          const eInvoiceId = sessionId || geideaOrderId || geideaMerchantRefId;
           if (!eInvoiceId) {
             return res.json({ verified: false, error: "معرّف الفاتورة مطلوب" });
           }
 
           const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
-
-          // Try eInvoice status endpoint first
           let verifyData: any = null;
           let isPaid = false;
+          const isPaidStatus = (data: any) => {
+            const status = String(data?.session?.status || data?.eInvoice?.status || data?.status || '').toLowerCase();
+            return ['paymentsuccess', 'success', 'paid', 'completed'].includes(status);
+          };
 
-          try {
-            const eInvoiceRes = await fetch(`${baseUrl}/payment-intent/api/v1/direct/eInvoice/${eInvoiceId}`, {
+          const sessionRes = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session/${encodeURIComponent(String(eInvoiceId))}`, {
+            method: 'GET',
+            headers: { 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+          });
+          verifyData = await sessionRes.json().catch(() => ({})) as any;
+          isPaid = sessionRes.ok && isPaidStatus(verifyData);
+
+          if (!isPaid) {
+            const eInvoiceRes = await fetch(`${baseUrl}/payment-intent/api/v1/direct/eInvoice/${encodeURIComponent(String(eInvoiceId))}`, {
               method: 'GET',
               headers: { 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
             });
-            verifyData = await eInvoiceRes.json() as any;
-            console.log(`[Geidea Verify] eInvoice ${eInvoiceId} status:`, JSON.stringify(verifyData));
-            isPaid = verifyData?.status === 'Success' || verifyData?.status === 'Paid' ||
-                     verifyData?.responseCode === '000' ||
-                     verifyData?.eInvoice?.status === 'Paid';
-          } catch {
-            // Fall back to session endpoint
-            const sessionRes = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session/${eInvoiceId}`, {
-              method: 'GET',
-              headers: { 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
-            });
-            verifyData = await sessionRes.json() as any;
-            console.log(`[Geidea Verify] Session ${eInvoiceId} status:`, JSON.stringify(verifyData));
-            isPaid = verifyData?.session?.status === 'PaymentSuccess' || verifyData?.status === 'Success';
+            const eInvoiceData = await eInvoiceRes.json().catch(() => ({})) as any;
+            if (eInvoiceRes.ok && isPaidStatus(eInvoiceData)) {
+              verifyData = eInvoiceData;
+              isPaid = true;
+            }
           }
 
           console.log(`[Geidea Verify] eInvoice ${eInvoiceId}: ${isPaid ? 'PAID' : 'NOT PAID'}`);
+          const resolvedOrderNumber = orderNumber || paymentInit?.orderId;
+          if (isPaid && resolvedOrderNumber) {
+            const order = await storage.getOrderByNumber(String(resolvedOrderNumber));
+            if (order) {
+              await storage.updateOrderStatus(order.id || order._id, 'payment_confirmed');
+            }
+          }
           return res.json({
             verified: isPaid,
             transactionId: verifyData?.orderId || verifyData?.session?.paymentIntentId || transactionId,
@@ -4806,43 +4847,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/payments/geidea/webhook", async (req, res) => {
     try {
       const body = req.body;
-      console.log('[Geidea Webhook] Received:', JSON.stringify(body));
+      console.log('[Geidea Webhook] Received callback', {
+        responseCode: body?.responseCode,
+        detailedResponseCode: body?.detailedResponseCode,
+        status: body?.status,
+      });
 
       const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
       const config = await BusinessConfigModel.findOne({ tenantId });
       const pg = config?.paymentGateway;
 
-      // Verify webhook signature if credentials are available
-      if (pg?.geidea?.publicKey && pg?.geidea?.apiPassword && body.signature) {
+      // Geidea callback signature: HMAC-SHA256(publicKey + amount + currency +
+      // orderId + status + merchantReferenceId + timestamp, apiPassword), Base64.
+      if (!pg?.geidea?.publicKey || !pg?.geidea?.apiPassword) {
+        return res.status(503).json({ error: 'Geidea callback verification is not configured' });
+      }
+      {
+        const signature = String(body?.signature || '');
+        const amount = String(body?.orderAmount ?? body?.amount ?? '');
+        const currency = String(body?.orderCurrency ?? body?.currency ?? '');
+        const orderId = String(body?.orderId ?? body?.orderID ?? '');
+        const status = String(body?.status ?? body?.orderStatus ?? '');
+        const merchantReferenceId = String(body?.merchantReferenceId ?? body?.merchantRefId ?? '');
+        const timestamp = String(body?.timestamp ?? body?.timeStamp ?? '');
+        if (!signature || !amount || !currency || !orderId || !status || !merchantReferenceId || !timestamp) {
+          return res.status(401).json({ error: 'Missing signed Geidea callback fields' });
+        }
         const crypto = await import('crypto');
-        const signData = `${pg.geidea.publicKey}.${body.orderAmount || body.amount}.${body.currency || 'SAR'}`;
-        const expectedSig = crypto.createHmac('sha256', pg.geidea.apiPassword).update(signData).digest('base64');
-        if (body.signature !== expectedSig) {
+        const signData = `${pg.geidea.publicKey}${amount}${currency}${orderId}${status}${merchantReferenceId}${timestamp}`;
+        const expectedSig = Buffer.from(crypto.createHmac('sha256', pg.geidea.apiPassword).update(signData).digest('base64'));
+        const receivedSig = Buffer.from(signature);
+        if (expectedSig.length !== receivedSig.length || !crypto.timingSafeEqual(expectedSig, receivedSig)) {
           console.warn('[Geidea Webhook] Invalid signature — rejected');
           return res.status(401).json({ error: 'Invalid signature' });
         }
       }
 
-      const isPaid = body.responseCode === '000' || body.status === 'Success' || body.status === 'succeeded';
-      const merchantRefId = body.merchantReferenceId;
-      const geideaOrderId = body.orderId;
+      const responseCode = String(body?.responseCode ?? '');
+      const detailedResponseCode = String(body?.detailedResponseCode ?? '');
+      const isPaid = responseCode === '000'
+        && detailedResponseCode === '000'
+        && (!body.responseMessage || body.responseMessage === 'Success')
+        && (!body.detailedResponseMessage || body.detailedResponseMessage === 'The operation was successful');
+      const merchantRefId = String(body?.merchantReferenceId ?? body?.merchantRefId ?? '');
+      const geideaOrderId = body?.orderId;
 
       console.log(`[Geidea Webhook] MerchantRef: ${merchantRefId}, GeideaOrder: ${geideaOrderId}, Paid: ${isPaid}`);
 
       if (isPaid && merchantRefId) {
-        // Find and update the order by merchant reference ID
         try {
-          const order = await storage.getOrderByNumber(merchantRefId);
-          if (order) {
-            await storage.updateOrderStatus(order.id || order._id, 'payment_confirmed');
-            console.log(`[Geidea Webhook] Order ${merchantRefId} confirmed as paid`);
-          } else {
-            console.warn(`[Geidea Webhook] Order not found for merchantReferenceId: ${merchantRefId}`);
+          // The merchant reference may have been sanitized before sending it to Geidea.
+          const paymentInit: any = await PaymentLogModel.findOne({
+            tenantId,
+            provider: 'geidea',
+            event: 'init',
+            merchantReferenceId: merchantRefId,
+          }).sort({ createdAt: -1 }).lean();
+          const orderNumber = paymentInit?.orderId || merchantRefId;
+          const order = await storage.getOrderByNumber(orderNumber);
+          const callbackAmount = Number(body?.orderAmount ?? body?.amount);
+          const expectedAmount = Number(paymentInit?.amount ?? order?.totalAmount);
+          if (!order || !Number.isFinite(callbackAmount) || !Number.isFinite(expectedAmount) || Math.abs(callbackAmount - expectedAmount) > 0.01) {
+            console.warn('[Geidea Webhook] Payment callback does not match an order/amount');
+            return res.json({ received: true, orderId: geideaOrderId, status: 'noted' });
           }
+          await storage.updateOrderStatus(order.id || order._id, 'payment_confirmed');
+          console.log(`[Geidea Webhook] Order ${orderNumber} confirmed as paid`);
         } catch (findErr: any) {
           console.warn('[Geidea Webhook] Could not update order:', findErr.message);
         }
       }
+
+      await logPayment({
+        tenantId,
+        event: 'webhook',
+        provider: 'geidea',
+        amount: Number(body?.orderAmount ?? body?.amount),
+        currency: body?.orderCurrency || body?.currency || 'SAR',
+        status: isPaid ? 'success' : 'failed',
+        externalId: geideaOrderId ? String(geideaOrderId) : undefined,
+        merchantReferenceId: merchantRefId || undefined,
+        ipAddress: req.ip,
+      });
 
       // Always respond 200 so Geidea doesn't retry
       res.json({ received: true, orderId: geideaOrderId, status: isPaid ? 'processed' : 'noted' });
@@ -4977,7 +5063,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const apiResult = await new Promise<any>((resolve) => {
           const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
           const options = {
-            hostname: 'api.merchant.geidea.net',
+            hostname: new URL(pg?.geidea?.baseUrl || 'https://api.ksamerchant.geidea.net').hostname,
             port: 443,
             path: '/payment-intent/api/v1/session',
             method: 'POST',
@@ -5566,7 +5652,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (pg.provider === 'geidea') {
         const publicKey = pg.geidea?.publicKey;
         const apiPassword = pg.geidea?.apiPassword;
-        const baseUrl = pg.geidea?.baseUrl || 'https://api.merchant.geidea.net';
+        const baseUrl = pg.geidea?.baseUrl || 'https://api.ksamerchant.geidea.net';
 
         if (!publicKey || !apiPassword) {
           return res.json({ success: false, message: "بيانات اعتماد جيديا غير مكتملة" });
@@ -14339,6 +14425,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: err.message || 'خطأ في رفع الملف' });
       });
     };
+
+  // Invoice artwork uploads are restricted to safe raster formats and stored
+  // independently from product and employee images.
+  const invoiceArtworkUploadsDir = path.resolve(__dirname, '..', 'attached_assets', 'invoice-artwork');
+  const invoiceArtworkExtensions: Record<string, string> = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+  };
+  const invoiceArtworkStorage = multer.diskStorage({
+    destination: function (_req, _file, cb) {
+      try {
+        fs.mkdirSync(invoiceArtworkUploadsDir, { recursive: true });
+        cb(null, invoiceArtworkUploadsDir);
+      } catch (error) {
+        cb(error as Error, invoiceArtworkUploadsDir);
+      }
+    },
+    filename: function (_req, file, cb) {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, `invoice-artwork-${Date.now()}-${nanoid(8)}${ext}`);
+    },
+  });
+  const invoiceArtworkUpload = multer({
+    storage: invoiceArtworkStorage,
+    limits: { fileSize: 8 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      if (invoiceArtworkExtensions[ext] !== file.mimetype) {
+        return cb(new Error('نوع الصورة غير مدعوم. استخدم JPG أو PNG أو WebP.'));
+      }
+      cb(null, true);
+    },
+  });
+
+  app.post("/api/upload-invoice-artwork", requireAuth, requireAdmin, wrapMulter(invoiceArtworkUpload.single('image')), async (req: AuthRequest, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "اختر صورة أولاً" });
+      }
+
+      try {
+        const { ObjectStorageService } = await import("./qirox_studio_integrations/object_storage");
+        const storageService = new ObjectStorageService();
+        const uploadURL = await storageService.getObjectEntityUploadURL();
+        const objectPath = storageService.normalizeObjectEntityPath(uploadURL);
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const uploadResponse = await fetch(uploadURL, {
+          method: 'PUT',
+          body: fileBuffer as unknown as BodyInit,
+          headers: { 'Content-Type': req.file.mimetype || 'image/png' },
+        });
+        if (!uploadResponse.ok) {
+          throw new Error('Failed to upload invoice artwork to object storage');
+        }
+        fs.unlinkSync(req.file.path);
+        return res.json({ url: objectPath });
+      } catch (storageError) {
+        console.warn('[INVOICE-ARTWORK] Object storage unavailable; using app asset storage:', storageError);
+        return res.json({ url: `/attached_assets/invoice-artwork/${req.file.filename}` });
+      }
+    } catch (error) {
+      console.error('[INVOICE-ARTWORK] Upload failed:', error);
+      return res.status(500).json({ error: "فشل رفع صورة الفاتورة" });
+    }
+  });
 
   // Configure multer for employee image uploads
   const employeeUploadsDir = path.join(__dirname, '..', 'attached_assets', 'employees');
