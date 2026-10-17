@@ -188,6 +188,7 @@ interface DashboardData {
   invoiceCount: number;
   refundCount: number;
   profitMargin: number;
+  profitPendingCount: number;
   expensesByCategory: Record<string, number>;
   revenueByPayment: Record<string, number>;
   dailyTrend: TrendData[];
@@ -284,6 +285,7 @@ export default function AccountingDashboardPage() {
         invoiceCount: data.summary?.invoiceCount || 0,
         refundCount: data.summary?.refundCount || 0,
         profitMargin: data.summary?.profitMargin || 0,
+        profitPendingCount: data.summary?.profitPendingCount || 0,
         expensesByCategory: data.expensesByCategory || {},
         revenueByPayment: data.revenueByPayment || {},
         dailyTrend: data.dailyTrend || [],
@@ -649,6 +651,15 @@ export default function AccountingDashboardPage() {
               </div>
             ) : dashboardData ? (
               <>
+                {dashboardData.profitPendingCount > 0 && (
+                  <div
+                    role="status"
+                    data-testid="notice-profit-pending"
+                    className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+                  >
+                    الربح غير معتمد: توجد {dashboardData.profitPendingCount} طلبات بلا تكاليف أصناف مؤكدة. لا تعتمد أرقام الربح أو الهامش حتى إدخال التكاليف.
+                  </div>
+                )}
                 {/* Main KPI Cards - Clickable for Drilldown */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <Card 

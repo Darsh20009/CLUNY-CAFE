@@ -1398,6 +1398,8 @@ export interface IOrder extends Document {
   deliveredAt?: Date;
   costOfGoods?: number;
   grossProfit?: number;
+  profitPending?: boolean;
+  profitPendingReason?: string;
   inventoryDeducted?: number;
   pointsAwarded?: boolean;
   inventoryDeductionDetails?: Array<{
@@ -1477,6 +1479,8 @@ const OrderSchema = new Schema<IOrder>({
   notes: { type: String },
   isBackdated: { type: Boolean, default: false },
   historicalOrderDateOnly: { type: Boolean, default: false },
+  profitPending: { type: Boolean, default: false },
+  profitPendingReason: { type: String },
   statusHistory: [{
     status: { type: String, required: true },
     timestamp: { type: Date, default: Date.now },

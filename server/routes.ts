@@ -18459,10 +18459,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         branchId: finalBranchId,
         date: { $gte: targetDate, $lt: nextDate },
       });
+      const pendingProfitCountForDate = await OrderModel.countDocuments({
+        branchId: finalBranchId,
+        createdAt: { $gte: targetDate, $lt: nextDate },
+        status: { $nin: ['cancelled'] },
+        profitPending: true,
+      });
       
       let summary: any = existingSummary;
       
-      if (!existingSummary) {
+      if (!existingSummary || pendingProfitCountForDate > 0) {
         // Calculate summary from orders
         const orderQuery: any = {
           createdAt: { $gte: targetDate, $lt: nextDate },
@@ -18501,6 +18507,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const subtotal = o.items?.reduce((s: number, i: any) => s + (Number(i.coffeeItem?.price || 0) * i.quantity), 0) || 0;
           return sum + (subtotal - (o.totalAmount / 1.15));
         }, 0);
+        const profitPendingOrders = orders.filter((o: any) => o.profitPending === true);
+        const profitPendingCount = profitPendingOrders.length;
+        const profitPendingSalesRevenue = profitPendingOrders.reduce((sum: number, o: any) => sum + (Number(o.totalAmount) || 0), 0);
         
         const cancelledOrders = await OrderModel.countDocuments({
           ...orderQuery,
@@ -18520,9 +18529,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           deliveryRevenue: Math.round(deliveryRevenue * 100) / 100,
           totalCogs: Math.round(totalCogs * 100) / 100,
           totalExpenses: Math.round(totalExpenses * 100) / 100,
-          grossProfit: Math.round((totalRevenue - totalVat - totalCogs) * 100) / 100,
-          netProfit: Math.round((totalRevenue - totalVat - totalCogs - totalExpenses) * 100) / 100,
-          profitMargin: totalRevenue > 0 ? Math.round(((totalRevenue - totalVat - totalCogs - totalExpenses) / totalRevenue * 100) * 100) / 100 : 0,
+          grossProfit: profitPendingCount > 0 ? null : Math.round((totalRevenue - totalVat - totalCogs) * 100) / 100,
+          netProfit: profitPendingCount > 0 ? null : Math.round((totalRevenue - totalVat - totalCogs - totalExpenses) * 100) / 100,
+          profitMargin: profitPendingCount > 0 ? null : (totalRevenue > 0 ? Math.round(((totalRevenue - totalVat - totalCogs - totalExpenses) / totalRevenue * 100) * 100) / 100 : 0),
+          profitPending: profitPendingCount > 0,
+          profitPendingCount,
+          profitPendingSalesRevenue: Math.round(profitPendingSalesRevenue * 100) / 100,
           totalDiscounts: Math.round(Math.abs(totalDiscounts) * 100) / 100,
           cancelledOrders,
           cancelledAmount: 0,
@@ -18624,8 +18636,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const totalVat = invoices.reduce((sum, i) => sum + (i.taxAmount || 0), 0);
       const totalExpenses = expenses.reduce((sum, e) => sum + e.totalAmount, 0);
       const totalCogs = orders.reduce((sum, o) => sum + (o.costOfGoods || 0), 0);
-      const grossProfit = netRevenue - totalVat - totalCogs;
-      const netProfit = grossProfit - totalExpenses;
+      const profitPendingOrders = orders.filter((o: any) => o.profitPending === true);
+      const profitPendingCount = profitPendingOrders.length;
+      const profitPendingSalesRevenue = profitPendingOrders.reduce((sum: number, o: any) => sum + (Number(o.totalAmount) || 0), 0);
+      const calculatedGrossProfit = netRevenue - totalVat - totalCogs;
+      const calculatedNetProfit = calculatedGrossProfit - totalExpenses;
+      const grossProfit = profitPendingCount > 0 ? null : calculatedGrossProfit;
+      const netProfit = profitPendingCount > 0 ? null : calculatedNetProfit;
       
       // Group by category
       const expensesByCategory = expenses.reduce((acc: any, e) => {
@@ -18640,7 +18657,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }, {});
       
       // Generate daily trend data (last 7 days)
-      const dailyTrend: Array<{ date: string; revenue: number; expenses: number; cogs: number; netProfit: number }> = [];
+      const dailyTrend: Array<{ date: string; revenue: number; expenses: number; cogs: number; netProfit: number | null; profitPendingCount: number }> = [];
       for (let i = 6; i >= 0; i--) {
         const date = new Date();
         date.setDate(date.getDate() - i);
@@ -18660,18 +18677,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const dayRevenue = dayOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
         const dayCogs = dayOrders.reduce((sum, o) => sum + (o.costOfGoods || 0), 0);
         const dayExp = dayExpenses.reduce((sum, e) => sum + e.totalAmount, 0);
+        const dayPendingCount = dayOrders.filter((o: any) => o.profitPending === true).length;
         
         dailyTrend.push({
           date: date.toISOString().split('T')[0],
           revenue: Math.round(dayRevenue * 100) / 100,
           expenses: Math.round(dayExp * 100) / 100,
           cogs: Math.round(dayCogs * 100) / 100,
-          netProfit: Math.round((dayRevenue - dayCogs - dayExp) * 100) / 100,
+          netProfit: dayPendingCount > 0 ? null : Math.round((dayRevenue - dayCogs - dayExp) * 100) / 100,
+          profitPendingCount: dayPendingCount,
         });
       }
       
       // Generate weekly trend data (last 4 weeks)
-      const weeklyTrend: Array<{ week: string; revenue: number; expenses: number; cogs: number; netProfit: number }> = [];
+      const weeklyTrend: Array<{ week: string; revenue: number; expenses: number; cogs: number; netProfit: number | null; profitPendingCount: number }> = [];
       for (let i = 3; i >= 0; i--) {
         const weekEnd = new Date();
         weekEnd.setDate(weekEnd.getDate() - (i * 7));
@@ -18692,13 +18711,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const weekRevenue = weekOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
         const weekCogs = weekOrders.reduce((sum, o) => sum + (o.costOfGoods || 0), 0);
         const weekExp = weekExpenses.reduce((sum, e) => sum + e.totalAmount, 0);
+        const weekPendingCount = weekOrders.filter((o: any) => o.profitPending === true).length;
         
         weeklyTrend.push({
           week: `${weekStart.getDate()}/${weekStart.getMonth() + 1} - ${weekEnd.getDate()}/${weekEnd.getMonth() + 1}`,
           revenue: Math.round(weekRevenue * 100) / 100,
           expenses: Math.round(weekExp * 100) / 100,
           cogs: Math.round(weekCogs * 100) / 100,
-          netProfit: Math.round((weekRevenue - weekCogs - weekExp) * 100) / 100,
+          netProfit: weekPendingCount > 0 ? null : Math.round((weekRevenue - weekCogs - weekExp) * 100) / 100,
+          profitPendingCount: weekPendingCount,
         });
       }
       
@@ -18745,9 +18766,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           totalVatCollected: Math.round(totalVat * 100) / 100,
           totalExpenses: Math.round(totalExpenses * 100) / 100,
           totalCogs: Math.round(totalCogs * 100) / 100,
-          grossProfit: Math.round(grossProfit * 100) / 100,
-          netProfit: Math.round(netProfit * 100) / 100,
-          profitMargin: netRevenue > 0 ? Math.round((netProfit / netRevenue * 100) * 100) / 100 : 0,
+          grossProfit: grossProfit === null ? null : Math.round(grossProfit * 100) / 100,
+          netProfit: netProfit === null ? null : Math.round(netProfit * 100) / 100,
+          profitMargin: profitPendingCount > 0 ? null : (netRevenue > 0 ? Math.round((netProfit / netRevenue * 100) * 100) / 100 : 0),
+          profitPending: profitPendingCount > 0,
+          profitPendingCount,
+          profitPendingSalesRevenue: Math.round(profitPendingSalesRevenue * 100) / 100,
           orderCount: orders.length,
           invoiceCount: invoices.length,
           refundCount: refunds.length,
