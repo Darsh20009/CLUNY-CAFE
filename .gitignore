@@ -39,6 +39,9 @@ Thumbs.db
 dist-ssr
 *.local
 
+# Encrypted local database backups contain customer and payment-related data
+/local-backups/
+
 # Payment private key material must be provided through Replit Secrets
 *.key
 *.p12
