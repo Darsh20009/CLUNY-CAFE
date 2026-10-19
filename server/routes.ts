@@ -851,6 +851,8 @@ const PaymentSessionTokenSchema = new mongoose.Schema({
   customerId:           { type: String, default: null },
   customerName:         { type: String, default: '' },
   orderData:            { type: mongoose.Schema.Types.Mixed, required: true },
+  gatewayProvider:      { type: String, enum: ['geidea', 'paymob'], required: true },
+  paymentMethod:        { type: String, required: true },
   used:                 { type: Boolean, default: false },
   confirmedOrderNumber: { type: String, default: null },
   expiresAt:            { type: Date,   required: true },
@@ -884,6 +886,104 @@ async function logPayment(data: {
   } catch (e) {
     console.error('[PaymentLog] Failed to save log:', e);
   }
+}
+
+async function verifyPaymobPayment(input: {
+  tenantId: string;
+  sessionId?: string;
+  transactionId?: string;
+  expectedAmount?: number;
+  orderReference?: string;
+}) {
+  const tenantId = input.tenantId;
+  const config = await BusinessConfigModel.findOne({ tenantId }).lean() as any;
+  const pg = config?.paymentGateway;
+  const secretKey = pg?.paymob?.secretKey || process.env.PAYMOB_SECRET_KEY;
+  const baseUrl = (pg?.paymob?.baseUrl || 'https://ksa.paymob.com').replace(/\/$/, '');
+  if (!secretKey) return { verified: false, error: 'Paymob server credentials are missing' };
+
+  const initLog = input.sessionId
+    ? await PaymentLogModel.findOne({
+        tenantId,
+        provider: 'paymob',
+        event: 'init',
+        sessionId: input.sessionId,
+      }).sort({ createdAt: -1 }).lean() as any
+    : null;
+  const expectedAmount = Number(input.expectedAmount || initLog?.amount || 0);
+  const allowedIntegrationIds = [
+    ...(pg?.paymob?.integrationIds || []),
+    pg?.paymob?.applePayIntegrationId,
+  ].map(Number).filter((id: number) => Number.isInteger(id) && id > 0);
+
+  const isExpectedTransaction = (tx: any) => {
+    if (!tx || tx.success !== true || tx.pending !== false) return false;
+    if (expectedAmount > 0 && tx.amount_cents != null &&
+        Number(tx.amount_cents) !== Math.round(expectedAmount * 100)) return false;
+    if (tx.integration_id != null && allowedIntegrationIds.length > 0 &&
+        !allowedIntegrationIds.includes(Number(tx.integration_id))) return false;
+    return true;
+  };
+
+  const fetchTransaction = async (id: string) => {
+    if (!/^\d+$/.test(id)) return null;
+    const response = await fetch(`${baseUrl}/v1/transaction/${encodeURIComponent(id)}/`, {
+      headers: { Authorization: `Bearer ${secretKey}` },
+    });
+    if (!response.ok) return null;
+    return response.json() as Promise<any>;
+  };
+
+  if (input.transactionId) {
+    try {
+      const transaction = await fetchTransaction(input.transactionId);
+      if (isExpectedTransaction(transaction)) {
+        return { verified: true, transactionId: String(transaction.id || input.transactionId), transaction };
+      }
+      if (transaction && transaction.pending === false && transaction.success !== true) {
+        return { verified: false, failed: true, error: 'Paymob reports that the transaction failed' };
+      }
+    } catch (error: any) {
+      console.warn('[Paymob Verify] Transaction lookup failed:', error?.message);
+    }
+  }
+
+  const intentionId = String(initLog?.externalId || '');
+  const specialReference = String(initLog?.orderId || input.orderReference || '');
+  const intentionUrls = [
+    ...(intentionId ? [`${baseUrl}/v1/intention/${encodeURIComponent(intentionId)}/`] : []),
+    ...(specialReference ? [`${baseUrl}/v1/intention/?special_reference=${encodeURIComponent(specialReference)}`] : []),
+  ];
+  for (const url of intentionUrls) {
+    try {
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${secretKey}`, Accept: 'application/json' },
+      });
+      if (!response.ok) continue;
+      const payload = await response.json() as any;
+      const intention = Array.isArray(payload?.results) ? payload.results[0] : payload;
+      if (!intention) continue;
+      const transactions: any[] = intention.transactions || intention.intention_detail?.transactions || [];
+      const successfulTransaction = transactions.find(isExpectedTransaction);
+      const status = String(intention.status || intention.intention_detail?.status || '').toUpperCase();
+      const intentionAmount = Number(intention.amount ?? intention.intention_detail?.amount);
+      const amountMatches = !expectedAmount || !Number.isFinite(intentionAmount) ||
+        intentionAmount === Math.round(expectedAmount * 100) || intentionAmount === expectedAmount;
+      if (['PAID', 'SUCCESSFUL', 'CONFIRMED'].includes(status) && amountMatches) {
+        return {
+          verified: true,
+          transactionId: String(successfulTransaction?.id || intention.id || intentionId || ''),
+          intention,
+        };
+      }
+      if (['FAILED', 'DECLINED', 'EXPIRED', 'CANCELLED'].includes(status)) {
+        return { verified: false, failed: true, error: 'Paymob reports that the intention failed' };
+      }
+    } catch (error: any) {
+      console.warn('[Paymob Verify] Intention lookup failed:', error?.message);
+    }
+  }
+  return { verified: false, error: 'Paymob has not confirmed a successful payment' };
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -3206,11 +3306,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else if (pg?.provider === 'paymob') {
         const hasSACredentials = !!(pg.paymob?.secretKey && pg.paymob?.publicKey);
         const hasLegacyCredentials = !!(pg.paymob?.apiKey && pg.paymob?.integrationId);
-        if (hasSACredentials || hasLegacyCredentials) {
+        const hasSaudiCardIntegration = !!pg.paymob?.integrationIds?.some((id: number) => Number.isInteger(Number(id)) && Number(id) > 0);
+        if ((hasSACredentials && hasSaudiCardIntegration) || hasLegacyCredentials) {
           allMethods.push({ id: 'paymob-card', nameAr: 'بطاقة بنكية', nameEn: 'Card Payment', details: 'مدى، فيزا، ماستر كارد عبر Paymob', icon: 'fas fa-credit-card', gateway: 'paymob' });
           if (!hasSACredentials && pg.paymob?.walletIntegrationId) {
             allMethods.push({ id: 'paymob-wallet', nameAr: 'محفظة إلكترونية', nameEn: 'Mobile Wallet', details: 'الدفع عبر المحفظة الإلكترونية', icon: 'fas fa-mobile-alt', gateway: 'paymob' });
           }
+        }
+        if (hasSACredentials && pg.applePayEnabled !== false && Number(pg.paymob?.applePayIntegrationId) > 0) {
+          allMethods.push({ id: 'paymob-apple-pay', nameAr: 'Apple Pay', nameEn: 'Apple Pay', details: 'ادفع بأمان عبر Apple Pay وPaymob', icon: 'fab fa-apple-pay', gateway: 'paymob' });
         }
       }
 
@@ -3361,8 +3465,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           configured: !!(pg.paymob?.secretKey || (pg.paymob?.apiKey && pg.paymob?.integrationId)),
           apiKey: maskSecret(pg.paymob?.apiKey),
           integrationId: pg.paymob?.integrationId || '',
+          integrationIds: pg.paymob?.integrationIds || [],
           iframeId: pg.paymob?.iframeId || '',
           walletIntegrationId: pg.paymob?.walletIntegrationId || '',
+          applePayIntegrationId: pg.paymob?.applePayIntegrationId || '',
+          applePayEnabled: pg.applePayEnabled !== false,
           hmacSecret: maskSecret(pg.paymob?.hmacSecret),
           callbackUrl: pg.paymob?.callbackUrl || '',
           secretKey: maskSecret(pg.paymob?.secretKey),
@@ -3425,6 +3532,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (body.paymobPublicKey) updates['paymentGateway.paymob.publicKey'] = body.paymobPublicKey;
       if (body.paymobBaseUrl) updates['paymentGateway.paymob.baseUrl'] = body.paymobBaseUrl;
       if (body.paymobIntegrationIds !== undefined) updates['paymentGateway.paymob.integrationIds'] = (Array.isArray(body.paymobIntegrationIds) ? body.paymobIntegrationIds : []).map(Number).filter(Boolean);
+      if (body.paymobApplePayIntegrationId !== undefined) {
+        const applePayIntegrationId = String(body.paymobApplePayIntegrationId || '').trim();
+        if (applePayIntegrationId && !/^\d+$/.test(applePayIntegrationId)) {
+          return res.status(400).json({ error: "معرّف تكامل Apple Pay يجب أن يكون رقمًا صحيحًا" });
+        }
+        updates['paymentGateway.paymob.applePayIntegrationId'] = applePayIntegrationId;
+      }
+      if (body.applePayEnabled !== undefined) updates['paymentGateway.applePayEnabled'] = !!body.applePayEnabled;
 
       updates['updatedAt'] = new Date();
 
@@ -3783,12 +3898,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const applePayId = pg.paymob?.applePayIntegrationId ? Number(pg.paymob.applePayIntegrationId) : null;
           const isApplePayRequest = reqPaymentMethod === 'paymob-apple-pay';
           const integrationIds: number[] = isApplePayRequest && applePayId
-            ? [...cardIntegrationIds, applePayId]
+            ? [applePayId]
             : cardIntegrationIds;
 
           if (integrationIds.length === 0) {
             return res.status(503).json({
-              error: "إعداد Paymob غير مكتمل: أضف رقم التكامل الصحيح من لوحة Paymob.",
+              error: isApplePayRequest
+                ? "Apple Pay غير مفعّل في Paymob: أضف معرّف تكامل Apple Pay من إعدادات الدفع."
+                : "إعداد Paymob غير مكتمل: أضف رقم تكامل البطاقات الصحيح من لوحة Paymob.",
             });
           }
 
@@ -4668,142 +4785,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
           paymobSuccess, paymobTransactionId, paymobPending,
         } = req.body;
 
-        // Method 1: Use callback URL params (paymobSuccess from redirect)
-        if (paymobSuccess !== undefined) {
-          const isPaid = paymobSuccess === 'true' || paymobSuccess === true;
-          const isPending = paymobPending === 'true' || paymobPending === true;
-
-          if (isPending) {
-            return res.json({
-              verified: false,
-              error: "الدفع قيد المعالجة — يرجى الانتظار",
-              provider: 'paymob',
-              transactionId: paymobTransactionId,
-            });
-          }
-
-          if (isPaid) {
-            // Optionally do server-side verification via Paymob API
-            const apiKey = pg?.paymob?.apiKey;
-            if (apiKey && paymobTransactionId) {
-              try {
-                const authRes = await fetch('https://accept.paymob.com/api/auth/tokens', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ api_key: apiKey }),
-                });
-                const authData = await authRes.json() as any;
-                if (authRes.ok && authData.token) {
-                  const txRes = await fetch(`https://accept.paymob.com/api/acceptance/transactions/${paymobTransactionId}`, {
-                    method: 'GET',
-                    headers: { 'Authorization': `Bearer ${authData.token}` },
-                  });
-                  const txData = await txRes.json() as any;
-                  console.log(`[Paymob Verify] Transaction ${paymobTransactionId}:`, JSON.stringify({ success: txData.success, pending: txData.pending }));
-                  const txPaid = txData.success === true && txData.pending === false;
-                  await logPayment({
-                    tenantId,
-                    event: 'verify',
-                    provider: 'paymob',
-                    amount: txData.amount_cents ? txData.amount_cents / 100 : undefined,
-                    currency: txData.currency || 'SAR',
-                    status: txPaid ? 'success' : 'failed',
-                    externalId: String(paymobTransactionId),
-                    orderId: txData.order?.merchant_order_id || undefined,
-                    customerPhone: txData.payment_key_claims?.billing_data?.phone_number || undefined,
-                    rawData: { success: txData.success, pending: txData.pending },
-                    ipAddress: req.ip,
-                  });
-                  return res.json({
-                    verified: txPaid,
-                    transactionId: String(paymobTransactionId),
-                    provider: 'paymob',
-                  });
-                }
-              } catch (e: any) {
-                console.warn('[Paymob Verify] API verification failed, trusting callback:', e.message);
-              }
-            }
-
-            // Fallback: trust the callback param
-            console.log(`[Paymob Verify] Trusting callback success=true, txId: ${paymobTransactionId}`);
-            await logPayment({
-              tenantId,
-              event: 'verify',
-              provider: 'paymob',
-              status: 'success',
-              externalId: String(paymobTransactionId || sessionId),
-              sessionId: sessionId || undefined,
-              rawData: { source: 'callback-trusted' },
-              ipAddress: req.ip,
-            });
-            return res.json({
-              verified: true,
-              transactionId: String(paymobTransactionId || sessionId),
-              provider: 'paymob',
-            });
-          }
-
+        if (paymobSuccess === 'false' || paymobSuccess === false) {
           await logPayment({
-            tenantId,
-            event: 'verify',
-            provider: 'paymob',
-            status: 'failed',
+            tenantId, event: 'verify', provider: 'paymob', status: 'failed',
             sessionId: sessionId || undefined,
+            externalId: paymobTransactionId ? String(paymobTransactionId) : undefined,
             rawData: { paymobSuccess, paymobPending },
             ipAddress: req.ip,
           });
-          return res.json({
-            verified: false,
-            error: "تم إلغاء الدفع أو فشل عبر Paymob",
-            provider: 'paymob',
-          });
+          return res.json({ verified: false, error: "تم إلغاء الدفع أو فشل عبر Paymob", provider: 'paymob' });
         }
 
-        // Method 2: No callback params — try PayMob SA Intention API to check status
-        const secretKey = pg?.paymob?.secretKey || process.env.PAYMOB_SECRET_KEY;
-        const baseUrl = pg?.paymob?.baseUrl || 'https://ksa.paymob.com';
-        if (secretKey && sessionId) {
-          try {
-            // Look up intention by special_reference (which is the orderId/sessionId we stored)
-            const intentLookupRes = await fetch(`${baseUrl}/v1/intention/?special_reference=${encodeURIComponent(sessionId)}`, {
-              headers: { 'Authorization': `Bearer ${secretKey}`, 'Content-Type': 'application/json' },
-            });
-            if (intentLookupRes.ok) {
-              const intentList = await intentLookupRes.json() as any;
-              const intentData = Array.isArray(intentList?.results) ? intentList.results[0] : intentList;
-              if (intentData) {
-                const intentStatus = intentData?.status || intentData?.intention_detail?.status || '';
-                const transactions: any[] = intentData?.transactions || intentData?.intention_detail?.transactions || [];
-                const isPaidByStatus = intentStatus === 'PAID' || intentStatus === 'SUCCESSFUL' || intentStatus === 'CONFIRMED' || intentData?.confirmed === true;
-                const successTx = transactions.find((tx: any) => tx?.success === true && tx?.pending === false);
-                const isPaid = isPaidByStatus || !!successTx;
-                console.log(`[Paymob SA Verify] Intention lookup for session ${sessionId}: status=${intentStatus}, isPaid=${isPaid}`);
-                await logPayment({
-                  tenantId,
-                  event: 'verify',
-                  provider: 'paymob',
-                  status: isPaid ? 'success' : 'failed',
-                  sessionId: sessionId || undefined,
-                  externalId: String(intentData?.id || successTx?.id || ''),
-                  rawData: { source: 'sa-intention-lookup', intentStatus, transactionId: successTx?.id },
-                  ipAddress: req.ip,
-                });
-                if (isPaid) {
-                  return res.json({
-                    verified: true,
-                    transactionId: String(successTx?.id || intentData?.id || sessionId),
-                    provider: 'paymob',
-                  });
-                }
-              }
-            }
-          } catch (e: any) {
-            console.warn('[Paymob SA Verify] Intention lookup failed:', e.message);
-          }
-        }
-
-        return res.json({ verified: false, error: "بيانات التحقق من Paymob غير كاملة" });
+        const verification = await verifyPaymobPayment({
+          tenantId,
+          sessionId: sessionId || undefined,
+          transactionId: paymobTransactionId ? String(paymobTransactionId) : undefined,
+          expectedAmount: req.body.amount ? Number(req.body.amount) : undefined,
+          orderReference: req.body.orderNumber ? String(req.body.orderNumber) : undefined,
+        });
+        await logPayment({
+          tenantId,
+          event: 'verify',
+          provider: 'paymob',
+          status: verification.verified ? 'success' : verification.failed ? 'failed' : 'pending',
+          sessionId: sessionId || undefined,
+          externalId: verification.transactionId || (paymobTransactionId ? String(paymobTransactionId) : undefined),
+          rawData: { source: 'server-api-verification', verified: verification.verified, pending: !!paymobPending },
+          ipAddress: req.ip,
+        });
+        return res.json({
+          verified: verification.verified,
+          transactionId: verification.transactionId,
+          error: verification.verified ? undefined : (paymobPending === 'true' ? "الدفع قيد المعالجة — يرجى الانتظار" : "لم يؤكد Paymob نجاح الدفع بعد"),
+          provider: 'paymob',
+        });
       }
 
       return res.json({ verified: false, error: "مزود غير مدعوم" });
@@ -5159,9 +5174,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!customerPhone || !orderData) {
         return res.status(400).json({ error: "customerPhone and orderData are required" });
       }
+      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const config = await BusinessConfigModel.findOne({ tenantId }).select('paymentGateway.provider').lean() as any;
+      const gatewayProvider = config?.paymentGateway?.provider;
+      const paymentMethod = String(orderData.paymentMethod || '');
+      const methodProvider = ['paymob', 'paymob-card', 'paymob-wallet', 'paymob-apple-pay'].includes(paymentMethod)
+        ? 'paymob'
+        : ['geidea', 'apple_pay'].includes(paymentMethod) ? 'geidea' : null;
+      if (!methodProvider || methodProvider !== gatewayProvider) {
+        return res.status(409).json({ error: "طريقة الدفع لا تطابق بوابة الدفع المفعّلة. حدّث الصفحة واختر طريقة متاحة." });
+      }
       const token = crypto.randomBytes(32).toString("hex");
       const expiresAt = new Date(Date.now() + 25 * 60 * 1000); // 25 minutes
-      await PaymentSessionTokenModel.create({ token, customerPhone, customerId: customerId || null, customerName: customerName || "", orderData, expiresAt });
+      await PaymentSessionTokenModel.create({
+        token, customerPhone, customerId: customerId || null,
+        customerName: customerName || "", orderData, gatewayProvider,
+        paymentMethod, expiresAt,
+      });
       return res.json({ token });
     } catch (err: any) {
       console.error("[PaymentSessionToken] create error:", err);
@@ -5264,84 +5293,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(410).json({ error: "انتهت صلاحية رمز الدفع" });
       }
 
-      // ── Verify payment with PayMob SA when success param is absent/unclear ──
-      // paymobSuccess === "true"  → trust it (PayMob sent explicit success)
-      // paymobSuccess === "false" → reject immediately
-      // paymobSuccess is null/undefined → query PayMob API to confirm
-      if (paymobSuccess === "false") {
+      const recordedPaymentMethod = String(record.paymentMethod || record.orderData?.paymentMethod || '');
+      const isGeideaPayment = record.gatewayProvider === 'geidea' && ['geidea', 'apple_pay'].includes(recordedPaymentMethod);
+      const isPaymobPayment = record.gatewayProvider === 'paymob' &&
+        ['paymob', 'paymob-card', 'paymob-wallet', 'paymob-apple-pay'].includes(recordedPaymentMethod);
+
+      if (isPaymobPayment && paymobSuccess === "false") {
         return res.status(402).json({ error: "لم تتم عملية الدفع", paymentFailed: true });
       }
 
-      // Geidea payments: when provider=geidea and paymobSuccess=true, skip PayMob API check
-      const isGeideaPayment = payProvider === "geidea" ||
-        record.orderData?.paymentMethod === "geidea" ||
-        record.orderData?.paymentMethod === "apple_pay";
-
-      if (isGeideaPayment && paymobSuccess === "true") {
-        // Trust the Geidea redirect — fall through to order creation
-      } else if (!paymobSuccess || paymobSuccess !== "true") {
-        // Query PayMob SA API to check the actual payment status
-        try {
-          const tenantId = record.orderData?.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId();
-          const config = await BusinessConfigModel.findOne({ tenantId }).lean() as any;
-          const pg = config?.paymentGateway;
-          const secretKey = pg?.paymob?.secretKey || process.env.PAYMOB_SECRET_KEY;
-          const baseUrl = pg?.paymob?.baseUrl || 'https://ksa.paymob.com';
-
-          if (secretKey) {
-            let intentStatus: string | null = null;
-
-            // Try by transaction ID first
-            if (paymobTxId) {
-              const r = await fetch(`${baseUrl}/v1/transaction/${paymobTxId}/`, {
-                headers: { 'Authorization': `Bearer ${secretKey}` },
-              });
-              if (r.ok) {
-                const txData = await r.json() as any;
-                const txSuccess = txData?.success || txData?.is_auth || txData?.is_capture;
-                if (txSuccess === true) intentStatus = 'PAID';
-                else if (txSuccess === false) intentStatus = 'FAILED';
-              }
-            }
-
-            // Fallback: query intention by special_reference (internalSession or token)
-            if (!intentStatus) {
-              const ref = internalSession || token.slice(0, 16);
-              const r = await fetch(`${baseUrl}/v1/intention/?special_reference=${encodeURIComponent(ref)}`, {
-                headers: { 'Authorization': `Bearer ${secretKey}` },
-              });
-              if (r.ok) {
-                const list = await r.json() as any;
-                const item = Array.isArray(list?.results) ? list.results[0] : list;
-                const s = item?.status || item?.intention_detail?.status || '';
-                if (['PAID', 'SUCCESSFUL', 'CONFIRMED'].includes(s.toUpperCase())) intentStatus = 'PAID';
-                else if (['FAILED', 'DECLINED', 'EXPIRED', 'CANCELLED'].includes(s.toUpperCase())) intentStatus = 'FAILED';
-                else if (s) intentStatus = 'PENDING';
-              }
-            }
-
-            if (intentStatus === 'FAILED') {
-              return res.status(402).json({ error: "لم تتم عملية الدفع", paymentFailed: true });
-            }
-
-            if (!intentStatus || intentStatus === 'PENDING') {
-              // Payment not yet confirmed by PayMob — tell frontend to retry
-              return res.json({ waiting: true, message: "الدفع قيد المعالجة" });
-            }
-            // intentStatus === 'PAID' → fall through to order creation
-          } else {
-            // No credentials to verify — allow if paymobTxId is present (best effort)
-            if (!paymobTxId) {
-              return res.json({ waiting: true, message: "جاري التحقق من الدفع" });
-            }
+      if (isPaymobPayment) {
+        const tenantId = record.orderData?.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId();
+        const verification = await verifyPaymobPayment({
+          tenantId,
+          sessionId: internalSession || undefined,
+          transactionId: paymobTxId ? String(paymobTxId) : undefined,
+          expectedAmount: Number(record.orderData?.totalAmount) || undefined,
+          orderReference: String(record.orderData?.orderNumber || ''),
+        });
+        if (!verification.verified) {
+          if (verification.failed) {
+            return res.status(402).json({ error: "لم تتم عملية الدفع", paymentFailed: true });
           }
-        } catch (verifyErr: any) {
-          console.warn("[confirm-payment-order] PayMob verify failed, proceeding with txId:", verifyErr?.message);
-          // If verification call itself fails but we have a txId, proceed cautiously
-          if (!paymobTxId) {
-            return res.json({ waiting: true, message: "جاري التحقق من الدفع" });
-          }
+          return res.json({ waiting: true, message: "Paymob لم يؤكد الدفع بعد؛ جارٍ التحقق" });
         }
+      } else if (!isGeideaPayment) {
+        return res.status(400).json({ error: "طريقة الدفع المرتبطة برمز الطلب غير مدعومة" });
       }
 
       // ── Mark as used now (payment verified or explicitly success=true) ──
@@ -5361,7 +5338,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentStatus: "paid",
         status: "pending",
         paymentMethod: record.orderData?.paymentMethod || "geidea",
-        ...(paymobTxId ? { paymentTransactionId: paymobTxId } : {}),
+        ...(paymobTxId ? { paymentTransactionId: String(paymobTxId) } : {}),
         customerInfo: record.orderData?.customerInfo || {
           customerName: record.customerName || record.orderData?.customerName,
           customerPhone: record.customerPhone || record.orderData?.customerPhone,
@@ -5530,36 +5507,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/payments/paymob/webhook", async (req, res) => {
     try {
       const body = req.body;
-      console.log('[Paymob Webhook]', JSON.stringify(body));
 
       const tenantId = getTenantIdFromRequest(req) || await getDefaultTenantId();
       const config = await BusinessConfigModel.findOne({ tenantId });
       const hmacSecret = config?.paymentGateway?.paymob?.hmacSecret;
+      if (!hmacSecret) {
+        console.error('[Paymob Webhook] HMAC secret is not configured; callback rejected');
+        return res.status(503).json({ error: 'Webhook verification is not configured' });
+      }
 
-      if (hmacSecret) {
-        const crypto = await import('crypto');
-        const receivedHmac = req.query.hmac as string || req.headers['x-hmac'] as string;
-        if (receivedHmac) {
-          const obj = body?.obj || {};
-          const fields = [
-            obj.amount_cents, obj.created_at, obj.currency, obj.error_occured,
-            obj.has_parent_transaction, obj.id, obj.integration_id, obj.is_3d_secure,
-            obj.is_auth, obj.is_capture, obj.is_refunded, obj.is_standalone_payment,
-            obj.is_voided, obj.order?.id, obj.owner, obj.pending,
-            obj.source_data?.pan, obj.source_data?.sub_type, obj.source_data?.type,
-            obj.success,
-          ];
-          const dataString = fields.map(v => String(v ?? '')).join('');
-          const calculatedHmac = crypto.createHmac('sha512', hmacSecret).update(dataString).digest('hex');
-          if (calculatedHmac !== receivedHmac) {
-            console.warn('[Paymob Webhook] HMAC mismatch — rejected');
-            return res.status(400).json({ error: 'Invalid signature' });
-          }
-        }
+      const crypto = await import('node:crypto');
+      const queryHmac = typeof req.query.hmac === 'string' ? req.query.hmac : '';
+      const headerHmac = typeof req.headers['x-hmac'] === 'string'
+        ? req.headers['x-hmac']
+        : typeof req.headers['hmac'] === 'string' ? req.headers['hmac'] : '';
+      const receivedHmac = (queryHmac || headerHmac).trim().toLowerCase();
+      if (!/^[a-f0-9]{128}$/.test(receivedHmac)) {
+        console.warn('[Paymob Webhook] Missing or malformed HMAC — rejected');
+        return res.status(401).json({ error: 'Missing or invalid signature' });
+      }
+      const obj = body?.obj || {};
+      const fields = [
+        obj.amount_cents, obj.created_at, obj.currency, obj.error_occured,
+        obj.has_parent_transaction, obj.id, obj.integration_id, obj.is_3d_secure,
+        obj.is_auth, obj.is_capture, obj.is_refunded, obj.is_standalone_payment,
+        obj.is_voided, obj.order?.id, obj.owner, obj.pending,
+        obj.source_data?.pan, obj.source_data?.sub_type, obj.source_data?.type,
+        obj.success,
+      ];
+      const dataString = fields.map(v => String(v ?? '')).join('');
+      const calculatedHmac = crypto.createHmac('sha512', hmacSecret).update(dataString).digest();
+      const suppliedHmac = Buffer.from(receivedHmac, 'hex');
+      if (calculatedHmac.length !== suppliedHmac.length || !crypto.timingSafeEqual(calculatedHmac, suppliedHmac)) {
+        console.warn('[Paymob Webhook] HMAC mismatch — rejected');
+        return res.status(401).json({ error: 'Invalid signature' });
       }
 
       const transaction = body?.obj;
-      if (transaction?.success === true) {
+      console.log('[Paymob Webhook] Authenticated event:', {
+        transactionId: transaction?.id,
+        success: transaction?.success,
+        pending: transaction?.pending,
+      });
+      if (transaction?.success === true && transaction?.pending === false) {
         const merchantOrderId = transaction?.order?.merchant_order_id
           || transaction?.special_reference
           || body?.special_reference;
@@ -5712,21 +5702,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (pg.provider === 'paymob') {
-        const apiKey = pg.paymob?.apiKey;
-        if (!apiKey) {
-          return res.json({ success: false, message: "مفتاح API لـ Paymob غير مكوّن" });
+        const secretKey = pg.paymob?.secretKey || process.env.PAYMOB_SECRET_KEY;
+        const publicKey = pg.paymob?.publicKey || process.env.PAYMOB_PUBLIC_KEY;
+        const integrations = (pg.paymob?.integrationIds || []).map(Number).filter((id: number) => Number.isInteger(id) && id > 0);
+        if (!secretKey || !publicKey || integrations.length === 0) {
+          return res.json({ success: false, message: "إعداد Paymob السعودية ناقص: تحقق من المفاتيح ومعرّف تكامل البطاقات" });
         }
         try {
-          const authRes = await fetch('https://accept.paymob.com/api/auth/tokens', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ api_key: apiKey }),
+          // A read-only lookup checks that the secret key can authenticate.
+          // It does not create an intention, authorize a charge, or move money.
+          const baseUrl = (pg.paymob?.baseUrl || 'https://ksa.paymob.com').replace(/\/$/, '');
+          const authRes = await fetch(`${baseUrl}/v1/intention/?special_reference=cluny_connection_check`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${secretKey}`, 'Accept': 'application/json' },
           });
-          const authData = await authRes.json() as any;
-          if (authRes.ok && authData.token) {
-            return res.json({ success: true, message: "اتصال Paymob ناجح — مصادقة API تمت بنجاح", provider: 'paymob' });
+          if (authRes.ok) {
+            return res.json({
+              success: true,
+              message: "تم التحقق من مصادقة Paymob وتجهيز تكامل البطاقات. لم يتم تنفيذ أي عملية خصم.",
+              provider: 'paymob',
+            });
           } else {
-            return res.json({ success: false, message: "فشل مصادقة Paymob — تحقق من مفتاح API", details: authData.message });
+            const details = await authRes.text().catch(() => '');
+            return res.json({ success: false, message: "فشل التحقق من Paymob — راجع بيانات التاجر وإعدادات الحساب", details: details.slice(0, 250) });
           }
         } catch (err: any) {
           return res.json({ success: false, message: `خطأ في الاتصال بـ Paymob: ${err.message}` });

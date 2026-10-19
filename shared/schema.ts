@@ -908,6 +908,7 @@ const PaymentGatewayConfigSchema = new Schema({
     callbackUrl: { type: String },
   },
   paymentTestMode: { type: Boolean, default: false },
+  applePayEnabled: { type: Boolean, default: true },
   cashEnabled: { type: Boolean, default: true },
   cashMaxDistance: { type: Number, default: 0 },
   storeLocation: {
@@ -3255,7 +3256,7 @@ export type InsertTable = z.infer<typeof insertTableSchema>;
 export type Attendance = IAttendance;
 export type InsertAttendance = z.infer<typeof insertAttendanceSchema>;
 
-export type PaymentMethod = 'cash' | 'qahwa-card' | 'loyalty-card' | 'pos' | 'pos-network' | 'geidea' | 'apple-pay' | 'apple_pay' | 'mada' | 'alinma' | 'rajhi' | 'ur' | 'barq' | 'neoleap' | 'neoleap-apple-pay' | 'copy-card' | 'stc-pay';
+export type PaymentMethod = 'cash' | 'qahwa-card' | 'loyalty-card' | 'pos' | 'pos-network' | 'geidea' | 'apple-pay' | 'apple_pay' | 'mada' | 'alinma' | 'rajhi' | 'ur' | 'barq' | 'neoleap' | 'neoleap-apple-pay' | 'paymob-card' | 'paymob-wallet' | 'paymob-apple-pay' | 'copy-card' | 'stc-pay';
 
 export interface PaymentMethodInfo {
   id: PaymentMethod;

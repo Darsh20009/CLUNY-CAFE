@@ -436,6 +436,7 @@ export default function AdminSettings() {
   const [paymobPublicKey, setPaymobPublicKey] = useState("");
   const [paymobBaseUrl, setPaymobBaseUrl] = useState("https://ksa.paymob.com");
   const [paymobIntegrationIds, setPaymobIntegrationIds] = useState("");
+  const [paymobApplePayIntegrationId, setPaymobApplePayIntegrationId] = useState("");
   const [showSecrets, setShowSecrets] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -471,6 +472,7 @@ export default function AdminSettings() {
         setPaymobPublicKey(pgConfig.paymob.publicKey || '');
         setPaymobBaseUrl(pgConfig.paymob.baseUrl || 'https://ksa.paymob.com');
         setPaymobIntegrationIds((pgConfig.paymob.integrationIds || []).join(', '));
+        setPaymobApplePayIntegrationId(pgConfig.paymob.applePayIntegrationId || '');
       }
     }
   }, [pgConfig]);
@@ -528,6 +530,7 @@ export default function AdminSettings() {
     if (paymobPublicKey) updates.paymobPublicKey = paymobPublicKey;
     if (paymobBaseUrl) updates.paymobBaseUrl = paymobBaseUrl;
     updates.paymobIntegrationIds = paymobIntegrationIds.split(',').map(s => s.trim()).filter(Boolean);
+    updates.paymobApplePayIntegrationId = paymobApplePayIntegrationId.trim();
 
     pgMutation.mutate(updates);
   };
@@ -2327,6 +2330,18 @@ export default function AdminSettings() {
                       placeholder="مثال: 123456, 789012"
                       className="text-xs font-mono"
                       data-testid="input-paymob-integration-ids"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Integration ID لـ Apple Pay من Paymob (بعد تفعيله لدى Paymob)</Label>
+                    <Input
+                      type="text"
+                      inputMode="numeric"
+                      value={paymobApplePayIntegrationId}
+                      onChange={(e) => setPaymobApplePayIntegrationId(e.target.value.replace(/\D/g, ''))}
+                      placeholder="رقم تكامل Apple Pay"
+                      className="text-xs font-mono"
+                      data-testid="input-paymob-apple-pay-integration-id"
                     />
                   </div>
                   <div className="space-y-1.5 sm:col-span-2">

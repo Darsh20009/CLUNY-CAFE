@@ -648,6 +648,7 @@ export default function CheckoutPage() {
   });
 
   const cashMethod = paymentMethods.find(m => m.id === 'cash');
+  const applePayMethod = paymentMethods.find(m => m.id === 'paymob-apple-pay' || m.id === 'apple_pay');
 
   const haversineDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
     const R = 6371000;
@@ -831,7 +832,7 @@ export default function CheckoutPage() {
       return;
     }
     if (isPaymobMethod(selectedPaymentMethod)) {
-      initiatePaymobDirect();
+      initiatePaymobDirect(selectedPaymentMethod);
       return;
     }
     if (selectedPaymentMethod === 'apple_pay') {
@@ -855,7 +856,7 @@ export default function CheckoutPage() {
 
   const isPaymobMethod = (method: string | null) => {
     if (!method) return false;
-    return ['paymob-card', 'paymob-wallet', 'neoleap'].includes(method);
+    return ['paymob-card', 'paymob-wallet', 'paymob-apple-pay', 'neoleap'].includes(method);
   };
 
   // Geidea HPP payment methods
@@ -1115,6 +1116,7 @@ export default function CheckoutPage() {
         orderData = built.orderData;
         activeCustomerId = built.activeCustomerId;
       }
+      orderData.paymentMethod = paymentMethod;
 
       const tokenRes = await fetch("/api/payments/create-session-token", {
         method: "POST",
@@ -1216,10 +1218,12 @@ export default function CheckoutPage() {
     }
   };
 
-  const initiatePaymobDirect = async () => {
+  const initiatePaymobDirect = async (paymentMethodOverride?: string | null) => {
     setIsVerifyingPayment(true);
     try {
       const { orderData, activeCustomerId } = await buildOrderData();
+      const effectivePaymentMethod = paymentMethodOverride || selectedPaymentMethod;
+      orderData.paymentMethod = effectivePaymentMethod;
 
       // ── Step 1: Create a server-side payment session token ──────────────────
       // This token stores order data + customer identity so /payment-return can
@@ -1254,7 +1258,7 @@ export default function CheckoutPage() {
         orderId: tempRef,
         amount: orderData.totalAmount,
         currency: "SAR",
-        paymentMethod: selectedPaymentMethod,
+        paymentMethod: effectivePaymentMethod,
         customerName,
         customerPhone,
         customerEmail,
@@ -2072,13 +2076,19 @@ export default function CheckoutPage() {
                 )}
 
                 {/* ── Apple Pay button — opens Geidea HPP (which has Apple Pay built-in) ── */}
-                {typeof window !== 'undefined' &&
+                {applePayMethod && typeof window !== 'undefined' &&
                   typeof (window as any).ApplePaySession !== 'undefined' &&
                   (window as any).ApplePaySession.canMakePayments() && (
                   <div className="space-y-3">
                     <button
                       type="button"
-                      onClick={() => goToGeideaHPP(undefined, 'apple_pay')}
+                      onClick={() => {
+                        if (applePayMethod.id === 'paymob-apple-pay') {
+                          initiatePaymobDirect('paymob-apple-pay');
+                        } else {
+                          goToGeideaHPP(undefined, 'apple_pay');
+                        }
+                      }}
                       disabled={isVerifyingPayment}
                       style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -2384,7 +2394,7 @@ export default function CheckoutPage() {
                   <div className="space-y-2">
                     <button
                       type="button"
-                      onClick={confirmAndCreateOrder}
+                      onClick={() => goToGeideaHPP(undefined, 'apple_pay')}
                       disabled={isVerifyingPayment}
                       style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
