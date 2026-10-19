@@ -72,3 +72,4 @@ APPLE_PASS_P12_B64 = "MIIM3wIBAzCCDJUGCSqGSIb3DQEHAaCCDIYEggyCMIIMfjCCBvIGCSqGSI
 SMTP_PASS = "~@xYym83F,=^Y}yT"
 APP_URL = "https://cluny.cafe"
 GEIDEA_BASE_URL = "https://api.ksamerchant.geidea.net"
+MONGODB_DATABASE = "test"
