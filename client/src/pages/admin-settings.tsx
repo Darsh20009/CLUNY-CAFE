@@ -2319,7 +2319,7 @@ export default function AdminSettings() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-xs">Integration IDs (اختياري، مفصولة بفاصلة)</Label>
+                    <Label className="text-xs">Integration IDs للبطاقات السعودية (مطلوبة، مفصولة بفاصلة)</Label>
                     <Input
                       type="text"
                       value={paymobIntegrationIds}

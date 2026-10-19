@@ -3786,6 +3786,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             ? [...cardIntegrationIds, applePayId]
             : cardIntegrationIds;
 
+          if (integrationIds.length === 0) {
+            return res.status(503).json({
+              error: "إعداد Paymob غير مكتمل: أضف رقم التكامل الصحيح من لوحة Paymob.",
+            });
+          }
+
           try {
             const amountHalalas = Math.round(Number(amount) * 100);
             const intentBody: any = {

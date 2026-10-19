@@ -940,26 +940,33 @@ app.use((req, res, next) => {
     }
 
     // ── Sync Geidea credentials only when explicitly provided in Replit Secrets.
-    // Never put merchant credentials in source or overwrite admin settings with defaults.
+    // Credential sync must not override a different provider selected by the admin.
     try {
       const { BusinessConfigModel: BCM } = await import("./models");
       const geideaPublicKey = process.env.GEIDEA_PUBLIC_KEY?.trim();
       const geideaApiPassword = process.env.GEIDEA_API_PASSWORD?.trim();
+      const requestedProvider = process.env.PAYMENT_GATEWAY_PROVIDER?.trim().toLowerCase();
 
       if (geideaPublicKey && geideaApiPassword) {
         const updates: Record<string, unknown> = {
-          'paymentGateway.provider': 'geidea',
           'paymentGateway.geidea.publicKey': geideaPublicKey,
           'paymentGateway.geidea.apiPassword': geideaApiPassword,
-          'paymentGateway.paymentTestMode': false,
         };
+        const existingConfig = await BCM.findOne({ tenantId: 'demo-tenant' })
+          .select('paymentGateway.provider')
+          .lean();
+        const selectedProvider = existingConfig?.paymentGateway?.provider;
+        if (requestedProvider === 'geidea' ||
+          (!requestedProvider && (!selectedProvider || selectedProvider === 'none'))) {
+          updates['paymentGateway.provider'] = 'geidea';
+        }
         const geideaBaseUrl = process.env.GEIDEA_BASE_URL?.trim();
         const applePayMerchantId = process.env.APPLE_PAY_MERCHANT_ID?.trim();
         if (geideaBaseUrl) updates['paymentGateway.geidea.baseUrl'] = geideaBaseUrl;
         if (applePayMerchantId) updates['paymentGateway.geidea.applePayMerchantId'] = applePayMerchantId;
 
         await BCM.updateOne({ tenantId: 'demo-tenant' }, { $set: updates }, { upsert: false });
-        console.log('✅ Geidea credentials synced from Replit Secrets');
+        console.log(`✅ Geidea credentials synced; active provider preserved (${selectedProvider || 'unset'})`);
       } else {
         console.warn('[Geidea] Credentials are not set in Replit Secrets; leaving existing payment settings unchanged.');
       }
@@ -967,45 +974,53 @@ app.use((req, res, next) => {
       console.error('⚠️ Could not configure Geidea gateway:', err);
     }
 
-    // Auto-configure PayMob Saudi Arabia payment gateway when credentials are provided
+    // Configure Paymob only when its credentials and merchant integration IDs are provided.
+    // The active provider is controlled explicitly so existing Geidea credentials cannot
+    // silently switch the checkout back to Geidea.
     try {
       const { BusinessConfigModel } = await import("./models");
-      const PAYMOB_SECRET_KEY = process.env.PAYMOB_SECRET_KEY;
-      const PAYMOB_PUBLIC_KEY = process.env.PAYMOB_PUBLIC_KEY;
-      const PAYMOB_HMAC_SECRET = process.env.PAYMOB_HMAC_SECRET;
+      const paymobSecretKey = process.env.PAYMOB_SECRET_KEY?.trim();
+      const paymobPublicKey = process.env.PAYMOB_PUBLIC_KEY?.trim();
+      const paymobHmacSecret = process.env.PAYMOB_HMAC_SECRET?.trim();
+      const paymobIntegrationIds = (process.env.PAYMOB_INTEGRATION_IDS || '')
+        .split(',')
+        .map(value => Number(value.trim()))
+        .filter(value => Number.isInteger(value) && value > 0);
+      const requestedProvider = process.env.PAYMENT_GATEWAY_PROVIDER?.trim().toLowerCase();
 
-      if (!PAYMOB_SECRET_KEY || !PAYMOB_PUBLIC_KEY || !PAYMOB_HMAC_SECRET) {
-        console.log('ℹ️ PayMob credentials not configured; skipping automatic payment gateway setup');
-        return;
-      }
+      if (!paymobSecretKey || !paymobPublicKey || !paymobHmacSecret || paymobIntegrationIds.length === 0) {
+        console.log('ℹ️ Paymob is not fully configured; keeping the current payment provider unchanged');
+      } else {
+        const config = await BusinessConfigModel.findOne({ tenantId: 'demo-tenant' });
+        if (config) {
+          const pg = config.paymentGateway;
+          const shouldSelectPaymob = requestedProvider === 'paymob';
+          const idsMatch = JSON.stringify((pg?.paymob?.integrationIds || []).map(Number)) ===
+            JSON.stringify(paymobIntegrationIds);
+          const needsUpdate = !pg?.paymob?.secretKey ||
+            !pg?.paymob?.publicKey ||
+            !pg?.paymob?.hmacSecret ||
+            !idsMatch ||
+            (shouldSelectPaymob && pg?.provider !== 'paymob');
 
-      const config = await BusinessConfigModel.findOne({ tenantId: 'demo-tenant' });
-      if (config) {
-        const pg = config.paymentGateway;
-        const needsUpdate = pg?.provider !== 'paymob' ||
-          !pg?.paymob?.secretKey ||
-          !pg?.paymob?.publicKey;
-
-        if (needsUpdate) {
-          await BusinessConfigModel.updateOne(
-            { tenantId: 'demo-tenant' },
-            {
-              $set: {
-                'paymentGateway.provider': 'paymob',
-                'paymentGateway.paymob.secretKey': PAYMOB_SECRET_KEY,
-                'paymentGateway.paymob.publicKey': PAYMOB_PUBLIC_KEY,
-                'paymentGateway.paymob.hmacSecret': PAYMOB_HMAC_SECRET,
-                'paymentGateway.paymob.baseUrl': 'https://ksa.paymob.com',
-                'paymentGateway.paymob.integrationIds': [24948],
-                'paymentGateway.cashEnabled': false,
-                'paymentGateway.stcPayEnabled': false,
-                'paymentGateway.qahwaCardEnabled': true,
-              }
-            }
-          );
-          console.log('✅ PayMob Saudi Arabia payment gateway configured automatically');
-        } else {
-          console.log('✅ PayMob Saudi Arabia payment gateway already configured');
+          if (needsUpdate) {
+            const updates: Record<string, unknown> = {
+              'paymentGateway.paymob.secretKey': paymobSecretKey,
+              'paymentGateway.paymob.publicKey': paymobPublicKey,
+              'paymentGateway.paymob.hmacSecret': paymobHmacSecret,
+              'paymentGateway.paymob.baseUrl': 'https://ksa.paymob.com',
+              'paymentGateway.paymob.integrationIds': paymobIntegrationIds,
+            };
+            if (shouldSelectPaymob) updates['paymentGateway.provider'] = 'paymob';
+            await BusinessConfigModel.updateOne(
+              { tenantId: 'demo-tenant' },
+              { $set: updates },
+              { upsert: false },
+            );
+            console.log(`✅ Paymob credentials synced${shouldSelectPaymob ? ' and selected' : ''}`);
+          } else {
+            console.log('✅ Paymob credentials already configured');
+          }
         }
       }
     } catch (err) {
