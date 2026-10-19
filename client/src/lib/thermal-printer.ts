@@ -1010,7 +1010,7 @@ export async function buildReceiptCanvas(opts: ReceiptBitmapOpts): Promise<HTMLC
     addText('CLUNY CAFE', 'center', Math.round(FS * 0.78), true);
   }
   if (show('poweredBy')) {
-    addText('Powered by CLUNY SYSTEMS', 'center', Math.round(FS * 0.72), false, '#555');
+    addText('Powered by QIROX STUDIO', 'center', Math.round(FS * 0.72), false, '#555');
   }
 
   addGap(opts.feedLines ? opts.feedLines * 8 : 24);

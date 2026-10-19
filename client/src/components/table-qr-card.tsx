@@ -428,7 +428,7 @@ export function TableQRCard({ tableNumber, qrToken, branchName, tableUrl }: Tabl
           ctx.fillStyle    = C.muted;
           ctx.font         = "14px 'Georgia', serif";
           ctx.textAlign    = "center";
-          ctx.fillText(`Powered by ${sysBrand.platformNameEn}`, W / 2, H - 44);
+          ctx.fillText("Powered by QIROX STUDIO", W / 2, H - 44);
         };
         qrImg.src = qrDataUrl;
       } catch (err) {

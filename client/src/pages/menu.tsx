@@ -1247,15 +1247,15 @@ export default function MenuPage() {
           </a>
         </div>
         <div className="text-xs text-muted-foreground/40">
-          made by{" "}
           <a
             href="https://qiroxstudio.online"
             target="_blank"
             rel="noopener noreferrer"
             className="hover:text-muted-foreground/70 transition-colors underline underline-offset-2"
             data-testid="link-qirox-studio"
+            aria-label="Powered by QIROX STUDIO"
           >
-            QIROX STUDIO | كيروكس استوديو
+            Powered by QIROX STUDIO
           </a>
         </div>
       </footer>

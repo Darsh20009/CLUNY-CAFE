@@ -27,7 +27,7 @@ const ELEMENTS: Array<{ key: string; ar: string; en: string }> = [
   { key: "tagline", ar: "العبارة التعريفية", en: "Tagline" },
   { key: "trackingQr", ar: "باركود تتبع الطلب", en: "Order tracking QR" },
   { key: "zatcaQr", ar: "باركود الفاتورة الضريبية", en: "ZATCA invoice QR" },
-  { key: "poweredBy", ar: "Powered by CLUNY SYSTEMS", en: "Powered by CLUNY SYSTEMS" },
+  { key: "poweredBy", ar: "مدعوم من QIROX STUDIO", en: "Powered by QIROX STUDIO" },
 ];
 
 const PREVIEW_ORDER: any = {

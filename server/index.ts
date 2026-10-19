@@ -59,9 +59,9 @@ async function connectDatabase() {
     dbName: process.env.MONGODB_DATABASE,
     // Atlas free/shared clusters have a 500-connection ceiling. Keep each
     // app instance's replica-set pool small instead of opening hundreds.
-    maxPoolSize: 10,
+    maxPoolSize: 5,
     minPoolSize: 0,
-    maxConnecting: 2,
+    maxConnecting: 1,
     waitQueueTimeoutMS: 10000,
     connectTimeoutMS: 10000,
     maxIdleTimeMS: 60000,
@@ -662,17 +662,12 @@ app.use(
     saveUninitialized: false, 
     name: 'cluny.sid', // custom cookie name
     store: MongoStore.create({
-      mongoUrl: MONGODB_URI!,
+      // Reuse Mongoose's already-open MongoClient so sessions do not create
+      // a second connection pool to Atlas.
+      clientPromise: mongoose.connection
+        .asPromise()
+        .then((connection) => connection.getClient()),
       dbName: process.env.MONGODB_DATABASE,
-      // connect-mongo creates a separate MongoClient; cap it independently.
-      mongoOptions: {
-        maxPoolSize: 5,
-        minPoolSize: 0,
-        maxConnecting: 2,
-        serverSelectionTimeoutMS: 8000,
-        connectTimeoutMS: 10000,
-        maxIdleTimeMS: 60000,
-      },
       collectionName: 'sessions',
       ttl: 30 * 24 * 60 * 60,
       autoRemove: 'native',

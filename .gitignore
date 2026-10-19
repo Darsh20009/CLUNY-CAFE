@@ -37,6 +37,7 @@ Thumbs.db
 
 # Build output
 dist-ssr
+**/*.optimized.webp
 *.local
 
 # Encrypted local database backups contain customer and payment-related data
