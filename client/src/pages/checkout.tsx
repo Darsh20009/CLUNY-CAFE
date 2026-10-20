@@ -2436,6 +2436,8 @@ export default function CheckoutPage() {
                       >
                         {selectedPaymentMethod === 'cash' && cashDistanceChecking ? (
                           <><Loader2 className="w-5 h-5 animate-spin ml-2" />جاري التحقق من الموقع...</>
+                        ) : selectedPaymentMethod === 'paymob-apple-pay' ? (
+                          <><ApplePayLogo className="h-6 w-12 text-white ml-2" />{tc("إكمال الدفع باستخدام Apple Pay", "Complete payment with Apple Pay")}</>
                         ) : isPaymobMethod(selectedPaymentMethod) ? (
                           <><CreditCard className="w-5 h-5 ml-2" />اذهب للدفع</>
                         ) : (isCardPaymentMethod(selectedPaymentMethod) || isOnlinePaymentMethod(selectedPaymentMethod)) ? (
