@@ -5,25 +5,15 @@ import SarIcon from "@/components/sar-icon";
 import { useTranslate } from "@/lib/useTranslate";
 import { isCapacitorNative } from "@/lib/server-url";
 
-/**
- * Detects iOS Safari running as a web browser (NOT Capacitor native).
- * Apple Pay CANNOT be triggered from inside an iframe in iOS Safari —
- * it requires a top-level browsing context. Use full-page redirect instead.
- */
-function isIOSSafariWeb(): boolean {
-  if (typeof navigator === "undefined") return false;
-  if (isCapacitorNative()) return false;
-  const ua = navigator.userAgent;
-  const isIOS = /iPhone|iPad|iPod/i.test(ua);
-  const isMacWithApplePay = /Macintosh/i.test(ua) && !!(window as any).ApplePaySession;
-  const isSafariBased = /Safari/i.test(ua) && !/Chrome|CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
-  return (isIOS || isMacWithApplePay) && isSafariBased;
+function isAndroidBrowser(): boolean {
+  return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 }
 
 interface PaymobCheckoutProps {
   orderNumber: string;
   amount: number;
   checkoutUrl: string;
+  paymentMethod?: string;
   publicKey?: string;
   clientSecret?: string;
   onSuccess: () => void;
@@ -37,11 +27,18 @@ export default function PaymobCheckout({
   orderNumber,
   amount,
   checkoutUrl,
+  paymentMethod = "paymob-card",
   onSuccess,
   onError,
   onCancel,
 }: PaymobCheckoutProps) {
   const tc = useTranslate();
+  const requiresTopLevelCheckout =
+    isCapacitorNative() ||
+    isAndroidBrowser() ||
+    paymentMethod === "paymob-apple-pay" ||
+    paymentMethod === "apple_pay";
+  const embedCheckout = !requiresTopLevelCheckout;
   const [state, setState] = useState<PaymobState>("loading");
   const [errorMessage, setErrorMessage] = useState("");
   const [visible, setVisible] = useState(false);
@@ -52,19 +49,18 @@ export default function PaymobCheckout({
 
   useEffect(() => {
     if (checkoutUrl) {
-      if (isCapacitorNative()) {
-        // Capacitor: show button immediately
-        setState("ready");
-        const t = setTimeout(() => setVisible(true), 30);
-        return () => clearTimeout(t);
-      } else {
-        // Web / iOS Safari redirect mode: set visible first, then "ready" after animation
-        const t1 = setTimeout(() => setVisible(true), 30);
-        const t2 = setTimeout(() => setState("ready"), 350);
-        return () => { clearTimeout(t1); clearTimeout(t2); };
+      const showTimer = setTimeout(() => setVisible(true), 30);
+      if (embedCheckout) {
+        setState("loading");
+        return () => clearTimeout(showTimer);
       }
+      const readyTimer = setTimeout(() => setState("ready"), 350);
+      return () => {
+        clearTimeout(showTimer);
+        clearTimeout(readyTimer);
+      };
     }
-  }, [checkoutUrl]);
+  }, [checkoutUrl, embedCheckout]);
 
   const stopPolling = () => {
     if (pollRef.current) {
@@ -104,12 +100,29 @@ export default function PaymobCheckout({
     return false;
   };
 
+  const verifyPaymobWithServer = async (retries = 5, delayMs = 1000): Promise<boolean> => {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const response = await fetch("/api/payments/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ provider: "paymob", sessionId: orderNumber }),
+        });
+        const result = await response.json();
+        if (result.verified === true) return true;
+      } catch {}
+      if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+    return false;
+  };
+
   const handleCloseAttempt = async () => {
     if (state === "success" || state === "processing" || state === "verifying") return;
     setState("verifying");
     setConfirmCancel(false);
     await new Promise(r => setTimeout(r, 1000));
-    const paid = await verifyPaymentStatus();
+    const paid = await verifyPaymentStatus() || await verifyPaymobWithServer(2, 800);
     if (paid) {
       triggerSuccess();
     } else {
@@ -232,8 +245,19 @@ export default function PaymobCheckout({
   useEffect(() => {
     if (isCapacitorNative()) return;
 
+    const verifyAndSetResult = async () => {
+      setState("verifying");
+      if (await verifyPaymobWithServer()) {
+        triggerSuccess();
+      } else {
+        setState("ready");
+      }
+    };
+
     const handleMessage = (event: MessageEvent) => {
       try {
+        const allowedOrigins = new Set([window.location.origin, new URL(checkoutUrl).origin]);
+        if (!allowedOrigins.has(event.origin)) return;
         const data = event.data;
         if (typeof data !== "object" || data === null) return;
         if (
@@ -242,7 +266,7 @@ export default function PaymobCheckout({
           data.payment_status === "PAID" ||
           data.status === "success"
         ) {
-          triggerSuccess();
+          void verifyAndSetResult();
         } else if (data.type === "PAYMOB_ERROR" || data.success === false || data.type === "PAYMOB_PENDING") {
           const msg = data.message || tc("فشلت عملية الدفع. يرجى المحاولة مرة أخرى.", "Payment failed. Please try again.");
           setState("verifying");
@@ -282,7 +306,10 @@ export default function PaymobCheckout({
         const success = url.searchParams.get("success");
         const pending = url.searchParams.get("pending");
         if (success === "true" && pending !== "true") {
-          triggerSuccess();
+          void verifyPaymobWithServer().then((verified) => {
+            if (verified) triggerSuccess();
+            else setState("ready");
+          });
         } else if (success === "false" || success === null) {
           setState("verifying");
           (async () => {
@@ -432,8 +459,9 @@ export default function PaymobCheckout({
     );
   }
 
-  // ── iOS Safari web mode: full-page redirect (Apple Pay can't work in iframe) ─
-  if (isIOSSafariWeb()) {
+  // Apple Pay and Android browser checkout must remain top-level. Apple Pay's
+  // hosted flow needs a top-level context, and Android WebViews must not contain iframes.
+  if (requiresTopLevelCheckout) {
     return (
       <div
         className="fixed inset-0 z-[999] flex flex-col justify-end"
@@ -488,8 +516,12 @@ export default function PaymobCheckout({
               <>
                 <p className="text-sm text-muted-foreground text-center leading-relaxed">
                   {tc(
-                    "سيتم فتح صفحة الدفع الآمنة. يمكنك الدفع بـ Apple Pay أو البطاقة.",
-                    "The secure payment page will open. You can pay with Apple Pay or card."
+                    paymentMethod === "paymob-apple-pay"
+                      ? "سيتم فتح بوابة Apple Pay الآمنة لإكمال الدفع."
+                      : "سيتم فتح بوابة الدفع الآمنة لإكمال الدفع.",
+                    paymentMethod === "paymob-apple-pay"
+                      ? "Apple Pay will open in the secure payment page."
+                      : "The secure payment page will open to complete your payment."
                   )}
                 </p>
                 <Button
@@ -562,7 +594,9 @@ export default function PaymobCheckout({
     );
   }
 
-  // ── Web browser mode: redirect-based checkout (no iframe) ─────────────────
+  // Desktop web uses the provider-hosted checkout inside the bottom sheet.
+  // Mobile wallet flows remain top-level because Apple Pay needs a top-level
+  // browsing context, and Android WebViews must not contain iframes.
   return (
     <div
       className="fixed inset-0 z-[999] flex flex-col justify-end"
@@ -572,12 +606,16 @@ export default function PaymobCheckout({
       <div
         className="absolute inset-0 bg-black/70 backdrop-blur-sm transition-opacity duration-300"
         style={{ opacity: visible ? 1 : 0 }}
-        onClick={state === "ready" || state === "error" ? () => handleCloseAttempt() : undefined}
+        onClick={state === "ready" || state === "error" || state === "loading" ? () => handleCloseAttempt() : undefined}
       />
 
       <div
-        className="relative bg-background rounded-t-[28px] shadow-2xl transition-transform duration-400 ease-out"
-        style={{ transform: visible ? "translateY(0)" : "translateY(100%)" }}
+        className="relative mx-auto flex w-full max-w-2xl flex-col overflow-hidden rounded-t-[28px] bg-background shadow-2xl transition-transform duration-400 ease-out"
+        style={{
+          transform: visible ? "translateY(0)" : "translateY(100%)",
+          maxHeight: "94dvh",
+          height: embedCheckout ? "min(84dvh, 780px)" : undefined,
+        }}
       >
         <div className="flex justify-center pt-3 pb-1">
           <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
@@ -600,7 +638,7 @@ export default function PaymobCheckout({
                 {amount.toFixed(2)} <SarIcon size={12} />
               </span>
             </div>
-            {(state === "ready" || state === "error") && (
+            {(state === "ready" || state === "error" || state === "loading") && (
               <button
                 onClick={handleForceClose}
                 className="w-8 h-8 rounded-full bg-muted flex items-center justify-center"
@@ -612,13 +650,52 @@ export default function PaymobCheckout({
           </div>
         </div>
 
-        <div className="px-5 py-6 space-y-4">
-          {state === "ready" && (
+        <div className={`min-h-0 flex-1 px-5 ${embedCheckout ? "py-3" : "overflow-y-auto py-6"} space-y-4`}>
+          {embedCheckout && (
+            <div className="relative h-full min-h-[280px] overflow-hidden rounded-xl border bg-white">
+              <iframe
+                ref={iframeRef}
+                src={checkoutUrl}
+                title={tc("بوابة الدفع الآمنة من Paymob", "Secure Paymob checkout")}
+                className="h-full min-h-[280px] w-full border-0"
+                allow="payment *; clipboard-write"
+                referrerPolicy="strict-origin-when-cross-origin"
+                onLoad={handleIframeLoad}
+                data-testid="paymob-checkout-frame"
+              />
+              {state === "loading" && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/95 text-center">
+                  <Loader2 className="h-9 w-9 animate-spin text-primary" />
+                  <p className="text-sm font-semibold">{tc("جارٍ فتح بوابة الدفع الآمنة...", "Opening secure checkout...")}</p>
+                </div>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="absolute left-2 top-2 z-10 gap-1.5 shadow"
+                onClick={() => {
+                  setState("processing");
+                  window.location.assign(checkoutUrl);
+                }}
+                data-testid="button-paymob-open-full-page"
+              >
+                <ExternalLink className="h-4 w-4" />
+                {tc("فتح بصفحة كاملة", "Open full page")}
+              </Button>
+            </div>
+          )}
+
+          {!embedCheckout && state === "ready" && (
             <>
               <p className="text-sm text-muted-foreground text-center leading-relaxed">
                 {tc(
-                  "سيتم فتح صفحة الدفع الآمنة. أدخل بيانات بطاقتك وأكمل الدفع.",
-                  "The secure payment page will open. Enter your card details and complete the payment."
+                  paymentMethod === "paymob-apple-pay"
+                    ? "سيتم فتح بوابة الدفع الآمنة خارج النافذة لإكمال Apple Pay."
+                    : "سيتم فتح بوابة الدفع الآمنة خارج النافذة لإكمال الدفع.",
+                  paymentMethod === "paymob-apple-pay"
+                    ? "Apple Pay will open in the secure payment page."
+                    : "The secure payment page will open to complete your payment."
                 )}
               </p>
               <Button
@@ -627,7 +704,7 @@ export default function PaymobCheckout({
                   setState("processing");
                   window.location.href = checkoutUrl;
                 }}
-                data-testid="button-paymob-web-redirect"
+                data-testid="button-paymob-web-open"
               >
                 <CreditCard className="w-5 h-5" />
                 {tc("ادفع الآن", "Pay Now")}
@@ -635,7 +712,7 @@ export default function PaymobCheckout({
             </>
           )}
 
-          {(state === "loading" || state === "processing") && (
+          {!embedCheckout && (state === "loading" || state === "processing") && (
             <div className="flex flex-col items-center gap-3 py-4 text-center">
               <Loader2 className="w-10 h-10 animate-spin text-primary" />
               <p className="text-sm font-semibold">{tc("جارٍ الانتقال لصفحة الدفع...", "Redirecting to payment page...")}</p>

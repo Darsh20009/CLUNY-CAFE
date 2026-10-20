@@ -8,12 +8,6 @@ export function MadaLogo({ className = "" }: { className?: string }) {
       aria-label="مدى"
       className={className}
     >
-      <defs>
-        <linearGradient id="mada-gradient" x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0%" stopColor="#2874a6" />
-          <stop offset="100%" stopColor="#22a77a" />
-        </linearGradient>
-      </defs>
       <text
         x="27"
         y="22"
@@ -23,7 +17,7 @@ export function MadaLogo({ className = "" }: { className?: string }) {
         fontFamily="Arial, sans-serif"
         fontSize="23"
         fontWeight="700"
-        fill="url(#mada-gradient)"
+        fill="#2874a6"
       >
         مدى
       </text>

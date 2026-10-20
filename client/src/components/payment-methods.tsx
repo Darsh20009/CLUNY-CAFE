@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { useLoyaltyCard } from "@/hooks/useLoyaltyCard";
 import { brand } from "@/lib/brand";
 import { useTranslate } from "@/lib/useTranslate";
+import { ApplePayLogo, CardNetworkLogos } from "@/components/payment-brand-logos";
 
 // Payment methods temporarily disabled — coming soon
 const COMING_SOON_METHODS = ['neoleap', 'neoleap-apple-pay'];
@@ -179,8 +180,8 @@ export default function PaymentMethods({
     // Hide mobile wallet (paymob-wallet) — not used in SA flow
     if ((method.id as string) === 'paymob-wallet') return null;
 
-    // paymob-apple-pay and neoleap-apple-pay hidden — routes through Geidea for apple_pay
-    if (['paymob-apple-pay', 'neoleap-apple-pay'].includes(method.id as string)) return null;
+    // Apple Pay is offered as its own checkout option for Paymob.
+    if ((method.id as string) === 'neoleap-apple-pay') return null;
 
     // apple_pay is handled as a standalone button above the payment list — never show it here
     if ((method.id as string) === 'apple_pay') return null;
@@ -227,7 +228,7 @@ export default function PaymentMethods({
               <div className="flex items-center gap-3">
                 {/* Card network logos replace the icon */}
                 <div className="flex-shrink-0 rounded-xl bg-white p-1.5 flex items-center justify-center border border-border/30">
-                  <img src="/card-logos.png" alt="مدى، فيزا، ماستر كارد" className="h-8 w-auto object-contain" />
+                  <CardNetworkLogos className="min-w-[116px]" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
@@ -249,23 +250,38 @@ export default function PaymentMethods({
 
     // Apple Pay
     if (isApplePay) {
+      const applePaySupported = typeof window !== 'undefined' &&
+        typeof (window as any).ApplePaySession !== 'undefined' &&
+        (() => {
+          try {
+            return (window as any).ApplePaySession.canMakePayments();
+          } catch {
+            return false;
+          }
+        })();
       return (
         <div key={method.id}>
-          <div
-            className={`h-12 px-4 rounded-xl bg-[#1c1c1e] flex items-center gap-2 hover:bg-[#2c2c2e] transition-all duration-150 shadow-sm cursor-pointer ${isSelected ? 'ring-2 ring-white/40 scale-[1.01]' : ''}`}
-            onClick={() => onSelectMethod(method.id)}
+          <button
+            type="button"
+            disabled={!applePaySupported}
+            className={`w-full min-h-12 px-4 py-2 rounded-xl bg-[#1c1c1e] flex items-center gap-2 hover:bg-[#2c2c2e] transition-all duration-150 shadow-sm disabled:cursor-not-allowed disabled:opacity-60 ${isSelected ? 'ring-2 ring-primary scale-[1.01]' : ''}`}
+            onClick={() => applePaySupported && onSelectMethod(method.id)}
             data-testid={`payment-method-${method.id}`}
+            aria-label={applePaySupported ? "Apple Pay" : "Apple Pay غير متاح على هذا الجهاز"}
           >
-            <svg viewBox="0 0 20 24" className="h-5 w-auto fill-white flex-shrink-0">
-              <path d="M13.23 3.02C14.28 1.71 14.94 0 14.94 0s-1.71.28-2.76 1.59c-.96 1.21-1.57 2.86-1.47 3.64.97.07 2.53-.3 3.52-2.21zM16.44 8.74c-1.77-.07-3.28 1-4.13 1-.85 0-2.14-.94-3.55-.91-1.82.03-3.5 1.06-4.43 2.71-1.9 3.28-.49 8.15 1.35 10.82.9 1.31 1.97 2.77 3.38 2.72 1.35-.05 1.86-.87 3.49-.87 1.62 0 2.09.87 3.51.84 1.46-.03 2.39-1.32 3.29-2.63.97-1.47 1.37-2.9 1.4-2.97-.03-.01-2.71-1.04-2.74-4.13-.03-2.59 2.11-3.83 2.21-3.9-1.2-1.78-3.08-1.68-3.78-1.68z" />
-            </svg>
-            <span className="text-white font-semibold text-sm">Pay</span>
+            <ApplePayLogo className="h-6 w-12 text-white flex-shrink-0" />
+            <span className="flex flex-1 flex-col items-start text-right">
+              <span className="text-white font-semibold text-sm">Apple Pay</span>
+              {!applePaySupported && (
+                <span className="text-[10px] text-white/65">{tc("متاح على أجهزة Apple المدعومة", "Available on supported Apple devices")}</span>
+              )}
+            </span>
             {isSelected && (
               <div className="mr-auto w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">
                 <Check className="w-3 h-3 text-white" />
               </div>
             )}
-          </div>
+          </button>
         </div>
       );
     }
