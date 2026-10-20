@@ -913,7 +913,10 @@ async function verifyPaymobPayment(input: {
   const expectedAmount = Number(input.expectedAmount || initLog?.amount || 0);
   const allowedIntegrationIds = [
     ...(pg?.paymob?.integrationIds || []),
-    pg?.paymob?.applePayIntegrationId ?? process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID,
+    ...(process.env.PAYMOB_CARD_INTEGRATION_ID || '').split(','),
+    ...(process.env.PAYMOB_INTEGRATION_IDS || '').split(','),
+    pg?.paymob?.applePayIntegrationId,
+    process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID,
   ].map(Number).filter((id: number) => Number.isInteger(id) && id > 0);
 
   const isExpectedTransaction = (tx: any) => {
@@ -983,6 +986,47 @@ async function verifyPaymobPayment(input: {
       console.warn('[Paymob Verify] Intention lookup failed:', error?.message);
     }
   }
+
+  // Paymob's authenticated TRANSACTION webhook is the authoritative fallback:
+  // the hosted KSA intention/transaction GET endpoints may reject server lookups.
+  // Success webhook logs are only written after HMAC verification and a paid event.
+  if (specialReference) {
+    const webhookQuery: Record<string, any> = {
+      tenantId,
+      provider: 'paymob',
+      event: 'webhook',
+      status: 'success',
+      orderId: specialReference,
+    };
+    if (input.transactionId) webhookQuery.externalId = String(input.transactionId);
+    const successfulWebhook = await PaymentLogModel.findOne(webhookQuery)
+      .sort({ createdAt: -1 }).lean() as any;
+    if (successfulWebhook) {
+      const webhookAmount = Number(successfulWebhook.amount);
+      const amountMatches = expectedAmount > 0 &&
+        Number.isFinite(webhookAmount) &&
+        Math.round(webhookAmount * 100) === Math.round(expectedAmount * 100);
+      const webhookCurrency = String(successfulWebhook.currency || initLog?.currency || 'SAR').toUpperCase();
+      const expectedCurrency = String(initLog?.currency || 'SAR').toUpperCase();
+      const currencyMatches = webhookCurrency === expectedCurrency;
+      const webhookIntegrationId = Number(successfulWebhook.rawData?.integrationId || 0);
+      const integrationMatches = !webhookIntegrationId ||
+        allowedIntegrationIds.length === 0 ||
+        allowedIntegrationIds.includes(webhookIntegrationId);
+      const eventFlagsMatch =
+        (successfulWebhook.rawData?.success !== false) &&
+        (successfulWebhook.rawData?.pending !== true);
+
+      if (amountMatches && currencyMatches && integrationMatches && eventFlagsMatch) {
+        return {
+          verified: true,
+          transactionId: String(successfulWebhook.externalId || input.transactionId || ''),
+          source: 'authenticated-webhook',
+        };
+      }
+    }
+  }
+
   return { verified: false, error: 'Paymob has not confirmed a successful payment' };
 }
 
@@ -4000,7 +4044,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               orderId: orderId || undefined,
               customerPhone: customerPhone || undefined,
               customerEmail: customerEmail || undefined,
-              rawData: { flow: 'sa-unified', intentionId },
+              rawData: {
+                flow: 'sa-unified',
+                intentionId,
+                paymentMethod: reqPaymentMethod,
+                integrationIds,
+              },
               ipAddress: req.ip,
             });
             return res.json({
@@ -5572,6 +5621,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
           || transaction?.special_reference
           || body?.special_reference;
 
+        const initPayment = merchantOrderId
+          ? await PaymentLogModel.findOne({
+              tenantId,
+              provider: 'paymob',
+              event: 'init',
+              orderId: merchantOrderId,
+            }).sort({ createdAt: -1 }).lean() as any
+          : null;
+        const configuredIntegrationIds = [
+          ...(config?.paymentGateway?.paymob?.integrationIds || []),
+          ...(process.env.PAYMOB_CARD_INTEGRATION_ID || '').split(','),
+          ...(process.env.PAYMOB_INTEGRATION_IDS || '').split(','),
+          config?.paymentGateway?.paymob?.applePayIntegrationId,
+          process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID,
+        ].map(Number).filter((id: number) => Number.isInteger(id) && id > 0);
+        const initIntegrationIds = Array.isArray(initPayment?.rawData?.integrationIds)
+          ? initPayment.rawData.integrationIds.map(Number).filter((id: number) => Number.isInteger(id) && id > 0)
+          : [];
+        const expectedIntegrationIds = initIntegrationIds.length ? initIntegrationIds : configuredIntegrationIds;
+        const transactionIntegrationId = Number(transaction.integration_id);
+        const expectedAmountCents = initPayment?.amount != null
+          ? Math.round(Number(initPayment.amount) * 100)
+          : NaN;
+        const callbackMatchesInit = !!initPayment &&
+          !!merchantOrderId &&
+          Number.isFinite(expectedAmountCents) &&
+          Number(transaction.amount_cents) === expectedAmountCents &&
+          String(transaction.currency || '').toUpperCase() === String(initPayment.currency || 'SAR').toUpperCase() &&
+          Number.isInteger(transactionIntegrationId) &&
+          expectedIntegrationIds.includes(transactionIntegrationId);
+
+        if (!callbackMatchesInit) {
+          await logPayment({
+            tenantId,
+            event: 'webhook',
+            provider: 'paymob',
+            amount: transaction.amount_cents ? transaction.amount_cents / 100 : undefined,
+            currency: transaction.currency || 'SAR',
+            status: 'failed',
+            externalId: String(transaction.id || ''),
+            orderId: merchantOrderId || undefined,
+            errorMessage: !initPayment
+              ? 'Authenticated payment callback has no matching payment initialization'
+              : 'Authenticated payment callback amount, currency, or integration does not match the initialized session',
+            rawData: {
+              type: body?.type,
+              transactionId: transaction.id,
+              integrationId: transaction.integration_id,
+              success: transaction.success,
+              pending: transaction.pending,
+              amountCents: transaction.amount_cents,
+              authenticated: true,
+            },
+            ipAddress: req.ip,
+          });
+          console.warn('[Paymob Webhook] Authenticated transaction did not match its initialized session; order not confirmed');
+          return res.json({ success: true, ignored: true });
+        }
+
         if (merchantOrderId && !merchantOrderId.startsWith('temp-')) {
           const paymentUpdate = {
             paymentStatus: 'paid',
@@ -5616,7 +5724,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: 'success',
           externalId: String(transaction.id || ''),
           orderId: merchantOrderId || undefined,
-          rawData: { type: body?.type, transactionId: transaction.id },
+          rawData: {
+            type: body?.type,
+            transactionId: transaction.id,
+            integrationId: transaction.integration_id,
+            success: transaction.success,
+            pending: transaction.pending,
+            amountCents: transaction.amount_cents,
+            authenticated: true,
+          },
           ipAddress: req.ip,
         });
       } else if (transaction) {
