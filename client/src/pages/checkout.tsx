@@ -2427,7 +2427,11 @@ export default function CheckoutPage() {
                     return (
                       <Button
                         onClick={handleProceedPayment}
-                        className="w-full h-14 text-lg"
+                        className={`w-full h-14 text-lg ${
+                          selectedPaymentMethod === 'paymob-apple-pay' || selectedPaymentMethod === 'apple_pay'
+                            ? 'rounded-full bg-black text-white hover:bg-black/90'
+                            : ''
+                        }`}
                         data-testid="button-proceed-payment"
                         disabled={
                           (selectedPaymentMethod === 'cash' && !!cashDistanceError) ||
