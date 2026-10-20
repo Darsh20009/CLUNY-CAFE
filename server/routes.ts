@@ -913,7 +913,7 @@ async function verifyPaymobPayment(input: {
   const expectedAmount = Number(input.expectedAmount || initLog?.amount || 0);
   const allowedIntegrationIds = [
     ...(pg?.paymob?.integrationIds || []),
-    pg?.paymob?.applePayIntegrationId,
+    pg?.paymob?.applePayIntegrationId ?? process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID,
   ].map(Number).filter((id: number) => Number.isInteger(id) && id > 0);
 
   const isExpectedTransaction = (tx: any) => {
@@ -3307,13 +3307,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const hasSACredentials = !!(pg.paymob?.secretKey && pg.paymob?.publicKey);
         const hasLegacyCredentials = !!(pg.paymob?.apiKey && pg.paymob?.integrationId);
         const hasSaudiCardIntegration = !!pg.paymob?.integrationIds?.some((id: number) => Number.isInteger(Number(id)) && Number(id) > 0);
+        const applePayIntegrationId = pg.paymob?.applePayIntegrationId ?? process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID;
         if ((hasSACredentials && hasSaudiCardIntegration) || hasLegacyCredentials) {
           allMethods.push({ id: 'paymob-card', nameAr: 'بطاقة بنكية', nameEn: 'Card Payment', details: 'مدى، فيزا، ماستر كارد عبر Paymob', icon: 'fas fa-credit-card', gateway: 'paymob' });
           if (!hasSACredentials && pg.paymob?.walletIntegrationId) {
             allMethods.push({ id: 'paymob-wallet', nameAr: 'محفظة إلكترونية', nameEn: 'Mobile Wallet', details: 'الدفع عبر المحفظة الإلكترونية', icon: 'fas fa-mobile-alt', gateway: 'paymob' });
           }
         }
-        if (hasSACredentials && pg.applePayEnabled !== false && Number(pg.paymob?.applePayIntegrationId) > 0) {
+        if (hasSACredentials && pg.applePayEnabled !== false && Number(applePayIntegrationId) > 0) {
           allMethods.push({ id: 'paymob-apple-pay', nameAr: 'Apple Pay', nameEn: 'Apple Pay', details: 'ادفع بأمان عبر Apple Pay وPaymob', icon: 'fab fa-apple-pay', gateway: 'paymob' });
         }
       }
@@ -3468,7 +3469,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           integrationIds: pg.paymob?.integrationIds || [],
           iframeId: pg.paymob?.iframeId || '',
           walletIntegrationId: pg.paymob?.walletIntegrationId || '',
-          applePayIntegrationId: pg.paymob?.applePayIntegrationId || '',
+          applePayIntegrationId: pg.paymob?.applePayIntegrationId ?? process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID ?? '',
           applePayEnabled: pg.applePayEnabled !== false,
           hmacSecret: maskSecret(pg.paymob?.hmacSecret),
           callbackUrl: pg.paymob?.callbackUrl || '',
@@ -3895,7 +3896,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const cardIntegrationIds: number[] = pg.paymob?.integrationIds?.length
             ? pg.paymob.integrationIds.map(Number).filter(Boolean)
             : [];
-          const applePayId = pg.paymob?.applePayIntegrationId ? Number(pg.paymob.applePayIntegrationId) : null;
+          const rawApplePayId = pg.paymob?.applePayIntegrationId ?? process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID;
+          const applePayId = rawApplePayId ? Number(rawApplePayId) : null;
           const isApplePayRequest = reqPaymentMethod === 'paymob-apple-pay';
           const integrationIds: number[] = isApplePayRequest && applePayId
             ? [applePayId]
