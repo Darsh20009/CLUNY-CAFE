@@ -5,8 +5,10 @@ import SarIcon from "@/components/sar-icon";
 import { useTranslate } from "@/lib/useTranslate";
 import { isCapacitorNative } from "@/lib/server-url";
 
-function isAndroidBrowser(): boolean {
-  return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+function isAndroidWebView(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const userAgent = navigator.userAgent;
+  return /Android/i.test(userAgent) && /;\s*wv\)|\bwv\b/i.test(userAgent);
 }
 
 interface PaymobCheckoutProps {
@@ -46,6 +48,7 @@ export default function PaymobCheckout({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const successTriggered = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoOpenedCheckoutUrl = useRef("");
 
   useEffect(() => {
     if (checkoutUrl) {
@@ -139,10 +142,9 @@ export default function PaymobCheckout({
 
   // ── Capacitor in-app browser (SFSafariViewController on iOS) ───────────────
   const openCapacitorBrowser = async () => {
+    setState("processing");
     try {
       const { Browser } = await import(/* @vite-ignore */ "@capacitor/browser");
-
-      setState("processing");
 
       // Helper: check payment status once
       const checkOnce = async (): Promise<boolean> => {
@@ -235,11 +237,24 @@ export default function PaymobCheckout({
         presentationStyle: "popover",
       });
     } catch (err: any) {
-      // Fallback: open in default external browser if plugin fails
-      window.open(checkoutUrl, "_blank");
-      setState("ready");
+      // Navigate directly if the native browser plugin is unavailable.
+      window.location.assign(checkoutUrl);
     }
   };
+
+  useEffect(() => {
+    if (!checkoutUrl || autoOpenedCheckoutUrl.current === checkoutUrl) return;
+    if (!isCapacitorNative() && !isAndroidWebView()) return;
+
+    autoOpenedCheckoutUrl.current = checkoutUrl;
+    setVisible(true);
+    if (isCapacitorNative()) {
+      void openCapacitorBrowser();
+    } else {
+      setState("processing");
+      window.location.assign(checkoutUrl);
+    }
+  }, [checkoutUrl]);
 
   // ── postMessage handler for web iframe ─────────────────────────────────────
   useEffect(() => {
@@ -459,8 +474,8 @@ export default function PaymobCheckout({
     );
   }
 
-  // Apple Pay and Android browser checkout must remain top-level. Apple Pay's
-  // hosted flow needs a top-level context, and Android WebViews must not contain iframes.
+  // Android WebViews must not contain iframes due to their viewport resize bug.
+  // All regular browsers, including Apple Pay browsers, load the hosted checkout here.
   if (requiresTopLevelCheckout) {
     return (
       <div
