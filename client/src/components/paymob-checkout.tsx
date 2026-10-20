@@ -37,9 +37,7 @@ export default function PaymobCheckout({
   const tc = useTranslate();
   const requiresTopLevelCheckout =
     isCapacitorNative() ||
-    isAndroidBrowser() ||
-    paymentMethod === "paymob-apple-pay" ||
-    paymentMethod === "apple_pay";
+    isAndroidWebView();
   const embedCheckout = !requiresTopLevelCheckout;
   const [state, setState] = useState<PaymobState>("loading");
   const [errorMessage, setErrorMessage] = useState("");
