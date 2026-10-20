@@ -35,9 +35,11 @@ export default function PaymobCheckout({
   onCancel,
 }: PaymobCheckoutProps) {
   const tc = useTranslate();
+  const isApplePayMethod = paymentMethod === "paymob-apple-pay" || paymentMethod === "apple_pay";
   const requiresTopLevelCheckout =
     isCapacitorNative() ||
-    isAndroidWebView();
+    isAndroidWebView() ||
+    isApplePayMethod;
   const embedCheckout = !requiresTopLevelCheckout;
   const [state, setState] = useState<PaymobState>("loading");
   const [errorMessage, setErrorMessage] = useState("");
@@ -242,7 +244,7 @@ export default function PaymobCheckout({
 
   useEffect(() => {
     if (!checkoutUrl || autoOpenedCheckoutUrl.current === checkoutUrl) return;
-    if (!isCapacitorNative() && !isAndroidWebView()) return;
+    if (!isCapacitorNative() && !isAndroidWebView() && !isApplePayMethod) return;
 
     autoOpenedCheckoutUrl.current = checkoutUrl;
     setVisible(true);
@@ -252,7 +254,7 @@ export default function PaymobCheckout({
       setState("processing");
       window.location.assign(checkoutUrl);
     }
-  }, [checkoutUrl]);
+  }, [checkoutUrl, isApplePayMethod]);
 
   // ── postMessage handler for web iframe ─────────────────────────────────────
   useEffect(() => {
@@ -472,8 +474,8 @@ export default function PaymobCheckout({
     );
   }
 
-  // Android WebViews must not contain iframes due to their viewport resize bug.
-  // All regular browsers, including Apple Pay browsers, load the hosted checkout here.
+  // Apple Pay must use a top-level page, and Android WebViews must not contain iframes
+  // due to their viewport resize bug. Other browser-based card payments use the sheet iframe.
   if (requiresTopLevelCheckout) {
     return (
       <div
