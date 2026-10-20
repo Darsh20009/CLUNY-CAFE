@@ -7,3 +7,4 @@
 - [Atlas migration with TTL data](mongodb-migration-ttl.md) — keep destination TTL indexes disabled until copy verification; long snapshot sessions may expire on large collections.
 - [Geidea credential safety](geidea-credential-safety.md) — CLUNY uses live Saudi keys; use the KSA endpoint and never seed credentials from source defaults.
 - [Payment confirmation security](payment-confirmation-security.md) — never trust browser success parameters; confirm transactions server-side and require valid webhook HMAC.
+- [Paymob integration IDs](paymob-integration-ids.md) — card and Apple Pay IDs must belong to the active Paymob merchant; API credential success does not validate integration IDs.

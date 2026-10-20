@@ -982,10 +982,18 @@ app.use((req, res, next) => {
       const paymobSecretKey = process.env.PAYMOB_SECRET_KEY?.trim();
       const paymobPublicKey = process.env.PAYMOB_PUBLIC_KEY?.trim();
       const paymobHmacSecret = process.env.PAYMOB_HMAC_SECRET?.trim();
-      const paymobIntegrationIds = (process.env.PAYMOB_INTEGRATION_IDS || '')
+      const cardIntegrationIdsFromEnv = (process.env.PAYMOB_CARD_INTEGRATION_ID || '')
         .split(',')
         .map(value => Number(value.trim()))
         .filter(value => Number.isInteger(value) && value > 0);
+      const legacyIntegrationIds = (process.env.PAYMOB_INTEGRATION_IDS || '')
+        .split(',')
+        .map(value => Number(value.trim()))
+        .filter(value => Number.isInteger(value) && value > 0);
+      const paymobIntegrationIds = cardIntegrationIdsFromEnv.length
+        ? cardIntegrationIdsFromEnv
+        : legacyIntegrationIds;
+      const paymobApplePayIntegrationId = Number(process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID?.trim() || 0);
       const requestedProvider = process.env.PAYMENT_GATEWAY_PROVIDER?.trim().toLowerCase();
 
       if (!paymobSecretKey || !paymobPublicKey || !paymobHmacSecret || paymobIntegrationIds.length === 0) {
@@ -997,10 +1005,14 @@ app.use((req, res, next) => {
           const shouldSelectPaymob = requestedProvider === 'paymob';
           const idsMatch = JSON.stringify((pg?.paymob?.integrationIds || []).map(Number)) ===
             JSON.stringify(paymobIntegrationIds);
+          const applePayIdMatches = !Number.isInteger(paymobApplePayIntegrationId) ||
+            paymobApplePayIntegrationId <= 0 ||
+            Number(pg?.paymob?.applePayIntegrationId) === paymobApplePayIntegrationId;
           const needsUpdate = !pg?.paymob?.secretKey ||
             !pg?.paymob?.publicKey ||
             !pg?.paymob?.hmacSecret ||
             !idsMatch ||
+            !applePayIdMatches ||
             (shouldSelectPaymob && pg?.provider !== 'paymob');
 
           if (needsUpdate) {
@@ -1011,6 +1023,9 @@ app.use((req, res, next) => {
               'paymentGateway.paymob.baseUrl': 'https://ksa.paymob.com',
               'paymentGateway.paymob.integrationIds': paymobIntegrationIds,
             };
+            if (Number.isInteger(paymobApplePayIntegrationId) && paymobApplePayIntegrationId > 0) {
+              updates['paymentGateway.paymob.applePayIntegrationId'] = paymobApplePayIntegrationId;
+            }
             if (shouldSelectPaymob) updates['paymentGateway.provider'] = 'paymob';
             await BusinessConfigModel.updateOne(
               { tenantId: 'demo-tenant' },

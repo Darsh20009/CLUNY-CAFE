@@ -3893,10 +3893,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (hasSACredentials) {
           // ── PayMob Saudi Arabia — Unified Checkout (Intention API) ──
           const baseUrl = pg.paymob?.baseUrl || 'https://ksa.paymob.com';
-          const cardIntegrationIds: number[] = pg.paymob?.integrationIds?.length
-            ? pg.paymob.integrationIds.map(Number).filter(Boolean)
-            : [];
-          const rawApplePayId = pg.paymob?.applePayIntegrationId ?? process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID;
+          const cardIntegrationIdsFromEnv = (process.env.PAYMOB_CARD_INTEGRATION_ID || '')
+            .split(',')
+            .map((value: string) => Number(value.trim()))
+            .filter((value: number) => Number.isInteger(value) && value > 0);
+          const cardIntegrationIds: number[] = cardIntegrationIdsFromEnv.length
+            ? cardIntegrationIdsFromEnv
+            : pg.paymob?.integrationIds?.map(Number).filter(Boolean) || [];
+          const rawApplePayId = process.env.PAYMOB_APPLE_PAY_INTEGRATION_ID ?? pg.paymob?.applePayIntegrationId;
           const applePayId = rawApplePayId ? Number(rawApplePayId) : null;
           const isApplePayRequest = reqPaymentMethod === 'paymob-apple-pay';
           const integrationIds: number[] = isApplePayRequest && applePayId
@@ -3952,10 +3956,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const intentData = await intentRes.json() as any;
 
             if (!intentRes.ok || !intentData.client_secret) {
-              console.error('[Paymob SA] Intention API failed:', JSON.stringify(intentData));
+              const providerMessage = String(intentData?.message || intentData?.detail || JSON.stringify(intentData));
+              const invalidIntegration = /integration id\/name does not exist/i.test(providerMessage);
+              if (invalidIntegration) {
+                console.error(`[Paymob SA] Integration rejected for ${isApplePayRequest ? 'Apple Pay' : 'card'} checkout (HTTP ${intentRes.status})`);
+                return res.status(400).json({
+                  error: isApplePayRequest
+                    ? "رقم تكامل Apple Pay غير صالح لهذا الحساب في Paymob."
+                    : "رقم تكامل بطاقات مدى/فيزا/ماستركارد غير صالح لهذا الحساب في Paymob.",
+                  code: "PAYMOB_INTEGRATION_INVALID",
+                  details: "أدخل Integration ID الصحيح من قسم Payment Integrations في حساب Paymob نفسه. رقم Apple Pay منفصل عن تكامل البطاقات.",
+                });
+              }
+              console.error('[Paymob SA] Intention API failed:', providerMessage.slice(0, 300));
               return res.status(400).json({
                 error: "فشل في إنشاء جلسة Paymob",
-                details: intentData?.message || intentData?.detail || JSON.stringify(intentData).slice(0, 200),
+                details: providerMessage.slice(0, 200),
               });
             }
 
