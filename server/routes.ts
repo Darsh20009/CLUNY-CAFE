@@ -4999,7 +4999,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.warn('[Geidea Webhook] Payment callback does not match an order/amount');
             return res.json({ received: true, orderId: geideaOrderId, status: 'noted' });
           }
-          await storage.updateOrderStatus(order.id || order._id, 'payment_confirmed');
+          await OrderModel.updateOne(
+            { id: String(order.id || order._id), tenantId },
+            {
+              $set: {
+                status: 'payment_confirmed',
+                paymentStatus: 'paid',
+                paymentProvider: 'geidea',
+                paymentTransactionId: String(geideaOrderId),
+              },
+            },
+          );
           console.log(`[Geidea Webhook] Order ${orderNumber} confirmed as paid`);
         } catch (findErr: any) {
           console.warn('[Geidea Webhook] Could not update order:', findErr.message);
@@ -5405,6 +5415,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentStatus: "paid",
         status: "pending",
         paymentMethod: record.orderData?.paymentMethod || "geidea",
+        ...((record.gatewayProvider || (isPaymobPayment ? 'paymob' : isGeideaPayment ? 'geidea' : undefined))
+          && ['paymob', 'geidea', 'neoleap'].includes(record.gatewayProvider || (isPaymobPayment ? 'paymob' : 'geidea'))
+          ? { paymentProvider: record.gatewayProvider || (isPaymobPayment ? 'paymob' : 'geidea') }
+          : {}),
         ...(paymobTxId ? { paymentTransactionId: String(paymobTxId) } : {}),
         customerInfo: record.orderData?.customerInfo || {
           customerName: record.customerName || record.orderData?.customerName,
@@ -5683,6 +5697,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (merchantOrderId && !merchantOrderId.startsWith('temp-')) {
           const paymentUpdate = {
             paymentStatus: 'paid',
+            paymentProvider: 'paymob',
             paymentTransactionId: String(transaction.id),
             status: 'payment_confirmed',
           };
@@ -10475,12 +10490,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ─── Refund / Return Orders ────────────────────────────────────────────────
 
   // Search order for refund (by order number or phone)
-  app.get("/api/refunds/search-order", async (req: any, res) => {
+  app.get("/api/refunds/search-order", requireAuth, requirePermission('order.refund'), async (req: any, res) => {
     try {
       const { q } = req.query as { q?: string };
       if (!q) return res.status(400).json({ error: "يرجى إدخال رقم الطلب أو رقم الجوال" });
 
-      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
       const { OrderModel } = await import('@shared/schema');
 
       let order: any = null;
@@ -10490,17 +10505,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const phone = q.replace(/\D/g, "");
         const normalizedPhone = phone.startsWith('0') ? phone.slice(1) : phone;
         order = await OrderModel.findOne({
+          tenantId,
           $or: [{ 'customerInfo.phone': phone }, { 'customerInfo.phone': normalizedPhone }, { customerPhone: phone }, { customerPhone: normalizedPhone }],
         }).sort({ createdAt: -1 });
       } else {
         const num = q.replace(/^#/, "");
         const numAsNumber = parseInt(num, 10);
         order = await OrderModel.findOne({
+          tenantId,
           $or: [
             { orderNumber: num },
             ...(isNaN(numAsNumber) ? [] : [{ orderNumber: numAsNumber }, { dailyNumber: numAsNumber }]),
           ],
-        });
+        }).sort({ createdAt: -1 });
       }
 
       if (!order) return res.status(404).json({ error: "لم يتم العثور على الطلب" });
@@ -10517,10 +10534,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // List all refunds (manager/admin)
-  app.get("/api/refunds", requireAuth, async (req: any, res) => {
+  app.get("/api/refunds", requireAuth, requirePermission('order.refund'), async (req: any, res) => {
     try {
       const { RefundOrderModel } = await import('@shared/schema');
-      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
       const { period, branchId, page = '1', limit: limitStr = '50' } = req.query as Record<string, string>;
 
       const query: any = { tenantId };
@@ -10542,7 +10559,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ]);
 
       const totalAmount = await RefundOrderModel.aggregate([
-        { $match: query },
+        { $match: { ...query, status: 'completed' } },
         { $group: { _id: null, total: { $sum: '$refundAmount' } } },
       ]);
 
@@ -10560,115 +10577,416 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create a new refund
-  app.post("/api/refunds", requireAuth, async (req: any, res) => {
+  app.post("/api/refunds", requireAuth, requirePermission('order.refund'), async (req: any, res) => {
+    let reservedOrderId: any = null;
+    let reservedAmount = 0;
     try {
-      const { RefundOrderModel } = await import('@shared/schema');
+      const { RefundOrderModel, OrderModel, CashierShiftModel } = await import('@shared/schema');
       const { nanoid } = await import('nanoid');
-      const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
-
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
       const {
-        originalOrderId, originalOrderNumber, branchId, employeeId, employeeName,
-        items, refundAmount, paymentMethod, cashAmount, cardAmount,
-        reason, notes, status,
-      } = req.body;
+        originalOrderId, items, refundAmount: rawRefundAmount, paymentMethod,
+        cashAmount: rawCashAmount, cardAmount: rawCardAmount, reason, notes,
+        clientRequestId,
+      } = req.body || {};
 
-      if (!items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: "يجب اختيار صنف واحد على الأقل" });
+      if (!originalOrderId || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "الطلب والأصناف المطلوب استرجاعها مطلوبة" });
       }
-      if (!reason || !reason.trim()) {
+      if (typeof reason !== 'string' || !reason.trim()) {
         return res.status(400).json({ error: "سبب الاسترجاع مطلوب" });
       }
-      if (!refundAmount || refundAmount <= 0) {
+      if (!['cash', 'card', 'split'].includes(paymentMethod)) {
+        return res.status(400).json({ error: "طريقة إعادة المبلغ غير صحيحة" });
+      }
+
+      const amountCents = Math.round(Number(rawRefundAmount) * 100);
+      if (!Number.isFinite(amountCents) || amountCents <= 0) {
         return res.status(400).json({ error: "مبلغ الاسترجاع يجب أن يكون أكبر من صفر" });
       }
-      if (!['cash', 'card', 'split'].includes(paymentMethod)) {
-        return res.status(400).json({ error: "طريقة الدفع غير صحيحة" });
+      const cashCents = paymentMethod === 'cash'
+        ? amountCents
+        : paymentMethod === 'split' ? Math.round(Number(rawCashAmount) * 100) : 0;
+      const cardCents = paymentMethod === 'card'
+        ? amountCents
+        : paymentMethod === 'split' ? Math.round(Number(rawCardAmount) * 100) : 0;
+      if (cashCents < 0 || cardCents < 0 || cashCents + cardCents !== amountCents) {
+        return res.status(400).json({ error: "مجموع النقدي والبطاقة يجب أن يساوي مبلغ الاسترجاع بالضبط" });
       }
 
-      const refundDoc = new RefundOrderModel({
-        id: nanoid(),
+      const orderIds: any[] = [{ id: String(originalOrderId) }];
+      if (isValidObjectId(String(originalOrderId))) orderIds.push({ _id: String(originalOrderId) });
+      const originalOrder: any = await OrderModel.findOne({ tenantId, $or: orderIds }).lean();
+      if (!originalOrder) return res.status(404).json({ error: "الطلب الأصلي غير موجود في هذا الفرع/الحساب" });
+      const paidStatuses = ['payment_confirmed', 'confirmed', 'in_progress', 'ready', 'delivered', 'received', 'completed'];
+      if (originalOrder.paymentStatus !== 'paid' && !paidStatuses.includes(originalOrder.status)) {
+        return res.status(409).json({ error: "لا يمكن استرجاع طلب لم يُسجل كمدفوع" });
+      }
+      if (originalOrder.isFullyRefunded || originalOrder.paymentStatus === 'refunded') {
+        return res.status(409).json({ error: "تم استرجاع هذا الطلب بالكامل" });
+      }
+
+      const sourceItems = Array.isArray(originalOrder.items)
+        ? originalOrder.items
+        : typeof originalOrder.items === 'string'
+          ? JSON.parse(originalOrder.items)
+          : [];
+      const canonicalOrderId = String(originalOrder._id || originalOrder.id);
+      const lookupOrderIds = [...new Set([canonicalOrderId, String(originalOrder.id || '')].filter(Boolean))];
+      const idempotencyKey = typeof clientRequestId === 'string' && clientRequestId.length <= 120
+        ? clientRequestId
+        : '';
+      if (!idempotencyKey) {
+        return res.status(400).json({ error: "معرّف طلب الاسترجاع غير صالح، حدّث الصفحة وأعد المحاولة" });
+      }
+      const existingRequest: any = await RefundOrderModel.findOne({ tenantId, idempotencyKey }).lean();
+      if (existingRequest) {
+        if (existingRequest.status === 'failed' || existingRequest.status === 'cancelled') {
+          return res.status(409).json({ error: "فشلت المحاولة السابقة؛ تحقق من حالة بوابة الدفع ثم ابدأ محاولة جديدة من نافذة استرجاع جديدة." });
+        }
+        return res.status(existingRequest.status === 'pending' ? 202 : 200).json({
+          success: existingRequest.status === 'completed',
+          pending: existingRequest.status === 'pending',
+          refund: serializeDoc(existingRequest),
+        });
+      }
+
+      const existingRefunds: any[] = await RefundOrderModel.find({
         tenantId,
-        originalOrderId: originalOrderId || undefined,
-        originalOrderNumber: originalOrderNumber || undefined,
-        branchId: branchId || undefined,
-        employeeId: employeeId || undefined,
-        employeeName: employeeName || undefined,
-        items: items.map((item: any) => ({
-          coffeeItemId: item.coffeeItemId || '',
-          nameAr: item.nameAr || 'صنف',
-          nameEn: item.nameEn,
-          quantity: Number(item.quantity) || 1,
-          unitPrice: Number(item.unitPrice) || 0,
-          subtotal: Number(item.subtotal) || 0,
-        })),
-        refundAmount: Number(refundAmount),
-        paymentMethod,
-        cashAmount: Number(cashAmount) || 0,
-        cardAmount: Number(cardAmount) || 0,
-        reason: reason.trim(),
-        notes: notes?.trim() || undefined,
-        status: status || 'completed',
-      });
-
-      await refundDoc.save();
-
-      // ── Update original order: mark as refunded ──────────────────────────────
-      if (originalOrderId) {
-        try {
-          const { OrderModel } = await import('@shared/schema');
-          const origOrder = await OrderModel.findOne({
-            $or: [{ id: originalOrderId }, { _id: originalOrderId.length === 24 ? originalOrderId : undefined }]
-          }).catch(() => null) || await OrderModel.findById(originalOrderId).catch(() => null);
-
-          if (origOrder) {
-            const prevRefunded = Number((origOrder as any).refundedAmount) || 0;
-            const newRefunded = prevRefunded + Number(refundAmount);
-            const orderTotal = Number((origOrder as any).totalAmount) || 0;
-            const isFullyRefunded = newRefunded >= orderTotal - 0.01;
-
-            const updateFields: any = {
-              refundedAmount: newRefunded,
-              refundedAt: new Date(),
-              isFullyRefunded,
-              updatedAt: new Date(),
-            };
-            if (isFullyRefunded) {
-              updateFields.status = 'refunded';
-              updateFields.paymentStatus = 'refunded';
-            }
-            await OrderModel.updateOne({ _id: (origOrder as any)._id }, { $set: updateFields });
+        originalOrderId: { $in: lookupOrderIds },
+        status: { $in: ['completed', 'pending'] },
+      }).lean();
+      const refundedByItemIndex = new Map<number, number>();
+      const legacyRefundedByProduct = new Map<string, number>();
+      for (const refund of existingRefunds) {
+        for (const item of refund.items || []) {
+          const qty = Number(item.quantity) || 0;
+          if (Number.isInteger(item.orderItemIndex)) {
+            refundedByItemIndex.set(item.orderItemIndex, (refundedByItemIndex.get(item.orderItemIndex) || 0) + qty);
+          } else if (item.coffeeItemId) {
+            legacyRefundedByProduct.set(
+              String(item.coffeeItemId),
+              (legacyRefundedByProduct.get(String(item.coffeeItemId)) || 0) + qty,
+            );
           }
-        } catch (err) {
-          console.error('[Refund] Failed to update original order:', err);
         }
       }
 
-      // ── Update active cashier shift totalRefunds ──────────────────────────────
-      if (employeeId) {
+      const normalizedItems: any[] = [];
+      let selectedGrossCents = 0;
+      const seenIndexes = new Set<number>();
+      for (const item of items) {
+        const index = Number(item?.orderItemIndex);
+        if (!Number.isInteger(index) || index < 0 || index >= sourceItems.length || seenIndexes.has(index)) {
+          return res.status(400).json({ error: "تعذر مطابقة صنف الاسترجاع مع الطلب الأصلي" });
+        }
+        seenIndexes.add(index);
+        const source = sourceItems[index] || {};
+        const productId = String(source.coffeeItemId || source.id || source.productId || '');
+        const submittedProductId = String(item.coffeeItemId || '');
+        if (productId && submittedProductId && productId !== submittedProductId) {
+          return res.status(400).json({ error: "بيانات الصنف لا تطابق الطلب الأصلي" });
+        }
+        const qty = Number(item.quantity);
+        const orderedQty = Number(source.quantity) || 1;
+        const usedQty = (refundedByItemIndex.get(index) || 0)
+          + (productId ? (legacyRefundedByProduct.get(productId) || 0) : 0);
+        if (!Number.isFinite(qty) || qty <= 0 || qty > orderedQty - usedQty + 0.0001) {
+          return res.status(409).json({ error: "الكمية تتجاوز الكمية القابلة للاسترجاع لهذا الصنف" });
+        }
+        const unitPrice = Number(source.unitPrice || source.price || source.coffeeItem?.price || 0);
+        if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+          return res.status(400).json({ error: "تعذر التحقق من سعر الصنف الأصلي" });
+        }
+        const subtotalCents = Math.round(unitPrice * qty * 100);
+        selectedGrossCents += subtotalCents;
+        normalizedItems.push({
+          coffeeItemId: productId,
+          orderItemIndex: index,
+          nameAr: String(source.nameAr || source.coffeeItem?.nameAr || 'صنف').slice(0, 160),
+          nameEn: String(source.nameEn || source.coffeeItem?.nameEn || '').slice(0, 160) || undefined,
+          quantity: qty,
+          unitPrice,
+          subtotal: subtotalCents / 100,
+        });
+      }
+      if (amountCents > selectedGrossCents + 1) {
+        return res.status(400).json({ error: "مبلغ الاسترجاع أكبر من قيمة الأصناف المحددة" });
+      }
+
+      const refundTotal = amountCents / 100;
+      const config: any = await BusinessConfigModel.findOne({ tenantId }).lean();
+      const method = String(originalOrder.paymentMethod || '').toLowerCase();
+      const paymentProvider = String(originalOrder.paymentProvider
+        || (method.startsWith('paymob') ? 'paymob' : ['geidea', 'apple_pay'].includes(method) ? 'geidea' : method.startsWith('neoleap') ? 'neoleap' : '')).toLowerCase();
+      const transactionId = String(originalOrder.paymentTransactionId || '');
+      const isOnlineCardOrder = ['paymob', 'geidea', 'neoleap'].includes(paymentProvider);
+      const providerRefundAmount = cardCents / 100;
+
+      if (cardCents > 0 && isOnlineCardOrder && !transactionId) {
+        return res.status(409).json({
+          error: "لا يوجد رقم معاملة محفوظ لهذا الطلب القديم؛ لا يمكن رد المبلغ تلقائياً إلى البطاقة. أجرِ الاسترجاع من لوحة بوابة الدفع ثم سجّله يدوياً.",
+        });
+      }
+      if (cardCents > 0 && paymentProvider === 'paymob'
+        && !(config?.paymentGateway?.paymob?.apiKey || process.env.PAYMOB_API_KEY)) {
+        return res.status(503).json({ error: "استرجاع Paymob يحتاج مفتاح API محفوظاً في أسرار التطبيق (PAYMOB_API_KEY)." });
+      }
+      if (cardCents > 0 && paymentProvider === 'paymob'
+        && (!Number.isSafeInteger(Number(transactionId)) || Number(transactionId) <= 0)) {
+        return res.status(409).json({ error: "رقم معاملة Paymob المحفوظ غير صالح للاسترجاع الآلي؛ لا يتم تسجيل أي استرجاع." });
+      }
+      if (cardCents > 0 && paymentProvider === 'geidea'
+        && !(config?.paymentGateway?.geidea?.publicKey && config?.paymentGateway?.geidea?.apiPassword)) {
+        return res.status(503).json({ error: "بيانات Geidea غير مكتملة لتنفيذ استرجاع البطاقة." });
+      }
+      if (cardCents > 0 && paymentProvider === 'neoleap') {
+        return res.status(503).json({ error: "الاسترجاع الإلكتروني عبر NeoLeap غير مهيأ بعد؛ لم يتم تسجيل الاسترجاع." });
+      }
+
+      const prevCompleted = existingRefunds.filter(r => r.status === 'completed').reduce((s, r) => s + Math.round((Number(r.refundAmount) || 0) * 100), 0);
+      const prevPending = existingRefunds.filter(r => r.status === 'pending').reduce((s, r) => s + Math.round((Number(r.refundAmount) || 0) * 100), 0);
+      await OrderModel.updateOne(
+        { _id: originalOrder._id, tenantId },
+        {
+          $max: {
+            refundedAmount: Math.max(Number(originalOrder.refundedAmount) || 0, prevCompleted) / 100,
+            refundReservedAmount: Math.max(Number(originalOrder.refundReservedAmount) || 0, prevPending) / 100,
+          },
+        },
+      );
+      const reservation = await OrderModel.findOneAndUpdate(
+        {
+          _id: originalOrder._id,
+          tenantId,
+          $expr: {
+            $lte: [
+              {
+                $add: [
+                  { $ifNull: ['$refundedAmount', 0] },
+                  { $ifNull: ['$refundReservedAmount', 0] },
+                  refundTotal,
+                ],
+              },
+              { $ifNull: ['$totalAmount', 0] },
+            ],
+          },
+        },
+        { $inc: { refundReservedAmount: refundTotal }, $set: { updatedAt: new Date() } },
+        { new: true },
+      ).lean();
+      if (!reservation) {
+        return res.status(409).json({ error: "مبلغ الاسترجاع يتجاوز الرصيد المتبقي للطلب" });
+      }
+      reservedOrderId = originalOrder._id;
+      reservedAmount = refundTotal;
+
+      const refundId = nanoid();
+      const refundDoc = new RefundOrderModel({
+        id: refundId,
+        tenantId,
+        idempotencyKey,
+        originalOrderId: canonicalOrderId,
+        originalOrderNumber: originalOrder.orderNumber,
+        branchId: originalOrder.branchId || undefined,
+        employeeId: req.employee?.id || undefined,
+        employeeName: req.employee?.fullName || undefined,
+        items: normalizedItems,
+        refundAmount: refundTotal,
+        paymentMethod,
+        cashAmount: cashCents / 100,
+        cardAmount: providerRefundAmount,
+        paymentProvider: cardCents > 0 && isOnlineCardOrder ? paymentProvider : undefined,
+        paymentTransactionId: cardCents > 0 && isOnlineCardOrder ? transactionId : undefined,
+        reason: reason.trim().slice(0, 500),
+        notes: typeof notes === 'string' ? notes.trim().slice(0, 1000) || undefined : undefined,
+        status: 'pending',
+      });
+      try {
+        await refundDoc.save();
+      } catch (saveError: any) {
+        await OrderModel.updateOne({ _id: originalOrder._id, tenantId }, { $inc: { refundReservedAmount: -refundTotal } });
+        reservedAmount = 0;
+        if (saveError?.code === 11000) {
+          const duplicate: any = await RefundOrderModel.findOne({ tenantId, idempotencyKey }).lean();
+          if (duplicate) return res.status(duplicate.status === 'pending' ? 202 : 200).json({
+            success: duplicate.status === 'completed',
+            pending: duplicate.status === 'pending',
+            refund: serializeDoc(duplicate),
+          });
+        }
+        throw saveError;
+      }
+
+      let providerState: 'completed' | 'failed' | 'pending' = 'completed';
+      let processorRefundId: string | undefined;
+      let providerResponseCode: string | undefined;
+      let providerError = '';
+
+      if (cardCents > 0 && paymentProvider === 'paymob') {
+        const paymobBaseUrl = String(config?.paymentGateway?.paymob?.baseUrl || 'https://ksa.paymob.com').replace(/\/+$/, '');
+        const apiKey = config?.paymentGateway?.paymob?.apiKey || process.env.PAYMOB_API_KEY;
         try {
-          const { CashierShiftModel } = await import('@shared/schema');
-          await CashierShiftModel.updateOne(
-            { employeeId, status: 'open' },
-            { $inc: { totalRefunds: Number(refundAmount) }, $set: { updatedAt: new Date() } }
-          );
-        } catch (err) {
-          console.error('[Refund] Failed to update shift totalRefunds:', err);
+          const authResponse = await fetch(`${paymobBaseUrl}/api/auth/tokens`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: apiKey }),
+            signal: AbortSignal.timeout(15000),
+          });
+          const authData: any = await authResponse.json().catch(() => ({}));
+          if (!authResponse.ok || !authData.token) {
+            providerState = 'failed';
+            providerError = 'تعذر مصادقة طلب الاسترجاع لدى Paymob';
+          } else {
+            const refundResponse = await fetch(`${paymobBaseUrl}/api/acceptance/void_refund/refund`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                auth_token: authData.token,
+                transaction_id: Number(transactionId),
+                amount_cents: cardCents,
+              }),
+              signal: AbortSignal.timeout(20000),
+            });
+            const refundData: any = await refundResponse.json().catch(() => ({}));
+            providerResponseCode = String(refundData.response_code || refundData.responseCode || '');
+            const confirmed = refundResponse.ok && refundData.success === true && refundData.is_refunded === true;
+            if (confirmed) {
+              processorRefundId = String(refundData.id || refundData.refund_id || '');
+            } else if (refundResponse.status >= 500 || refundData.pending === true || (refundResponse.ok && refundData.success == null)) {
+              providerState = 'pending';
+              providerError = 'Paymob لم يرسل نتيجة نهائية؛ يلزم التحقق من لوحة Paymob قبل إعادة المحاولة';
+            } else {
+              providerState = 'failed';
+              providerError = 'رفض Paymob تنفيذ الاسترجاع';
+            }
+          }
+        } catch {
+          providerState = 'pending';
+          providerError = 'انقطع الاتصال أثناء طلب الاسترجاع؛ تحقق من لوحة Paymob ولا تعِد المحاولة الآن';
         }
+      } else if (cardCents > 0 && paymentProvider === 'geidea') {
+        const geidea = config?.paymentGateway?.geidea;
+        const geideaBaseUrl = String(geidea?.baseUrl || 'https://api.ksamerchant.geidea.net').replace(/\/+$/, '');
+        const amountText = providerRefundAmount.toFixed(2);
+        const geideaOrderId = transactionId;
+        const now = new Date();
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const timestamp = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+        try {
+          const crypto = await import('node:crypto');
+          const signatureText = `${timestamp}${geidea.publicKey}${amountText}${geideaOrderId}`;
+          const signature = crypto.createHmac('sha256', geidea.apiPassword).update(signatureText).digest('base64');
+          const refundResponse = await fetch(`${geideaBaseUrl}/pgw/api/v2/direct/refund`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'Authorization': `Basic ${Buffer.from(`${geidea.publicKey}:${geidea.apiPassword}`).toString('base64')}`,
+            },
+            body: JSON.stringify({ orderId: geideaOrderId, refundAmount: Number(amountText), timestamp, signature }),
+            signal: AbortSignal.timeout(20000),
+          });
+          const refundData: any = await refundResponse.json().catch(() => ({}));
+          const refundOrder = refundData.order || {};
+          providerResponseCode = String(refundData.responseCode || refundData.detailedResponseCode || '');
+          const refundedTransaction = (refundOrder.transactions || []).find((t: any) =>
+            String(t.type || '').toLowerCase() === 'refund' && String(t.status || '').toLowerCase() === 'success');
+          const confirmed = refundResponse.ok
+            && String(refundOrder.status || '').toLowerCase() === 'success'
+            && ['refunded', 'partiallyrefunded'].includes(String(refundOrder.detailedStatus || '').toLowerCase());
+          if (confirmed) {
+            processorRefundId = String(refundedTransaction?.transactionId || refundOrder.orderId || '');
+          } else if (refundResponse.status >= 500 || (refundResponse.ok && !refundData.responseCode && !refundData.detailedResponseCode)) {
+            providerState = 'pending';
+            providerError = 'Geidea لم ترسل نتيجة نهائية؛ تحقق من لوحة Geidea قبل إعادة المحاولة';
+          } else {
+            providerState = 'failed';
+            providerError = 'رفضت Geidea تنفيذ الاسترجاع';
+          }
+        } catch {
+          providerState = 'pending';
+          providerError = 'انقطع الاتصال أثناء طلب الاسترجاع؛ تحقق من لوحة Geidea ولا تعِد المحاولة الآن';
+        }
+      } else if (cardCents > 0 && isOnlineCardOrder) {
+        providerState = 'failed';
+        providerError = 'مزود الدفع الأصلي لا يدعم الاسترجاع الآلي من النظام';
       }
 
-      res.status(201).json(serializeDoc(refundDoc));
-    } catch (error) {
-      console.error('[Create Refund]', error);
+      if (providerState === 'failed') {
+        refundDoc.status = 'failed';
+        refundDoc.providerResponseCode = providerResponseCode;
+        reservedAmount = 0;
+        await refundDoc.save();
+        await OrderModel.updateOne(
+          { _id: originalOrder._id, tenantId },
+          { $inc: { refundReservedAmount: -refundTotal }, $set: { updatedAt: new Date() } },
+        );
+        return res.status(502).json({ error: providerError || "فشل مزود الدفع في تنفيذ الاسترجاع؛ لم يُسجّل كمكتمل" });
+      }
+
+      if (providerState === 'pending') {
+        refundDoc.status = 'pending';
+        refundDoc.processorRefundId = processorRefundId;
+        refundDoc.providerResponseCode = providerResponseCode;
+        reservedAmount = 0; // Keep reserved while the processor's result is unknown.
+        await refundDoc.save();
+        return res.status(202).json({
+          success: false,
+          pending: true,
+          refund: serializeDoc(refundDoc),
+          message: providerError || "الاسترجاع قيد التحقق؛ لا تكرر الطلب",
+        });
+      }
+
+      refundDoc.status = 'completed';
+      refundDoc.processorRefundId = processorRefundId;
+      refundDoc.providerResponseCode = providerResponseCode;
+      reservedAmount = 0;
+      await refundDoc.save();
+      const updatedOrder: any = await OrderModel.findOneAndUpdate(
+        { _id: originalOrder._id, tenantId },
+        {
+          $inc: { refundReservedAmount: -refundTotal, refundedAmount: refundTotal },
+          $set: { refundedAt: new Date(), updatedAt: new Date() },
+        },
+        { new: true },
+      ).lean();
+      if (updatedOrder && Number(updatedOrder.refundedAmount) >= Number(updatedOrder.totalAmount) - 0.01) {
+        await OrderModel.updateOne(
+          { _id: originalOrder._id, tenantId },
+          { $set: { isFullyRefunded: true, status: 'refunded', paymentStatus: 'refunded', updatedAt: new Date() } },
+        );
+      }
+      if (req.employee?.id && cashCents > 0) {
+        await CashierShiftModel.updateOne(
+          { employeeId: req.employee.id, status: 'open' },
+          { $inc: { totalRefunds: cashCents / 100 }, $set: { updatedAt: new Date() } },
+        ).catch(() => {});
+      }
+      cache.invalidate('live-orders:');
+      cache.invalidate('analytics:advanced:');
+      return res.status(201).json({ success: true, ...serializeDoc(refundDoc) });
+    } catch (error: any) {
+      if (reservedOrderId && reservedAmount > 0) {
+        const { OrderModel } = await import('@shared/schema');
+        await OrderModel.updateOne(
+          { _id: reservedOrderId },
+          { $inc: { refundReservedAmount: -reservedAmount }, $set: { updatedAt: new Date() } },
+        ).catch(() => {});
+      }
+      console.error('[Create Refund]', error?.message || 'refund request failed');
       res.status(500).json({ error: "فشل إنشاء الاسترجاع" });
     }
   });
 
   // Get single refund
-  app.get("/api/refunds/:id", requireAuth, async (req: any, res) => {
+  app.get("/api/refunds/:id", requireAuth, requirePermission('order.refund'), async (req: any, res) => {
     try {
       const { RefundOrderModel } = await import('@shared/schema');
       const { id } = req.params;
-      const refund = await RefundOrderModel.findOne({ id });
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
+      const refund = await RefundOrderModel.findOne({ id, tenantId });
       if (!refund) return res.status(404).json({ error: "الاسترجاع غير موجود" });
       res.json(serializeDoc(refund));
     } catch (error) {
@@ -10677,12 +10995,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Cancel a refund (admin only)
-  app.patch("/api/refunds/:id/cancel", requireAuth, async (req: any, res) => {
+  app.patch("/api/refunds/:id/cancel", requireAuth, requirePermission('order.refund'), async (req: any, res) => {
     try {
       const { RefundOrderModel } = await import('@shared/schema');
       const { id } = req.params;
+      const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
       const refund = await RefundOrderModel.findOneAndUpdate(
-        { id },
+        { id, tenantId, status: 'failed' },
         { status: 'cancelled', updatedAt: new Date() },
         { new: true }
       );

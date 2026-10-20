@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import SarIcon from "@/components/sar-icon";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { printRefundThermal } from "@/lib/print-utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -27,6 +27,7 @@ interface RefundItem {
   quantity: number;
   unitPrice: number;
   subtotal: number;
+  orderItemIndex: number;
 }
 
 interface RefundDialogProps {
@@ -36,12 +37,13 @@ interface RefundDialogProps {
   employeeId?: string;
   employeeName?: string;
   tenantId?: string;
+  initialOrder?: any;
 }
 
 type RefundPayMethod = "cash" | "card" | "split";
 
 
-export default function RefundDialog({ open, onOpenChange, branchId, employeeId, employeeName, tenantId }: RefundDialogProps) {
+export default function RefundDialog({ open, onOpenChange, employeeName, initialOrder }: RefundDialogProps) {
   const { toast } = useToast();
   const tc = useTranslate();
 
@@ -59,6 +61,24 @@ export default function RefundDialog({ open, onOpenChange, branchId, employeeId,
   const [cardAmount, setCardAmount] = useState("");
   const [reason, setReason] = useState("");
   const [notes, setNotes] = useState("");
+  const [clientRequestId, setClientRequestId] = useState("");
+
+  useEffect(() => {
+    if (!open || !initialOrder) return;
+    const items = typeof initialOrder.items === "string" ? JSON.parse(initialOrder.items) : (initialOrder.items || []);
+    const order = { ...initialOrder, items };
+    setFoundOrder(order);
+    setSearchQuery(order.orderNumber || "");
+    setStep(2);
+    const initSel: Record<string, boolean> = {};
+    const initQty: Record<string, number> = {};
+    items.forEach((item: any, idx: number) => {
+      initSel[String(idx)] = true;
+      initQty[String(idx)] = Number(item.quantity) || 1;
+    });
+    setSelectedItems(initSel);
+    setRefundQtys(initQty);
+  }, [open, initialOrder?.id, initialOrder?._id]);
 
   const reset = () => {
     setStep(1);
@@ -72,6 +92,7 @@ export default function RefundDialog({ open, onOpenChange, branchId, employeeId,
     setCardAmount("");
     setReason("");
     setNotes("");
+    setClientRequestId("");
   };
 
   const handleClose = () => {
@@ -111,7 +132,7 @@ export default function RefundDialog({ open, onOpenChange, branchId, employeeId,
         const initSel: Record<string, boolean> = {};
         const initQty: Record<string, number> = {};
         items.forEach((item: any, idx: number) => {
-          const key = `${item.coffeeItemId || item.id || idx}`;
+          const key = String(idx);
           initSel[key] = true;
           initQty[key] = Number(item.quantity) || 1;
         });
@@ -132,10 +153,10 @@ export default function RefundDialog({ open, onOpenChange, branchId, employeeId,
 
   const calcRefundTotal = (): number => {
     return getOrderItems().reduce((sum, item, idx) => {
-      const key = `${item.coffeeItemId || item.id || idx}`;
+      const key = String(idx);
       if (!selectedItems[key]) return sum;
       const qty = refundQtys[key] || 0;
-      const price = Number(item.price || item.unitPrice || item.coffeeItem?.price || 0);
+      const price = Number(item.unitPrice || item.price || item.coffeeItem?.price || 0);
       return sum + price * qty;
     }, 0);
   };
@@ -143,11 +164,11 @@ export default function RefundDialog({ open, onOpenChange, branchId, employeeId,
   const buildRefundItems = (): RefundItem[] => {
     return getOrderItems()
       .map((item, idx) => {
-        const key = `${item.coffeeItemId || item.id || idx}`;
+        const key = String(idx);
         if (!selectedItems[key]) return null;
         const qty = refundQtys[key] || 0;
         if (qty <= 0) return null;
-        const price = Number(item.price || item.unitPrice || item.coffeeItem?.price || 0);
+        const price = Number(item.unitPrice || item.price || item.coffeeItem?.price || 0);
         return {
           coffeeItemId: item.coffeeItemId || item.id || "",
           nameAr: item.coffeeItem?.nameAr || item.nameAr || "صنف",
@@ -155,6 +176,7 @@ export default function RefundDialog({ open, onOpenChange, branchId, employeeId,
           quantity: qty,
           unitPrice: price,
           subtotal: price * qty,
+          orderItemIndex: idx,
         };
       })
       .filter(Boolean) as RefundItem[];
@@ -166,21 +188,38 @@ export default function RefundDialog({ open, onOpenChange, branchId, employeeId,
       return res.json();
     },
     onSuccess: (data) => {
-      toast({ title: tc("✅ تم الاسترجاع بنجاح", "✅ Refund successful"), description: `${tc("إجمالي المسترجع:", "Total refunded:")} ${data.refundAmount?.toFixed(2)} ${tc("ريال", "SAR")}` });
-      setTimeout(() => {
-        printRefundThermal({
-          refundId: data.id,
-          originalOrderNumber: foundOrder?.orderNumber || "—",
-          items: buildRefundItems(),
-          refundAmount: data.refundAmount,
-          paymentMethod: payMethod,
-          cashAmount: payMethod === "split" ? parseFloat(cashAmount) : undefined,
-          cardAmount: payMethod === "split" ? parseFloat(cardAmount) : undefined,
-          reason,
-          employeeName,
-          date: format(new Date(), "dd/MM/yyyy HH:mm", { locale: ar }),
-          originalPaymentMethod: foundOrder?.paymentMethod,
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/refunds"] });
+      const refund = data.refund || data;
+      if (data.pending || refund.status === "pending") {
+        toast({
+          title: tc("الاسترجاع قيد التحقق", "Refund pending"),
+          description: data.message || tc("لا تكرر الطلب. تحقق من بوابة الدفع قبل إعادة المحاولة.", "Do not retry. Check the payment gateway before trying again."),
+          variant: "destructive",
         });
+        handleClose();
+        return;
+      }
+      if (data.success === false || refund.status === "failed") {
+        toast({ title: tc("لم يكتمل الاسترجاع", "Refund not completed"), description: data.error || tc("تحقق من بوابة الدفع قبل إعادة المحاولة.", "Check the payment gateway before retrying."), variant: "destructive" });
+        return;
+      }
+      toast({ title: tc("تم الاسترجاع بنجاح", "Refund successful"), description: `${tc("إجمالي المسترجع:", "Total refunded:")} ${Number(refund.refundAmount || 0).toFixed(2)} ${tc("ريال", "SAR")}` });
+      const printPayload = {
+        refundId: refund.id,
+        originalOrderNumber: foundOrder?.orderNumber || "—",
+        items: buildRefundItems(),
+        refundAmount: refund.refundAmount,
+        paymentMethod: payMethod,
+        cashAmount: payMethod === "split" ? parseFloat(cashAmount) : undefined,
+        cardAmount: payMethod === "split" ? parseFloat(cardAmount) : undefined,
+        reason,
+        employeeName,
+        date: format(new Date(), "dd/MM/yyyy HH:mm", { locale: ar }),
+        originalPaymentMethod: foundOrder?.paymentMethod,
+      };
+      setTimeout(() => {
+        printRefundThermal(printPayload);
       }, 300);
       handleClose();
     },
@@ -212,13 +251,21 @@ export default function RefundDialog({ open, onOpenChange, branchId, employeeId,
         return;
       }
     }
+    const paymentProvider = String(foundOrder?.paymentProvider || "").toLowerCase();
+    const onlineCard = ["paymob", "geidea", "neoleap"].includes(paymentProvider)
+      || String(foundOrder?.paymentMethod || "").toLowerCase().startsWith("paymob");
+    if (!window.confirm(
+      onlineCard && payMethod !== "cash"
+        ? `سيتم إرسال ${refundAmount.toFixed(2)} ريال كطلب استرجاع إلى بوابة الدفع الأصلية. لا تضغط تأكيد مرة أخرى إذا ظهرت حالة معلّقة. هل تريد المتابعة؟`
+        : `تأكيد تسجيل استرجاع بقيمة ${refundAmount.toFixed(2)} ريال؟`
+    )) return;
+    const requestId = clientRequestId || (typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    setClientRequestId(requestId);
     createRefundMutation.mutate({
       originalOrderId: foundOrder?.id || foundOrder?._id,
-      originalOrderNumber: foundOrder?.orderNumber,
-      branchId: branchId || foundOrder?.branchId,
-      tenantId,
-      employeeId,
-      employeeName,
+      clientRequestId: requestId,
       items,
       refundAmount,
       paymentMethod: payMethod,
@@ -231,9 +278,15 @@ export default function RefundDialog({ open, onOpenChange, branchId, employeeId,
 
   const refundTotal = calcRefundTotal();
   const orderItems = getOrderItems();
+  const originalPaymentMethod = String(foundOrder?.paymentMethod || "").toLowerCase();
+  const originalProvider = String(foundOrder?.paymentProvider
+    || (originalPaymentMethod.startsWith("paymob") ? "paymob" : ["geidea", "apple_pay"].includes(originalPaymentMethod) ? "geidea" : "")
+  ).toLowerCase();
+  const needsGateway = ["paymob", "geidea", "neoleap"].includes(originalProvider);
+  const cardRefundUnavailable = needsGateway && !foundOrder?.paymentTransactionId;
   const payMethodLabel: Record<RefundPayMethod, string> = {
     cash: tc("نقدي", "Cash"),
-    card: tc("شبكة / بطاقة", "Card"),
+    card: needsGateway ? tc("البطاقة الأصلية", "Original card") : tc("شبكة / بطاقة", "Card"),
     split: tc("نقدي + شبكة", "Cash + Card"),
   };
 
@@ -338,7 +391,7 @@ export default function RefundDialog({ open, onOpenChange, branchId, employeeId,
                     const allSel: Record<string, boolean> = {};
                     const allQty: Record<string, number> = {};
                     orderItems.forEach((item, idx) => {
-                      const key = `${item.coffeeItemId || item.id || idx}`;
+        const key = String(idx);
                       allSel[key] = true;
                       allQty[key] = Number(item.quantity) || 1;
                     });
@@ -351,9 +404,9 @@ export default function RefundDialog({ open, onOpenChange, branchId, employeeId,
               </div>
 
               {orderItems.map((item, idx) => {
-                const key = `${item.coffeeItemId || item.id || idx}`;
+                const key = String(idx);
                 const maxQty = Number(item.quantity) || 1;
-                const price = Number(item.price || item.unitPrice || item.coffeeItem?.price || 0);
+                const price = Number(item.unitPrice || item.price || item.coffeeItem?.price || 0);
                 const qty = refundQtys[key] ?? maxQty;
                 const isSelected = !!selectedItems[key];
 
@@ -442,8 +495,9 @@ export default function RefundDialog({ open, onOpenChange, branchId, employeeId,
                         key={m}
                         type="button"
                         onClick={() => setPayMethod(m)}
+                        disabled={cardRefundUnavailable && m !== "cash"}
                         className={`flex flex-col items-center gap-1 p-3 rounded-xl border-2 text-sm font-bold transition-colors ${
-                          payMethod === m ? "border-red-500 bg-red-50 text-red-700" : "border-border hover:border-muted-foreground"
+                          cardRefundUnavailable && m !== "cash" ? "opacity-40 cursor-not-allowed border-border" : payMethod === m ? "border-red-500 bg-red-50 text-red-700" : "border-border hover:border-muted-foreground"
                         }`}
                         data-testid={`button-refund-method-${m}`}
                       >
@@ -453,6 +507,16 @@ export default function RefundDialog({ open, onOpenChange, branchId, employeeId,
                     );
                   })}
                 </div>
+                {needsGateway && foundOrder?.paymentTransactionId && (
+                  <p className="text-xs text-emerald-700 bg-emerald-50 rounded-md p-2">
+                    {tc("اختيار البطاقة يرسل الاسترجاع إلى البطاقة الأصلية عبر", "Card refunds are sent to the original card through")} {originalProvider}.
+                  </p>
+                )}
+                {needsGateway && !foundOrder?.paymentTransactionId && (
+                  <p className="text-xs text-amber-800 bg-amber-50 rounded-md p-2">
+                    {tc("هذا الطلب قديم ولا يحتوي رقم معاملة البوابة؛ لن نسجل استرجاع بطاقة غير مؤكد.", "This older order has no gateway transaction ID, so card refunds are disabled.")}
+                  </p>
+                )}
               </div>
 
               {payMethod === "split" && (

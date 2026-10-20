@@ -9,3 +9,4 @@
 - [Payment confirmation security](payment-confirmation-security.md) — never trust browser success parameters; confirm transactions server-side and require valid webhook HMAC.
 - [Paymob integration IDs](paymob-integration-ids.md) — card and Apple Pay IDs must belong to the active Paymob merchant; API credential success does not validate integration IDs.
 - [Paymob KSA callback confirmation](paymob-ksa-callback-confirmation.md) — a signed payment webhook can succeed while Paymob status lookups fail; match it strictly to its session, amount, currency, and integration.
+- [Online refunds](online-refunds.md) — card refunds are only completed after provider confirmation; uncertain outcomes remain reserved and pending.

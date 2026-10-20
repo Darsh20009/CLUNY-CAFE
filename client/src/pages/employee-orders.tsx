@@ -21,6 +21,7 @@ import { PrepCountdown } from "@/components/PrepCountdown";
 import { playNotificationSound, initAudioUnlock, getSoundEnabled, setSoundEnabled } from "@/lib/notification-sounds";
 import { AudioUnlockBanner } from "@/components/audio-unlock-banner";
 import { getPaymentMethodLabel } from "@shared/order-states";
+import RefundDialog from "@/components/refund-dialog";
 
 export default function EmployeeOrders() {
   const { toast } = useToast();
@@ -40,6 +41,8 @@ export default function EmployeeOrders() {
   const [receivedAmount, setReceivedAmount] = useState<string>("");
   const [changeAmount, setChangeAmount] = useState<number>(0);
   const [receiptDialogOrder, setReceiptDialogOrder] = useState<any>(null);
+  const [showRefundDialog, setShowRefundDialog] = useState(false);
+  const [refundOrder, setRefundOrder] = useState<any>(null);
 
   const BANK_TRANSFER_METHODS = ['mada', 'rajhi', 'alinma', 'ur', 'barq', 'bank_transfer'];
   const GATEWAY_METHODS = ['paymob', 'paymob-card', 'paymob-wallet', 'paymob-apple-pay', 'geidea', 'apple_pay', 'neoleap', 'neoleap-apple-pay'];
@@ -231,6 +234,8 @@ export default function EmployeeOrders() {
   };
 
   if (!employee) return null;
+  const canManageRefunds = ['owner', 'admin', 'manager', 'branch_manager'].includes(String(employee.role || '').toLowerCase())
+    || (Array.isArray(employee.permissions) && employee.permissions.includes('order.refund'));
 
   const filteredOrders = orders.filter((order) => {
     if (selectedBranchId && order.branchId !== selectedBranchId && order.branchId !== 'main' && order.branchId) return false;
@@ -561,6 +566,23 @@ export default function EmployeeOrders() {
                             <Printer className="w-3.5 h-3.5 ml-1" />
                             {tc("طباعة", "Print")}
                           </Button>
+                          {canManageRefunds && isPaymentConfirmed(order) && !order.isFullyRefunded
+                            && Number(order.refundedAmount || 0) < Number(order.totalAmount || 0) && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-red-700 border-red-200 hover:bg-red-50"
+                              disabled={Number(order.refundReservedAmount || 0) > 0}
+                              onClick={() => {
+                                setRefundOrder(order);
+                                setShowRefundDialog(true);
+                              }}
+                              data-testid={`button-refund-order-${orderId}`}
+                            >
+                              <Undo2 className="w-3.5 h-3.5 ml-1" />
+                              {Number(order.refundReservedAmount || 0) > 0 ? tc("استرجاع قيد التحقق", "Refund pending") : tc("استرجاع", "Refund")}
+                            </Button>
+                          )}
                           <Badge variant={isPaymentConfirmed(order) ? 'success' : 'outline'} className="text-[10px]">
                             {isPaymentConfirmed(order) ? tc('مدفوع', 'Paid') : tc('غير مدفوع', 'Unpaid')}
                           </Badge>
@@ -735,6 +757,21 @@ export default function EmployeeOrders() {
           </div>
         </div>
       </div>
+
+      <RefundDialog
+        open={showRefundDialog}
+        onOpenChange={(open) => {
+          setShowRefundDialog(open);
+          if (!open) {
+            setRefundOrder(null);
+            refetch();
+          }
+        }}
+        initialOrder={refundOrder}
+        branchId={refundOrder?.branchId || employee?.branchId}
+        employeeId={employee?.id}
+        employeeName={employee?.fullName}
+      />
 
       <Dialog open={showPrintDialog} onOpenChange={setShowPrintDialog}>
         <DialogContent className="max-w-md overflow-y-auto max-h-[90vh]">

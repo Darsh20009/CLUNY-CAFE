@@ -1341,6 +1341,8 @@ export interface IOrder extends Document {
   totalAmount: number;
   dailyNumber?: number;
   paymentMethod: string;
+  paymentProvider?: 'paymob' | 'geidea' | 'neoleap' | string;
+  paymentTransactionId?: string;
   paymentDetails?: string;
   paymentReceiptUrl?: string;
   paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded';
@@ -1438,6 +1440,7 @@ export interface IOrder extends Document {
   isBackdated?: boolean;
   historicalOrderDateOnly?: boolean;
   refundedAmount?: number;
+  refundReservedAmount?: number;
   refundedAt?: Date;
   isFullyRefunded?: boolean;
   statusHistory?: Array<{
@@ -1485,6 +1488,8 @@ const OrderSchema = new Schema<IOrder>({
   totalAmount: { type: Number, required: true },
   dailyNumber: { type: Number },
   paymentMethod: { type: String, enum: ["cash", "pos", "apple_pay", "pos-network", "alinma", "rajhi", "ur", "barq", "qahwa-card", "stc-pay", "mada", "geidea", "neoleap", "neoleap-apple-pay", "bank_card", "paymob-card", "paymob-wallet", "paymob-apple-pay", "loyalty-card", "split", "card", "network", "credit_card", "bank_transfer", "other"], required: true },
+  paymentProvider: { type: String, enum: ['paymob', 'geidea', 'neoleap'] },
+  paymentTransactionId: { type: String },
   paymentDetails: { type: String },
   paymentReceiptUrl: { type: String },
   paymentStatus: { type: String, enum: ['pending', 'paid', 'failed', 'refunded'], default: 'pending' },
@@ -1507,6 +1512,7 @@ const OrderSchema = new Schema<IOrder>({
   giftCardAmountUsed: { type: Number },
   giftCardRemainingBalance: { type: Number },
   refundedAmount: { type: Number, default: 0 },
+  refundReservedAmount: { type: Number, default: 0 },
   refundedAt: { type: Date },
   isFullyRefunded: { type: Boolean, default: false },
   isProductReservation: { type: Boolean, default: false },
@@ -5916,14 +5922,20 @@ export interface IRefundOrder extends Document {
     quantity: number;
     unitPrice: number;
     subtotal: number;
+    orderItemIndex?: number;
   }>;
   refundAmount: number;
   paymentMethod: 'cash' | 'card' | 'split';
   cashAmount?: number;
   cardAmount?: number;
+  idempotencyKey?: string;
+  paymentProvider?: string;
+  paymentTransactionId?: string;
+  processorRefundId?: string;
+  providerResponseCode?: string;
   reason: string;
   notes?: string;
-  status: 'completed' | 'cancelled';
+  status: 'pending' | 'completed' | 'failed' | 'cancelled';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -5943,14 +5955,20 @@ const RefundOrderSchema = new Schema<IRefundOrder>({
     quantity: { type: Number, required: true, default: 1 },
     unitPrice: { type: Number, required: true, default: 0 },
     subtotal: { type: Number, required: true, default: 0 },
+    orderItemIndex: { type: Number },
   }],
   refundAmount: { type: Number, required: true },
   paymentMethod: { type: String, enum: ['cash', 'card', 'split'], required: true },
   cashAmount: { type: Number, default: 0 },
   cardAmount: { type: Number, default: 0 },
+  idempotencyKey: { type: String },
+  paymentProvider: { type: String },
+  paymentTransactionId: { type: String },
+  processorRefundId: { type: String },
+  providerResponseCode: { type: String },
   reason: { type: String, required: true },
   notes: { type: String },
-  status: { type: String, enum: ['completed', 'cancelled'], default: 'completed' },
+  status: { type: String, enum: ['pending', 'completed', 'failed', 'cancelled'], default: 'completed' },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
@@ -5958,6 +5976,7 @@ const RefundOrderSchema = new Schema<IRefundOrder>({
 RefundOrderSchema.index({ tenantId: 1, createdAt: -1 });
 RefundOrderSchema.index({ tenantId: 1, branchId: 1, createdAt: -1 });
 RefundOrderSchema.index({ originalOrderId: 1 });
+RefundOrderSchema.index({ tenantId: 1, idempotencyKey: 1 }, { unique: true, sparse: true });
 
 export const RefundOrderModel = mongoose.models['RefundOrder'] || mongoose.model<IRefundOrder>('RefundOrder', RefundOrderSchema);
 
