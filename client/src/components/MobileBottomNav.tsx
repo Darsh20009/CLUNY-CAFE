@@ -7,7 +7,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Button } from "@/components/ui/button";
 import {
   Coffee, ChefHat, Users, Settings, BarChart3, Wallet, Warehouse,
-  Table, ShoppingCart, Calendar, FileText, Utensils, Eye
+  Table, ShoppingCart, Calendar, FileText, Utensils, Eye, Columns2
 } from "lucide-react";
 
 interface MobileBottomNavProps {
@@ -57,6 +57,7 @@ export function MobileBottomNav({ employeeRole, onLogout }: MobileBottomNavProps
     { path: "/employee/home",        icon: Home,        label: t('mobile_nav.home') },
     { path: "/employee/dashboard",   icon: BarChart3,   label: t('mobile_nav.dashboard') },
     { path: "/employee/pos",         icon: CreditCard,  label: t('mobile_nav.pos') },
+    { path: "/employee/dual-pos",    icon: Columns2,    label: "Dual POS" },
     { path: "/employee/orders",      icon: ClipboardList, label: t('mobile_nav.orders') },
     { path: "/employee/cashier",     icon: ShoppingCart, label: t('mobile_nav.cashier') },
     { path: "/employee/kitchen",     icon: ChefHat,     label: t('mobile_nav.kitchen') },

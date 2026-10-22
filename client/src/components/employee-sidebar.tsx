@@ -1,7 +1,7 @@
 import { useLocation } from 'wouter';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { LayoutDashboard, ShoppingCart, ClipboardList, Settings, LogOut, User, BarChart3, Warehouse, Wallet, ChefHat, Table, Coffee, Utensils, Languages, Clock, Truck, Building2, Brain, FileSpreadsheet, Tag, Monitor, Bell, BookOpen, Sparkles, CreditCard, BarChart2 } from 'lucide-react';
+import { LayoutDashboard, ShoppingCart, ClipboardList, Settings, LogOut, User, BarChart3, Warehouse, Wallet, ChefHat, Table, Coffee, Utensils, Languages, Clock, Truck, Building2, Brain, FileSpreadsheet, Tag, Monitor, Bell, BookOpen, Sparkles, CreditCard, BarChart2, Columns2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { Employee } from '@shared/schema';
 import clunyLogoStaff from "@assets/cluny-logo-customer.png";
@@ -19,6 +19,7 @@ const PAGE_ID_TO_PATH: Record<PageId, { path: string; label: string; labelEn: st
   dashboard: { path: '/employee/dashboard', label: 'لوحة التحكم', labelEn: 'Dashboard', icon: LayoutDashboard, section: 'base' },
   cashier: { path: '/employee/cashier', label: 'الكاشير', labelEn: 'Cashier', icon: ShoppingCart, section: 'base' },
   pos: { path: '/employee/pos', label: 'نقاط البيع', labelEn: 'POS', icon: BarChart3, section: 'base' },
+  dual_pos: { path: '/employee/dual-pos', label: 'Dual POS', labelEn: 'Dual POS', icon: Columns2, section: 'base' },
   shifts: { path: '/employee/shifts', label: 'الورديات', labelEn: 'Shifts', icon: Clock, section: 'base' },
   kiosk_qr: { path: '/employee/kiosk-qr', label: 'QR الكيوسك', labelEn: 'Kiosk QR', icon: Monitor, section: 'base' },
   orders: { path: '/employee/orders', label: 'الطلبات', labelEn: 'Orders', icon: ClipboardList, section: 'base' },
@@ -54,20 +55,23 @@ function getAccessiblePages(employee: Employee | null): PageId[] {
   const allowedPages = (employee as any).allowedPages;
   if (allowedPages && Array.isArray(allowedPages) && allowedPages.length > 0) {
     // Always include notifications
-    return allowedPages.includes('notifications') ? allowedPages : [...allowedPages, 'notifications'];
+    const pages = [...allowedPages];
+    if (pages.includes('pos') && !pages.includes('dual_pos')) pages.push('dual_pos');
+    if (!pages.includes('notifications')) pages.push('notifications');
+    return pages;
   }
 
   const roleDefaults: Record<string, PageId[]> = {
-    cashier: ['brand_ai', 'dashboard', 'cashier', 'pos', 'shifts', 'kiosk_qr', 'orders', 'notifications'],
-    barista: ['brand_ai', 'dashboard', 'orders', 'kitchen', 'shifts', 'kiosk_qr', 'notifications'],
-    cook: ['brand_ai', 'dashboard', 'orders', 'kitchen', 'shifts', 'kiosk_qr', 'notifications'],
-    waiter: ['brand_ai', 'dashboard', 'cashier', 'orders', 'tables', 'shifts', 'kiosk_qr', 'notifications'],
-    supervisor: ['brand_ai', 'dashboard', 'cashier', 'pos', 'shifts', 'kiosk_qr', 'orders', 'kitchen', 'tables', 'menu_management', 'reports', 'notifications'],
-    manager: ['brand_ai', 'dashboard', 'cashier', 'pos', 'shifts', 'orders', 'kitchen', 'tables', 'menu_management', 'inventory', 'reports', 'product_reports', 'accounting', 'erp_accounting', 'employees', 'settings', 'delivery', 'unified_reports', 'bi_analytics', 'promotions', 'kiosk', 'payment_tracking', 'notifications'],
-    branch_manager: ['brand_ai', 'dashboard', 'cashier', 'pos', 'shifts', 'orders', 'kitchen', 'tables', 'menu_management', 'inventory', 'reports', 'product_reports', 'accounting', 'erp_accounting', 'employees', 'settings', 'delivery', 'unified_reports', 'bi_analytics', 'promotions', 'kiosk', 'payment_tracking', 'notifications'],
+    cashier: ['brand_ai', 'dashboard', 'cashier', 'pos', 'dual_pos', 'shifts', 'kiosk_qr', 'orders', 'notifications'],
+    barista: ['brand_ai', 'dashboard', 'dual_pos', 'orders', 'kitchen', 'shifts', 'kiosk_qr', 'notifications'],
+    cook: ['brand_ai', 'dashboard', 'dual_pos', 'orders', 'kitchen', 'shifts', 'kiosk_qr', 'notifications'],
+    waiter: ['brand_ai', 'dashboard', 'cashier', 'dual_pos', 'orders', 'tables', 'shifts', 'kiosk_qr', 'notifications'],
+    supervisor: ['brand_ai', 'dashboard', 'cashier', 'pos', 'dual_pos', 'shifts', 'kiosk_qr', 'orders', 'kitchen', 'tables', 'menu_management', 'reports', 'notifications'],
+    manager: ['brand_ai', 'dashboard', 'cashier', 'pos', 'dual_pos', 'shifts', 'orders', 'kitchen', 'tables', 'menu_management', 'inventory', 'reports', 'product_reports', 'accounting', 'erp_accounting', 'employees', 'settings', 'delivery', 'unified_reports', 'bi_analytics', 'promotions', 'kiosk', 'payment_tracking', 'notifications'],
+    branch_manager: ['brand_ai', 'dashboard', 'cashier', 'pos', 'dual_pos', 'shifts', 'orders', 'kitchen', 'tables', 'menu_management', 'inventory', 'reports', 'product_reports', 'accounting', 'erp_accounting', 'employees', 'settings', 'delivery', 'unified_reports', 'bi_analytics', 'promotions', 'kiosk', 'payment_tracking', 'notifications'],
   };
 
-  return roleDefaults[role] || ['dashboard', 'cashier', 'orders', 'notifications'];
+  return roleDefaults[role] || ['dashboard', 'cashier', 'dual_pos', 'orders', 'notifications'];
 }
 
 function NotifBadge({ count }: { count: number }) {

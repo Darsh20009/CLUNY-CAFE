@@ -48,6 +48,7 @@ export function AdminSidebar({ mobileOpen, onMobileClose, onMobileOpen }: AdminS
         { label: isAr ? 'إدارة المأكولات والمشروبات' : 'Menu Management', icon: Coffee, path: '/employee/menu-management' },
         { label: isAr ? 'إدارة الطلبات' : 'Orders', icon: ClipboardList, path: '/manager/orders' },
         { label: isAr ? 'نقطة البيع' : 'POS', icon: ShoppingCart, path: '/employee/pos' },
+        { label: 'Dual POS', icon: ShoppingCart, path: '/employee/dual-pos' },
         { label: isAr ? 'حجوزات الطاولات' : 'Table Reservations', icon: BookOpen, path: '/manager/reservations' },
         { label: isAr ? 'حجوزات المنتجات' : 'Product Reservations', icon: Star, path: '/manager/product-reservations' },
       ]

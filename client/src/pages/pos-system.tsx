@@ -95,7 +95,7 @@ const toDateInputValue = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
-export default function PosSystem() {
+export default function PosSystem({ dualModeByDefault = false }: { dualModeByDefault?: boolean } = {}) {
   const tc = useTranslate();
   const [, setLocation] = useLocation();
   const { t, i18n } = useTranslation();
@@ -156,7 +156,13 @@ export default function PosSystem() {
   const [customerLookupFound, setCustomerLookupFound] = useState<boolean | null>(null);
   const [customerPoints, setCustomerPoints] = useState(0);
   const [usePoints, setUsePoints] = useState(false);
-  const [splitViewMode, setSplitViewMode] = useState(false);
+  const [splitViewMode, setSplitViewMode] = useState(() => {
+    try {
+      return dualModeByDefault || localStorage.getItem("pos-dual-customer-mode") === "true";
+    } catch {
+      return dualModeByDefault;
+    }
+  });
   const [mobilePanelView, setMobilePanelView] = useState<'products' | 'cart'>('products');
   const [soundEnabled, setSoundEnabled] = useState(() => getSoundEnabled('pos'));
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -180,6 +186,7 @@ export default function PosSystem() {
   const [historicalOrderDateOnly, setHistoricalOrderDateOnly] = useState(false);
   const [receiptCountdown, setReceiptCountdown] = useState(0);
   const [lastOrder, setLastOrder] = useState<any>(null);
+  const [dualThankYouOrderNumber, setDualThankYouOrderNumber] = useState<string | null>(null);
   const [lastPrintFailed, setLastPrintFailed] = useState(false);
   const [receiptPreviewHtml, setReceiptPreviewHtml] = useState('');
   const [employeeReceiptPreviewHtml, setEmployeeReceiptPreviewHtml] = useState('');
@@ -399,6 +406,27 @@ export default function PosSystem() {
   const broadcastToDisplay = useCallback((event: string, data?: any) => {
     rtSend("pos_cart_update", { event, ...data });
   }, [rtSend]);
+
+  useEffect(() => {
+    if (dualModeByDefault) {
+      setSplitViewMode(true);
+      try { localStorage.setItem("pos-dual-customer-mode", "true"); } catch {}
+    }
+  }, [dualModeByDefault]);
+
+  useEffect(() => {
+    if (!dualThankYouOrderNumber) return;
+    const timer = window.setTimeout(() => setDualThankYouOrderNumber(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [dualThankYouOrderNumber]);
+
+  const toggleDualCustomerMode = () => {
+    setSplitViewMode(current => {
+      const next = !current;
+      try { localStorage.setItem("pos-dual-customer-mode", String(next)); } catch {}
+      return next;
+    });
+  };
 
   useEffect(() => {
     localStorage.setItem("pos-terminal-connected", String(posTerminalConnected));
@@ -1166,6 +1194,7 @@ export default function PosSystem() {
   const getPosItemUnitPrice = getPosItemUnitPriceEarly;
 
   const addToOrder = (product: CoffeeItem, customization?: { selectedItemAddons: Array<{nameAr: string; nameEn?: string; price: number}> }, selectedSize?: string | null, quantity: number = 1, fullCustomization?: DrinkCustomization) => {
+    setDualThankYouOrderNumber(null);
     const addonKey = JSON.stringify(customization?.selectedItemAddons || []);
     const sizeKey = selectedSize || '';
     const existing = orderItems.find(item => item.coffeeItem.id === product.id && item.selectedSize === sizeKey && JSON.stringify(item.customization?.selectedItemAddons || []) === addonKey);
@@ -1648,6 +1677,7 @@ export default function PosSystem() {
           isOffline: true,
         };
         setLastOrder(offlineReceipt);
+        setDualThankYouOrderNumber(offlineOrderNum);
 
         // Auto-print offline receipt if enabled
         if (autoPrint) {
@@ -1717,6 +1747,7 @@ export default function PosSystem() {
       }
 
       const orderNumForPrint = result.orderNumber || result.dailyNumber || result._id?.slice(-4) || '—';
+      setDualThankYouOrderNumber(String(orderNumForPrint));
 
       // ── Pre-generate ZATCA QR code in background so printing is instant ──
       prewarmZatcaQr({
@@ -2135,6 +2166,18 @@ export default function PosSystem() {
               >
                 <Settings className="w-4 h-4" />
               </Button>
+              <Button
+                variant={splitViewMode ? "default" : "outline"}
+                size="sm"
+                onClick={toggleDualCustomerMode}
+                className="gap-1 px-2"
+                data-testid="button-dual-pos-toggle-mobile"
+                aria-pressed={splitViewMode}
+                title={tc("تشغيل وضع Dual POS للعميل", "Enable Dual POS customer mode")}
+              >
+                <Columns2 className="w-4 h-4" />
+                <span className="text-[10px] font-bold">{tc("العميل", "Customer")}</span>
+              </Button>
               {splitViewMode && (
                 <Button 
                   variant="outline" 
@@ -2183,6 +2226,19 @@ export default function PosSystem() {
             >
               <SplitSquareVertical className="w-4 h-4" />
               <span className="text-xs">{t('pos.customer_display')}</span>
+            </Button>
+
+            <Button
+              variant={splitViewMode ? "default" : "outline"}
+              size="sm"
+              onClick={toggleDualCustomerMode}
+              className="hidden sm:flex gap-1"
+              data-testid="button-dual-pos-toggle"
+              aria-pressed={splitViewMode}
+            >
+              <Columns2 className="w-4 h-4" />
+              <span className="text-xs font-bold">{tc("Dual POS", "Dual POS")}</span>
+              <span className={`h-2 w-2 rounded-full ${splitViewMode ? "bg-white" : "bg-muted-foreground"}`} />
             </Button>
 
             <Button
@@ -2356,11 +2412,19 @@ export default function PosSystem() {
         </header>
         <PosShiftBar />
 
-        <main className="flex-1 flex overflow-hidden">
+        <main className={`flex-1 flex overflow-hidden ${splitViewMode ? "flex-col md:flex-row" : ""}`}>
 
-          <section className={`${mobilePanelView === 'products' ? 'flex' : 'hidden'} md:flex flex-1 flex-col overflow-hidden`}>
+          <section className={`${splitViewMode
+            ? `relative flex w-full min-h-0 flex-col overflow-hidden flex-1 ${orderItems.length > 0 ? "basis-0 md:w-1/2" : ""}`
+            : `${mobilePanelView === 'products' ? 'flex' : 'hidden'} md:flex flex-1 flex-col overflow-hidden`}`}>
             {/* Category + Department Top Bar */}
-            <div className={`${mobilePanelView === 'cart' ? 'hidden' : ''} flex border-b bg-muted/30 shrink-0`}>
+            <div className={`${!splitViewMode && mobilePanelView === 'cart' ? 'hidden' : ''} flex border-b bg-muted/30 shrink-0`}>
+              {splitViewMode && (
+                <div className="flex items-center gap-2 border-l px-2 sm:px-3 text-[10px] sm:text-xs font-bold text-primary whitespace-nowrap">
+                  <Users className="h-4 w-4" />
+                  {tc("اختار من المنيو", "Choose from menu")}
+                </div>
+              )}
               {/* Scrollable category buttons */}
               <div className="flex gap-1 overflow-x-auto px-2 py-2 no-scrollbar flex-1 min-w-0">
                 {/* "الكل" button — resets both dept and category */}
@@ -2574,9 +2638,21 @@ export default function PosSystem() {
                 </div>
               )}
             </ScrollArea>
+              {splitViewMode && dualThankYouOrderNumber && (
+                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-background/95 p-6 text-center backdrop-blur-sm" role="status" data-testid="dual-pos-thank-you">
+                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary text-4xl font-black text-primary-foreground shadow-lg">✓</div>
+                  <div>
+                    <h2 className="text-3xl font-black text-primary">{tc("شكراً لطلبكم", "Thank you for your order")}</h2>
+                    <p className="mt-2 text-muted-foreground">{tc("تم تسجيل الطلب بنجاح", "Your order has been placed successfully")}</p>
+                    <p className="mt-1 text-sm font-bold">{tc("رقم الطلب", "Order number")}: {dualThankYouOrderNumber}</p>
+                  </div>
+                </div>
+              )}
           </section>
 
-          <aside className={`${mobilePanelView === 'cart' ? 'flex' : 'hidden'} md:flex w-full md:w-80 lg:w-[420px] border-r flex flex-col bg-card shrink-0`}>
+          <aside className={`${splitViewMode
+            ? `${orderItems.length > 0 ? "flex flex-1 basis-0" : "hidden"} w-full min-h-0 flex-col bg-card border-t md:border-t-0 md:border-r md:w-1/2`
+            : `${mobilePanelView === 'cart' ? 'flex' : 'hidden'} md:flex w-full md:w-80 lg:w-[420px] border-r flex flex-col bg-card shrink-0`}`}>
             <div className="p-2 sm:p-3 border-b flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Button

@@ -9,7 +9,7 @@ import {
   TrendingUp, MapPin, Receipt, Activity, ChevronDown, ChevronRight,
   LogOut, Menu, X, BarChart2, Zap, Box, FlaskConical, 
   ArrowRightLeft, Bell, Table, BookOpen, UserCheck, CreditCard, Monitor,
-  Sparkles, MessageSquare, ShieldCheck, RefreshCw, Calculator
+  Sparkles, MessageSquare, ShieldCheck, RefreshCw, Calculator, Columns2
 } from "lucide-react";
 import { brand } from "@/lib/brand";
 import { cn } from "@/lib/utils";
@@ -207,8 +207,9 @@ export function ManagerSidebar({ manager, onLogout, mobileOpen, onMobileClose, r
     { label: "لوحة التحكم", labelEn: "Overview", icon: LayoutDashboard, path: dashboardPath },
     { label: "إدارة الطلبات", labelEn: "Orders", icon: ClipboardList, path: "/manager/orders" },
     { label: "نقطة البيع", labelEn: "POS", icon: ShoppingCart, path: "/employee/pos" },
+    { label: "Dual POS", labelEn: "Dual POS", icon: Columns2, path: "/employee/dual-pos" },
   ];
-  const directPaths = new Set(["/manager/dashboard", "/owner/dashboard", "/manager/orders", "/employee/pos"]);
+  const directPaths = new Set(["/manager/dashboard", "/owner/dashboard", "/manager/orders", "/employee/pos", "/employee/dual-pos"]);
 
   const visibleGroups = NAV_GROUPS.map(group => ({
     ...group,
