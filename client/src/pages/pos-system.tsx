@@ -15,7 +15,7 @@ import {
   Coffee, ShoppingBag, Trash2, Plus, Minus, Search, 
   CreditCard, ChevronLeft, ChevronRight, ChevronDown, XCircle, 
   Volume2, VolumeX, ClipboardList, Grid3X3, Tag, PlayCircle,
-  Columns2, ArrowRight, Printer, CheckCircle, CheckCircle2, ShoppingCart, 
+  ArrowRight, Printer, CheckCircle, CheckCircle2, ShoppingCart,
   Clock, Check, X, AlertTriangle, MessageSquare, 
   Archive, RefreshCw, Wifi, WifiOff, Loader2,
   Navigation, SplitSquareVertical, Banknote,
@@ -95,7 +95,7 @@ const toDateInputValue = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
-export default function PosSystem({ dualModeByDefault = false }: { dualModeByDefault?: boolean } = {}) {
+export default function PosSystem() {
   const tc = useTranslate();
   const [, setLocation] = useLocation();
   const { t, i18n } = useTranslation();
@@ -112,6 +112,11 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
       return data ? JSON.parse(data) as Employee : null;
     } catch { return null; }
   }, []);
+  const [dualPosTerminalId] = useState(() => {
+    return typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `pos-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  });
 
   // ── Branch selector for admin/owner ──────────────────────────────────────
   const isAdminOwner = employee?.role === 'admin' || employee?.role === 'owner';
@@ -156,13 +161,7 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
   const [customerLookupFound, setCustomerLookupFound] = useState<boolean | null>(null);
   const [customerPoints, setCustomerPoints] = useState(0);
   const [usePoints, setUsePoints] = useState(false);
-  const [splitViewMode, setSplitViewMode] = useState(() => {
-    try {
-      return dualModeByDefault || localStorage.getItem("pos-dual-customer-mode") === "true";
-    } catch {
-      return dualModeByDefault;
-    }
-  });
+  const [allowCustomerControl, setAllowCustomerControl] = useState(false);
   const [mobilePanelView, setMobilePanelView] = useState<'products' | 'cart'>('products');
   const [soundEnabled, setSoundEnabled] = useState(() => getSoundEnabled('pos'));
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -186,7 +185,6 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
   const [historicalOrderDateOnly, setHistoricalOrderDateOnly] = useState(false);
   const [receiptCountdown, setReceiptCountdown] = useState(0);
   const [lastOrder, setLastOrder] = useState<any>(null);
-  const [dualThankYouOrderNumber, setDualThankYouOrderNumber] = useState<string | null>(null);
   const [lastPrintFailed, setLastPrintFailed] = useState(false);
   const [receiptPreviewHtml, setReceiptPreviewHtml] = useState('');
   const [employeeReceiptPreviewHtml, setEmployeeReceiptPreviewHtml] = useState('');
@@ -269,11 +267,16 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
   useEffect(() => {
     const payload = {
       clientType: 'pos',
-      branchId: activeBranchId || undefined,
+      branchId: activeBranchId || employee?.branchId || "main",
       employeeId: employee?.id || undefined,
+      dualPosTerminalId,
     };
     getRealtimeEngine(payload);
-  }, [activeBranchId, employee?.id]);
+  }, [activeBranchId, employee?.id, dualPosTerminalId]);
+
+  useEffect(() => {
+    rtSend("dual_pos_control_update", { enabled: allowCustomerControl });
+  }, [allowCustomerControl, wsConnected, rtSend]);
 
   useRealtimeEvent("new_order", (order: any) => {
     queryClient.invalidateQueries({ queryKey: ["/api/orders/live"] });
@@ -407,25 +410,13 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
     rtSend("pos_cart_update", { event, ...data });
   }, [rtSend]);
 
-  useEffect(() => {
-    if (dualModeByDefault) {
-      setSplitViewMode(true);
-      try { localStorage.setItem("pos-dual-customer-mode", "true"); } catch {}
-    }
-  }, [dualModeByDefault]);
-
-  useEffect(() => {
-    if (!dualThankYouOrderNumber) return;
-    const timer = window.setTimeout(() => setDualThankYouOrderNumber(null), 5000);
-    return () => window.clearTimeout(timer);
-  }, [dualThankYouOrderNumber]);
-
-  const toggleDualCustomerMode = () => {
-    setSplitViewMode(current => {
-      const next = !current;
-      try { localStorage.setItem("pos-dual-customer-mode", String(next)); } catch {}
-      return next;
+  const openDualPosDisplay = () => {
+    const branchId = activeBranchId || employee?.branchId || "main";
+    const params = new URLSearchParams({
+      branchId: String(branchId),
+      terminalId: dualPosTerminalId,
     });
+    window.open(`/dual-pos?${params.toString()}`, "_blank", "noopener,noreferrer");
   };
 
   useEffect(() => {
@@ -1180,9 +1171,14 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
       event,
       items: items.map(i => ({
         nameAr: i.coffeeItem.nameAr,
+        nameEn: i.coffeeItem.nameEn,
         price: getPosItemUnitPrice(i),
         quantity: i.quantity,
         lineItemId: i.lineItemId,
+        productId: i.coffeeItem.id,
+        imageUrl: i.coffeeItem.imageUrl,
+        selectedSize: i.selectedSize || undefined,
+        selectedAddons: (i.customization?.selectedItemAddons || []).map((addon: any) => addon.nameAr),
       })),
       subtotal,
       tax,
@@ -1194,7 +1190,6 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
   const getPosItemUnitPrice = getPosItemUnitPriceEarly;
 
   const addToOrder = (product: CoffeeItem, customization?: { selectedItemAddons: Array<{nameAr: string; nameEn?: string; price: number}> }, selectedSize?: string | null, quantity: number = 1, fullCustomization?: DrinkCustomization) => {
-    setDualThankYouOrderNumber(null);
     const addonKey = JSON.stringify(customization?.selectedItemAddons || []);
     const sizeKey = selectedSize || '';
     const existing = orderItems.find(item => item.coffeeItem.id === product.id && item.selectedSize === sizeKey && JSON.stringify(item.customization?.selectedItemAddons || []) === addonKey);
@@ -1234,6 +1229,118 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
       broadcastToDisplay("item_updated", buildDisplayPayload(next, "item_updated"));
     }
   };
+
+  useRealtimeEvent("dual_pos_customer_action", async (message: any) => {
+    const action = message?.payload || message;
+    if (action?.action === "request_state") {
+      broadcastToDisplay("dual_snapshot", buildDisplayPayload(orderItems, "dual_snapshot", {
+        controlEnabled: allowCustomerControl,
+      }));
+      return;
+    }
+    if (!allowCustomerControl) return;
+
+    if (action?.action === "clear_order") {
+      setOrderItems([]);
+      setItemDiscounts({});
+      broadcastToDisplay("order_cancelled", { items: [], subtotal: 0, tax: 0, total: 0 });
+      return;
+    }
+
+    if (action?.action === "set_quantity") {
+      const lineItemId = String(action.lineItemId || "");
+      const item = orderItems.find((candidate) => candidate.lineItemId === lineItemId);
+      const quantity = Number(action.quantity);
+      if (!item || !Number.isInteger(quantity) || quantity < 0 || quantity > 99) return;
+      updateQuantity(lineItemId, quantity);
+      return;
+    }
+
+    if (action?.action !== "add") return;
+    const productId = String(action.productId || "");
+    const product = (productsData || []).find((candidate: CoffeeItem) => String(candidate.id) === productId);
+    if (!product || Number(product.isAvailable) !== 1 || product.availabilityStatus === "unavailable" || product.availabilityStatus === "out_of_stock") return;
+
+    const selectedSize = action.selectedSize ? String(action.selectedSize) : "";
+    if (selectedSize && !product.availableSizes?.some((size: any) => size.nameAr === selectedSize)) return;
+    const addonSelections = Array.isArray(action.selectedAddons) ? action.selectedAddons : [];
+    const inlineIndices = Array.isArray(action.selectedInlineAddonIndices) ? action.selectedInlineAddonIndices : [];
+    const productHasOptions = !!product.availableSizes?.length || !!(product as any).addons?.length || itemsWithAddonsSet.has(String(product.id));
+    if (productHasOptions && action.configured !== true) return;
+
+    let verifiedRegularAddons: any[] = [];
+    if (addonSelections.length > 0) {
+      try {
+        const response = await fetch(`/api/coffee-items/${encodeURIComponent(productId)}/addons`);
+        if (!response.ok) return;
+        const availableAddons: any[] = await response.json();
+        verifiedRegularAddons = addonSelections.map((selection: any) => {
+          const definition = availableAddons.find((addon) => String(addon.addonId || addon.id) === String(selection.addonId));
+          const quantity = Number(selection.quantity);
+          if (!definition || !Number.isInteger(quantity) || quantity < Number(definition.minQuantity || 0) || quantity > Number(definition.maxQuantity || 99)) {
+            throw new Error("Invalid customer add-on selection");
+          }
+          return {
+            addonId: String(definition.addonId || definition.id),
+            nameAr: definition.nameAr,
+            nameEn: definition.nameEn || definition.nameAr,
+            quantity,
+            price: Number(definition.price) || 0,
+            category: definition.category || "other",
+          };
+        });
+      } catch {
+        return;
+      }
+    }
+
+    const availableInlineAddons: any[] = Array.isArray((product as any).addons) ? (product as any).addons : [];
+    const verifiedInlineAddons: any[] = [];
+    for (const rawIndex of inlineIndices) {
+      const index = Number(rawIndex);
+      if (!Number.isInteger(index) || index < 0 || index >= availableInlineAddons.length) return;
+      const addon = availableInlineAddons[index];
+      verifiedInlineAddons.push({
+        nameAr: String(addon.nameAr || ""),
+        nameEn: String(addon.nameEn || addon.nameAr || ""),
+        price: Number(addon.price) || 0,
+        section: addon.section,
+      });
+    }
+
+    const quantity = Number(action.quantity);
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) return;
+    const regularItemAddons = verifiedRegularAddons.map((addon) => ({
+      nameAr: addon.nameAr + (addon.quantity > 1 ? ` ×${addon.quantity}` : ""),
+      nameEn: addon.nameEn,
+      price: (Number(addon.price) || 0) * addon.quantity,
+    }));
+    const inlineItemAddons = verifiedInlineAddons.map((addon) => ({
+      nameAr: addon.nameAr,
+      nameEn: addon.nameEn,
+      price: addon.price,
+    }));
+    const selectedItemAddons = [...regularItemAddons, ...inlineItemAddons];
+    const fullCustomization: DrinkCustomization = {
+      selectedSize: selectedSize || undefined,
+      selectedAddons: verifiedRegularAddons,
+      selectedInlineAddons: verifiedInlineAddons,
+      totalAddonsPrice: selectedItemAddons.reduce((sum, addon) => sum + addon.price, 0),
+      notes: typeof action.notes === "string" ? action.notes.slice(0, 120) : undefined,
+    };
+    addToOrder(
+      product,
+      selectedItemAddons.length ? { selectedItemAddons } : undefined,
+      selectedSize || null,
+      quantity,
+      productHasOptions ? fullCustomization : undefined,
+    );
+  }, {
+    clientType: "pos",
+    branchId: activeBranchId || employee?.branchId || "main",
+    employeeId: employee?.id || undefined,
+    dualPosTerminalId,
+  });
 
   // ── Multi-Cart: hold, resume, new tab, switch, merge ──────────────────────
 
@@ -1586,6 +1693,8 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
         items: orderItems.map(i => ({ nameAr: i.coffeeItem.nameAr, price: getPosItemUnitPrice(i), quantity: i.quantity })),
         subtotal, tax, total,
       });
+      setAllowCustomerControl(false);
+      rtSend("dual_pos_control_update", { enabled: false });
 
       const orderData: any = {
         items: orderItems.map(item => {
@@ -1677,7 +1786,6 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
           isOffline: true,
         };
         setLastOrder(offlineReceipt);
-        setDualThankYouOrderNumber(offlineOrderNum);
 
         // Auto-print offline receipt if enabled
         if (autoPrint) {
@@ -1747,7 +1855,6 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
       }
 
       const orderNumForPrint = result.orderNumber || result.dailyNumber || result._id?.slice(-4) || '—';
-      setDualThankYouOrderNumber(String(orderNumForPrint));
 
       // ── Pre-generate ZATCA QR code in background so printing is instant ──
       prewarmZatcaQr({
@@ -2167,27 +2274,21 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
                 <Settings className="w-4 h-4" />
               </Button>
               <Button
-                variant={splitViewMode ? "default" : "outline"}
+                variant={allowCustomerControl ? "default" : "outline"}
                 size="sm"
-                onClick={toggleDualCustomerMode}
+                onClick={() => setAllowCustomerControl(current => !current)}
                 className="gap-1 px-2"
-                data-testid="button-dual-pos-toggle-mobile"
-                aria-pressed={splitViewMode}
-                title={tc("تشغيل وضع Dual POS للعميل", "Enable Dual POS customer mode")}
+                data-testid="button-dual-pos-control-mobile"
+                aria-pressed={allowCustomerControl}
+                title={tc("السماح للعميل بإضافة وتعديل الطلب", "Allow the customer to edit the order")}
               >
-                <Columns2 className="w-4 h-4" />
-                <span className="text-[10px] font-bold">{tc("العميل", "Customer")}</span>
+                <Users className="w-4 h-4" />
+                <span className="text-[10px] font-bold">{tc("تحكم العميل", "Customer control")}</span>
               </Button>
-              {splitViewMode && (
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => setSplitViewMode(false)}
-                  data-testid="button-mobile-back"
-                >
-                  <ArrowRight className="w-4 h-4" />
-                </Button>
-              )}
+              <Button variant="outline" size="sm" onClick={openDualPosDisplay} className="gap-1 px-2" data-testid="button-dual-pos-display-mobile">
+                <MonitorSmartphone className="w-4 h-4" />
+                <span className="text-[10px] font-bold">{tc("شاشة العميل", "Customer screen")}</span>
+              </Button>
             </div>
           </div>
 
@@ -2220,25 +2321,25 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
             <Button
               variant="outline"
               size="sm"
-              onClick={() => window.open('/customer-display', '_blank')}
+              onClick={openDualPosDisplay}
               className="hidden sm:flex gap-1"
-              data-testid="button-customer-display"
+              data-testid="button-dual-pos-display"
             >
-              <SplitSquareVertical className="w-4 h-4" />
-              <span className="text-xs">{t('pos.customer_display')}</span>
+              <MonitorSmartphone className="w-4 h-4" />
+              <span className="text-xs">{tc("فتح شاشة العميل", "Open customer screen")}</span>
             </Button>
 
             <Button
-              variant={splitViewMode ? "default" : "outline"}
+              variant={allowCustomerControl ? "default" : "outline"}
               size="sm"
-              onClick={toggleDualCustomerMode}
+              onClick={() => setAllowCustomerControl(current => !current)}
               className="hidden sm:flex gap-1"
-              data-testid="button-dual-pos-toggle"
-              aria-pressed={splitViewMode}
+              data-testid="button-dual-pos-control"
+              aria-pressed={allowCustomerControl}
             >
-              <Columns2 className="w-4 h-4" />
-              <span className="text-xs font-bold">{tc("Dual POS", "Dual POS")}</span>
-              <span className={`h-2 w-2 rounded-full ${splitViewMode ? "bg-white" : "bg-muted-foreground"}`} />
+              <Users className="w-4 h-4" />
+              <span className="text-xs font-bold">{tc("السماح للعميل بالتحكم", "Allow customer control")}</span>
+              <span className={`h-2 w-2 rounded-full ${allowCustomerControl ? "bg-white" : "bg-muted-foreground"}`} />
             </Button>
 
             <Button
@@ -2412,19 +2513,11 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
         </header>
         <PosShiftBar />
 
-        <main className={`flex-1 flex overflow-hidden ${splitViewMode ? "flex-col md:flex-row" : ""}`}>
+        <main className="flex-1 flex overflow-hidden">
 
-          <section className={`${splitViewMode
-            ? `relative flex w-full min-h-0 flex-col overflow-hidden flex-1 ${orderItems.length > 0 ? "basis-0 md:w-1/2" : ""}`
-            : `${mobilePanelView === 'products' ? 'flex' : 'hidden'} md:flex flex-1 flex-col overflow-hidden`}`}>
+          <section className={`${mobilePanelView === 'products' ? 'flex' : 'hidden'} md:flex flex-1 flex-col overflow-hidden`}>
             {/* Category + Department Top Bar */}
-            <div className={`${!splitViewMode && mobilePanelView === 'cart' ? 'hidden' : ''} flex border-b bg-muted/30 shrink-0`}>
-              {splitViewMode && (
-                <div className="flex items-center gap-2 border-l px-2 sm:px-3 text-[10px] sm:text-xs font-bold text-primary whitespace-nowrap">
-                  <Users className="h-4 w-4" />
-                  {tc("اختار من المنيو", "Choose from menu")}
-                </div>
-              )}
+            <div className="flex border-b bg-muted/30 shrink-0">
               {/* Scrollable category buttons */}
               <div className="flex gap-1 overflow-x-auto px-2 py-2 no-scrollbar flex-1 min-w-0">
                 {/* "الكل" button — resets both dept and category */}
@@ -2638,21 +2731,9 @@ export default function PosSystem({ dualModeByDefault = false }: { dualModeByDef
                 </div>
               )}
             </ScrollArea>
-              {splitViewMode && dualThankYouOrderNumber && (
-                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-background/95 p-6 text-center backdrop-blur-sm" role="status" data-testid="dual-pos-thank-you">
-                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary text-4xl font-black text-primary-foreground shadow-lg">✓</div>
-                  <div>
-                    <h2 className="text-3xl font-black text-primary">{tc("شكراً لطلبكم", "Thank you for your order")}</h2>
-                    <p className="mt-2 text-muted-foreground">{tc("تم تسجيل الطلب بنجاح", "Your order has been placed successfully")}</p>
-                    <p className="mt-1 text-sm font-bold">{tc("رقم الطلب", "Order number")}: {dualThankYouOrderNumber}</p>
-                  </div>
-                </div>
-              )}
           </section>
 
-          <aside className={`${splitViewMode
-            ? `${orderItems.length > 0 ? "flex flex-1 basis-0" : "hidden"} w-full min-h-0 flex-col bg-card border-t md:border-t-0 md:border-r md:w-1/2`
-            : `${mobilePanelView === 'cart' ? 'flex' : 'hidden'} md:flex w-full md:w-80 lg:w-[420px] border-r flex flex-col bg-card shrink-0`}`}>
+          <aside className={`${mobilePanelView === 'cart' ? 'flex' : 'hidden'} md:flex w-full md:w-80 lg:w-[420px] border-r flex flex-col bg-card shrink-0`}>
             <div className="p-2 sm:p-3 border-b flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Button

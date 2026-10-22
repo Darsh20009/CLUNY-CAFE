@@ -94,6 +94,7 @@ const KitchenDisplay = lazy(() => import("@/pages/kitchen-display"));
 const AccountingDashboard = lazy(() => import("@/pages/accounting-dashboard"));
 const OrderStatusDisplay = lazy(() => import("@/pages/order-status-display"));
 const CustomerDisplay = lazy(() => import("@/pages/customer-display"));
+const DualPOSDisplay = lazy(() => import("@/pages/dual-pos-display"));
 const InventorySmartPage = lazy(() => import("@/pages/inventory-smart"));
 const InventoryHub = lazy(() => import("@/pages/inventory-hub"));
 const EmployeeAvailability = lazy(() => import("@/pages/employee-availability"));
@@ -287,6 +288,9 @@ function AppRouter() {
       <Route path="/customer-display">
         <CustomerDisplay />
       </Route>
+      <Route path="/dual-pos">
+        <DualPOSDisplay />
+      </Route>
       <Route path="/unauthorized">
         <UnauthorizedPage />
       </Route>
@@ -328,7 +332,7 @@ function AppRouter() {
       <Route path="/employee/dashboard"><AuthGuard userType="employee"><EmployeeDashboard /></AuthGuard></Route>
       <Route path="/employee/cashier"><AuthGuard userType="employee"><EmployeeCashier /></AuthGuard></Route>
       <Route path="/employee/pos"><AuthGuard userType="employee"><POSSystem /></AuthGuard></Route>
-      <Route path="/employee/dual-pos"><AuthGuard userType="employee"><POSSystem dualModeByDefault /></AuthGuard></Route>
+      <Route path="/employee/dual-pos"><AuthGuard userType="employee"><POSSystem /></AuthGuard></Route>
       <Route path="/employee/shifts"><AuthGuard userType="employee"><ShiftManagement /></AuthGuard></Route>
       <Route path="/employee/kitchen"><AuthGuard userType="employee"><KitchenDisplay /></AuthGuard></Route>
       <Route path="/employee/tables"><AuthGuard userType="employee"><CashierTables /></AuthGuard></Route>
