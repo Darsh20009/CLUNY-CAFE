@@ -112,6 +112,10 @@ export default function CustomerDisplay() {
         setState(prev => ({ ...prev, mode: "payment-success", orderNumber, items: items || prev.items, subtotal: subtotal || prev.subtotal, tax: tax || prev.tax, total: total || prev.total }));
         scheduleIdle(5000);
         break;
+      case "payment_failed":
+        setState(prev => ({ ...prev, mode: prev.items.length > 0 ? "order-review" : "idle" }));
+        scheduleIdle(60_000);
+        break;
     }
   }, [scheduleIdle]);
 

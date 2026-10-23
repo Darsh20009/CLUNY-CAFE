@@ -335,6 +335,24 @@ class OrderWebSocketManager {
         }
         break;
 
+      case "dual_pos_payment_update":
+        if (
+          client?.type === "pos" &&
+          client.branchId &&
+          client.dualPosTerminalId &&
+          message.event === "cash_payment_due"
+        ) {
+          const payload = message.payload && typeof message.payload === "object"
+            ? message.payload
+            : {};
+          this.broadcastDualPosDisplay(
+            { ...payload, event: message.event },
+            client.branchId,
+            client.dualPosTerminalId,
+          );
+        }
+        break;
+
       case "dual_pos_control_update":
         if (client && client.type === "pos" && client.dualPosTerminalId) {
           client.dualPosControlEnabled = message.enabled === true;

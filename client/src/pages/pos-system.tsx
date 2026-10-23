@@ -94,6 +94,13 @@ const PAYMENT_METHODS = [
   { id: "split", icon: SplitSquareVertical, tKey: "pos.payment_split" },
 ];
 
+const CUSTOMER_PAYMENT_METHOD_LABELS: Record<string, { ar: string; en: string }> = {
+  cash: { ar: "نقدًا", en: "Cash" },
+  card: { ar: "شبكة", en: "Card" },
+  "qahwa-card": { ar: "بطاقة كلوني", en: "CLUNY Card" },
+  split: { ar: "نقدي + شبكة", en: "Cash + Card" },
+};
+
 const toDateInputValue = (date: Date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -1804,10 +1811,25 @@ export default function PosSystem() {
           }
         : undefined;
       const pointsUsed = discount > 0 ? Math.round(discount * 50) : 0;
+      const selectedCustomPaymentMethod = allPaymentMethods.find(
+        (method: any) => String(method.id) === String(paymentMethod),
+      );
+      const builtInPaymentMethodLabel = CUSTOMER_PAYMENT_METHOD_LABELS[paymentMethod];
+      const paymentMethodLabelAr = builtInPaymentMethodLabel?.ar ||
+        selectedCustomPaymentMethod?.nameAr ||
+        PAYMENT_METHOD_LABELS[paymentMethod] ||
+        String(paymentMethod);
+      const paymentMethodLabelEn = builtInPaymentMethodLabel?.en ||
+        selectedCustomPaymentMethod?.nameEn ||
+        selectedCustomPaymentMethod?.nameAr ||
+        String(paymentMethod);
 
       broadcastToDisplay("payment_processing", {
         items: orderItems.map(i => ({ nameAr: i.coffeeItem.nameAr, price: getPosItemUnitPrice(i), quantity: i.quantity })),
         subtotal, tax, total,
+        paymentMethod,
+        paymentMethodLabelAr,
+        paymentMethodLabelEn,
       });
       setAllowCustomerControl(false);
       rtSend("dual_pos_control_update", { enabled: false });
@@ -2060,11 +2082,27 @@ export default function PosSystem() {
           console.warn('[POS] Auto-print failed:', e);
         });
       }
-      broadcastToDisplay("payment_success", {
-        orderNumber: result.orderNumber || result.dailyNumber || '',
+      const displayOrderNumber = String(result.orderNumber || result.dailyNumber || '');
+      const displayPaymentPayload = {
+        orderNumber: displayOrderNumber,
         items: orderItems.map(i => ({ nameAr: i.coffeeItem.nameAr, price: getPosItemUnitPrice(i), quantity: i.quantity })),
         subtotal, tax, total,
-      });
+        paymentMethod,
+        paymentMethodLabelAr,
+        paymentMethodLabelEn,
+      };
+      if (paymentMethod === "cash" && total > 0 && !historicalOrderAt) {
+        // The generic customer display needs the regular success event to leave
+        // its processing screen; the paired Dual POS receives the cash-due
+        // prompt separately so it does not briefly show a false success state.
+        broadcastToDisplay("payment_success", displayPaymentPayload);
+        rtSend("dual_pos_payment_update", {
+          event: "cash_payment_due",
+          payload: { ...displayPaymentPayload, amountDue: total },
+        });
+      } else {
+        broadcastToDisplay("payment_success", displayPaymentPayload);
+      }
 
       // Play confirmation sound for the cashier who placed the order
       if (soundEnabled) {
@@ -2093,6 +2131,7 @@ export default function PosSystem() {
       queryClient.invalidateQueries({ queryKey: ["/api/shifts/active"] });
     } catch (error) {
       console.error("Checkout error:", error);
+      broadcastToDisplay("payment_failed", {});
       toast({ 
         variant: "destructive",
         title: t('pos.checkout_error_title'), 
