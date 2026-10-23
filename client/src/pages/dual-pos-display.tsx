@@ -6,6 +6,7 @@ import QRCode from "qrcode";
 import type { CoffeeItem } from "@shared/schema";
 import DrinkCustomizationDialog, { type DrinkCustomization } from "@/components/drink-customization-dialog";
 import DualPosPaymentPrompt from "@/components/dual-pos-payment-prompt";
+import DualPosCheckoutReview from "@/components/dual-pos-checkout-review";
 import SarIcon from "@/components/sar-icon";
 import clunyLogo from "@assets/cluny-logo-customer.png";
 import DualPosIdlePromo from "@/components/dual-pos-idle-promo";
@@ -48,6 +49,15 @@ type DisplayPaymentPrompt = {
   amount: number;
   paymentMethodLabel: string;
   orderNumber?: string;
+};
+
+type DisplayCheckoutReview = {
+  items: DisplayOrderItem[];
+  subtotal: number;
+  tax: number;
+  total: number;
+  paymentMethod: string;
+  paymentMethodLabel: string;
 };
 
 export default function DualPOSDisplay() {
@@ -94,6 +104,7 @@ export default function DualPOSDisplay() {
   const [orderTax, setOrderTax] = useState(0);
   const [thankYouOrderNumber, setThankYouOrderNumber] = useState("");
   const [paymentPrompt, setPaymentPrompt] = useState<DisplayPaymentPrompt | null>(null);
+  const [checkoutReview, setCheckoutReview] = useState<DisplayCheckoutReview | null>(null);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [search, setSearch] = useState("");
   const [customizing, setCustomizing] = useState<{ item: CoffeeItem; group: CoffeeItem[] } | null>(null);
@@ -146,6 +157,7 @@ export default function DualPOSDisplay() {
       if (typeof update.terminalId === "string") setPairedTerminalId(update.terminalId);
       if (update.online !== true) {
         setPaymentPrompt(null);
+        setCheckoutReview(null);
         setThankYouOrderNumber("");
         setOrderItems([]);
         setOrderTotal(0);
@@ -159,6 +171,7 @@ export default function DualPOSDisplay() {
       setControlEnabled(false);
       setPairedTerminalId("");
       setPaymentPrompt(null);
+      setCheckoutReview(null);
       setThankYouOrderNumber("");
       setOrderItems([]);
       setOrderTotal(0);
@@ -178,6 +191,7 @@ export default function DualPOSDisplay() {
     }
     if (update.event === "payment_processing") {
       setControlEnabled(false);
+      setCheckoutReview(null);
       setPaymentPrompt({
         stage: "processing",
         amount: Number(update.total) || 0,
@@ -196,6 +210,7 @@ export default function DualPOSDisplay() {
     if (update.event === "cash_payment_due") {
       setControlEnabled(false);
       setShowingPromo(false);
+      setCheckoutReview(null);
       setThankYouOrderNumber("");
       setPaymentPrompt({
         stage: "cash_due",
@@ -203,6 +218,38 @@ export default function DualPOSDisplay() {
         paymentMethodLabel: String(update.paymentMethodLabel || (isArabic ? "نقدي" : "Cash")),
         orderNumber: update.orderNumber ? String(update.orderNumber) : undefined,
       });
+      registerActivity();
+      return;
+    }
+    if (update.event === "checkout_review") {
+      const items = Array.isArray(update.items) ? update.items : [];
+      const total = Number(update.total) || 0;
+      setControlEnabled(false);
+      setShowingPromo(false);
+      setPaymentPrompt(null);
+      setThankYouOrderNumber("");
+      setOrderItems(items);
+      setOrderTotal(total);
+      setOrderSubtotal(Number(update.subtotal) || 0);
+      setOrderTax(Number(update.tax) || 0);
+      setCheckoutReview({
+        items,
+        subtotal: Number(update.subtotal) || 0,
+        tax: Number(update.tax) || 0,
+        total,
+        paymentMethod: String(update.paymentMethod || ""),
+        paymentMethodLabel: String(
+          (isArabic ? update.paymentMethodLabelAr : update.paymentMethodLabelEn) ||
+          update.paymentMethodLabel ||
+          update.paymentMethod ||
+          (isArabic ? "طريقة الدفع المختارة" : "Selected payment method")
+        ),
+      });
+      registerActivity();
+      return;
+    }
+    if (update.event === "checkout_review_cancelled") {
+      setCheckoutReview(null);
       registerActivity();
       return;
     }
@@ -226,6 +273,7 @@ export default function DualPOSDisplay() {
     if (typeof update.tax === "number") setOrderTax(update.tax);
     if (update.event === "order_cancelled") {
       setPaymentPrompt(null);
+      setCheckoutReview(null);
       setThankYouOrderNumber("");
       setOrderItems([]);
       setOrderTotal(0);
@@ -234,10 +282,12 @@ export default function DualPOSDisplay() {
     }
     if (update.event === "order_started") {
       setPaymentPrompt(null);
+      setCheckoutReview(null);
       setThankYouOrderNumber("");
     }
     if (update.event === "payment_success") {
       setPaymentPrompt(null);
+      setCheckoutReview(null);
       setThankYouOrderNumber(String(update.orderNumber || "—"));
     }
   });
@@ -262,7 +312,7 @@ export default function DualPOSDisplay() {
   }, [connected, pairedPosOnline, pairedTerminalId, send]);
 
   useEffect(() => {
-    if (thankYouOrderNumber || paymentPrompt) {
+    if (thankYouOrderNumber || paymentPrompt || checkoutReview) {
       if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
       setShowingPromo(false);
       return;
@@ -292,7 +342,7 @@ export default function DualPOSDisplay() {
       activityEvents.forEach((eventName) => window.removeEventListener(eventName, handleWindowActivity));
       if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
     };
-  }, [thankYouOrderNumber, paymentPrompt, registerActivity]);
+  }, [thankYouOrderNumber, paymentPrompt, checkoutReview, registerActivity]);
 
   useEffect(() => {
     let cancelled = false;
@@ -391,7 +441,7 @@ export default function DualPOSDisplay() {
       : `/${url}`;
   };
 
-  if (showingPromo && !thankYouOrderNumber && !paymentPrompt) {
+  if (showingPromo && !thankYouOrderNumber && !paymentPrompt && !checkoutReview) {
     return (
       <DualPosIdlePromo
         isArabic={isArabic}
@@ -493,6 +543,21 @@ export default function DualPOSDisplay() {
         amount={paymentPrompt.amount}
         paymentMethodLabel={paymentPrompt.paymentMethodLabel}
         orderNumber={paymentPrompt.orderNumber}
+      />
+    );
+  }
+
+  if (checkoutReview) {
+    return (
+      <DualPosCheckoutReview
+        isArabic={isArabic}
+        direction={direction}
+        items={checkoutReview.items}
+        subtotal={checkoutReview.subtotal}
+        tax={checkoutReview.tax}
+        total={checkoutReview.total}
+        paymentMethod={checkoutReview.paymentMethod}
+        paymentMethodLabel={checkoutReview.paymentMethodLabel}
       />
     );
   }

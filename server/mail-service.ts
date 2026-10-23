@@ -604,11 +604,11 @@ export async function sendEmployeeWelcomeEmail(
                 </tr>
                 <tr>
                   <td style="padding:8px 0;color:#666;font-size:13px;">اسم المستخدم</td>
-                  <td style="padding:8px 0;color:#2D9B6E;font-weight:bold;font-size:18px;letter-spacing:1px;">${username}</td>
+                  <td style="padding:8px 0;color:#2D9B6E;font-weight:bold;font-size:18px;">${username}</td>
                 </tr>
                 <tr>
                   <td style="padding:8px 0;color:#666;font-size:13px;">كلمة المرور</td>
-                  <td style="padding:8px 0;color:#333;font-weight:bold;font-size:18px;letter-spacing:2px;">${plainPassword}</td>
+                  <td style="padding:8px 0;color:#333;font-weight:bold;font-size:18px;">${plainPassword}</td>
                 </tr>
               </table>
             </div>

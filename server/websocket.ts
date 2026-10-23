@@ -340,7 +340,7 @@ class OrderWebSocketManager {
           client?.type === "pos" &&
           client.branchId &&
           client.dualPosTerminalId &&
-          message.event === "cash_payment_due"
+          ["cash_payment_due", "checkout_review", "checkout_review_cancelled"].includes(String(message.event))
         ) {
           const payload = message.payload && typeof message.payload === "object"
             ? message.payload

@@ -1,4 +1,4 @@
-import { ArrowRight, Coffee, Hand, QrCode, Sparkles, Wifi, WifiOff } from "lucide-react";
+import { ArrowRight, Hand, QrCode, Wifi, WifiOff } from "lucide-react";
 import type { CoffeeItem } from "@shared/schema";
 import clunyLogo from "@assets/cluny-logo-customer.png";
 import SarIcon from "@/components/sar-icon";
@@ -76,10 +76,6 @@ export default function DualPosIdlePromo({
           <section className="flex min-w-0 flex-col landscape:min-h-0">
             <div className="mb-4 flex items-end justify-between gap-3 sm:mb-5">
               <div>
-                <p className="mb-1.5 flex items-center gap-2 text-[10px] font-bold tracking-[0.16em] text-[#8a754e] sm:text-[11px]">
-                  <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-                  {isArabic ? "مختارات كلوني" : "CLUNY SELECTION"}
-                </p>
                 <h1 className="text-[23px] font-black leading-tight tracking-tight text-[#17392f] sm:text-3xl xl:text-[36px]">
                   {isArabic ? "قهوتك المفضلة، أقرب مما تتخيل" : "Your favorite coffee, closer than ever"}
                 </h1>
@@ -99,8 +95,13 @@ export default function DualPosIdlePromo({
                       className="group flex min-w-0 flex-col overflow-hidden rounded-[18px] border border-[#dfe6df] bg-white shadow-[0_5px_20px_rgba(27,58,43,0.055)] transition-transform duration-300 hover:-translate-y-0.5 landscape:min-h-0"
                     >
                       <div className="relative aspect-[1.45/1] overflow-hidden bg-[#edf1ec] landscape:min-h-0 landscape:flex-1">
-                        <div className="absolute inset-0 flex items-center justify-center text-[#8aa192]">
-                          <Coffee className="h-8 w-8" strokeWidth={1.4} aria-hidden="true" />
+                        <div className="absolute inset-0 flex items-center justify-center bg-[#f7f8f5]">
+                          <img
+                            src={clunyLogo}
+                            alt=""
+                            aria-hidden="true"
+                            className="h-16 w-16 object-contain opacity-75 sm:h-20 sm:w-20"
+                          />
                         </div>
                         {productImage && (
                           <img

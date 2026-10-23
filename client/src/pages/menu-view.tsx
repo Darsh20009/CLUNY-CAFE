@@ -221,7 +221,7 @@ export default function MenuView() {
           {/* Product Name */}
           <h1
             className="text-4xl font-black text-white leading-tight"
-            style={{ fontFamily: "'Noto Naskh Arabic', serif", letterSpacing: "-0.5px" }}
+            style={{ fontFamily: "'Noto Naskh Arabic', serif" }}
           >
             {current?.nameAr}
           </h1>

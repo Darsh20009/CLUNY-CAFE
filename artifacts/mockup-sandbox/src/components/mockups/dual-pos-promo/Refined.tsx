@@ -1,4 +1,4 @@
-import { ArrowRight, Coffee, Hand, QrCode, Wifi } from "lucide-react";
+import { ArrowRight, Hand, QrCode, Wifi } from "lucide-react";
 import SarIcon from "@/components/sar-icon";
 
 const products = [
@@ -67,15 +67,10 @@ export function Refined() {
           <section className="flex min-w-0 flex-col landscape:min-h-0">
             <div className="mb-5 flex items-end justify-between gap-4 sm:mb-6 landscape:mb-5">
               <div>
-                <p className="mb-2 text-[10px] font-bold tracking-[0.24em] text-[#a27b48] sm:text-[11px]">من قائمة كلوني</p>
-                <h1 className="text-[25px] font-bold leading-[1.45] tracking-[-0.035em] text-[#183a31] sm:text-3xl xl:text-[38px]">
+                <h1 className="text-[25px] font-bold leading-[1.45] text-[#183a31] sm:text-3xl xl:text-[38px]">
                   قهوتك المفضلة،
                   <span className="text-[#8d7653]"> أقرب مما تتخيل</span>
                 </h1>
-              </div>
-              <div className="hidden shrink-0 items-center gap-2 pb-1 text-xs text-[#7d8176] sm:flex">
-                <span className="h-px w-8 bg-[#cbb996]" />
-                <span>مختارات اليوم</span>
               </div>
             </div>
 
@@ -86,8 +81,13 @@ export function Refined() {
                   className="group flex min-w-0 flex-col overflow-hidden rounded-[20px] border border-[#ddd5c5] bg-[#fbf9f3] shadow-[0_8px_24px_rgba(43,55,44,0.055)] transition-transform duration-300 hover:-translate-y-1 landscape:min-h-0"
                 >
                   <div className="relative aspect-[1.35/1] overflow-hidden bg-[#e9e3d7] sm:aspect-[1.5/1] landscape:aspect-auto landscape:min-h-0 landscape:flex-[1_1_55%]">
-                    <div className="absolute inset-0 flex items-center justify-center text-[#a7997c]">
-                      <Coffee className="h-8 w-8" strokeWidth={1.25} aria-hidden="true" />
+                    <div className="absolute inset-0 flex items-center justify-center bg-[#f7f5ef]">
+                      <img
+                        src="/__mockup/images/dual-pos/cluny-logo.png"
+                        alt=""
+                        aria-hidden="true"
+                        className="h-16 w-16 object-contain opacity-75"
+                      />
                     </div>
                     <img
                       src={item.image}
@@ -129,7 +129,7 @@ export function Refined() {
             <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-full border border-[#cdbb99] bg-[#f6f2e9] text-[#8c7047]">
               <QrCode className="h-[19px] w-[19px]" strokeWidth={1.6} aria-hidden="true" />
             </div>
-            <p className="text-[10px] font-bold tracking-[0.2em] text-[#9b7b4d]">قائمتنا بين يديك</p>
+            <p className="text-[10px] font-bold text-[#9b7b4d]">قائمتنا بين يديك</p>
             <h2 className="mt-1.5 text-xl font-bold text-[#183a31] sm:text-2xl">اطلب الآن</h2>
             <p className="mt-2 max-w-[220px] text-xs leading-6 text-[#69756c] sm:text-sm">
               امسح الرمز بكاميرا جوالك وتصفح المنيو

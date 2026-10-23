@@ -1204,16 +1204,16 @@ export async function buildReceiptPreviewHtml(data: TaxInvoiceData): Promise<str
     ⭐ +${(data as any).loyaltyPoints} نقطة أضيفت لرصيدك
   </div>` : '';
 
-  // ── رأس كلوني الكلاسيكي (شعار متباعد الحروف + كـلـونـي + فاصل cafe · كافيه) ──
+  // ── رأس كلوني الكلاسيكي ──
   const clunyHeaderHtml = `
     <div style="text-align:center;padding:6px 0 10px;">
       <div style="font-size:32px;font-weight:700;color:#000;letter-spacing:8px;text-transform:uppercase;line-height:1;">CLUNY</div>
-      <div style="font-size:17px;font-weight:700;color:#000;letter-spacing:4px;line-height:1.3;direction:rtl;margin-top:2px;">كـلـونـي</div>
+      <div style="font-size:17px;font-weight:700;color:#000;letter-spacing:normal;line-height:1.3;direction:rtl;margin-top:2px;">كلوني</div>
       <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin:5px 0 2px;">
         <span style="flex:1;height:1px;background:#000;max-width:45px;display:block;"></span>
         <span style="font-size:10px;color:#000;letter-spacing:3px;">cafe</span>
         <span style="width:4px;height:4px;background:#000;border-radius:50%;display:inline-block;"></span>
-        <span style="font-size:10px;color:#000;letter-spacing:2px;direction:rtl;">كافيه</span>
+        <span style="font-size:10px;color:#000;letter-spacing:normal;direction:rtl;">كافيه</span>
         <span style="flex:1;height:1px;background:#000;max-width:45px;display:block;"></span>
       </div>
     </div>`;

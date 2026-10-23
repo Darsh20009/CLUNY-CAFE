@@ -1363,3 +1363,17 @@ select {
     display: none !important;
   }
 }
+
+/*
+ * Arabic characters connect through shaping, so character tracking must stay
+ * at the browser default across every Arabic/RTL screen, including utility
+ * classes and inline styles inherited from older pages.
+ */
+html:lang(ar),
+html:lang(ar) *,
+html[dir="rtl"],
+html[dir="rtl"] *,
+[dir="rtl"],
+[dir="rtl"] * {
+  letter-spacing: normal !important;
+}

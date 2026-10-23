@@ -181,6 +181,7 @@ export default function PosSystem() {
   const [activeDualPosDisplayId, setActiveDualPosDisplayId] = useState("");
   const [activeDualPosDisplayNumber, setActiveDualPosDisplayNumber] = useState<number | null>(null);
   const [dualPosDisplayNotice, setDualPosDisplayNotice] = useState("");
+  const [showOrderReview, setShowOrderReview] = useState(false);
   const [mobilePanelView, setMobilePanelView] = useState<'products' | 'cart'>('products');
   const [soundEnabled, setSoundEnabled] = useState(() => getSoundEnabled('pos'));
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -228,7 +229,6 @@ export default function PosSystem() {
   const [autoPrint, setAutoPrint] = useState(() => loadPrinterSettings().autoPrint);
   const [showVatLabel, setShowVatLabel] = useState(() => localStorage.getItem("pos-show-vat-label") === "true");
   const [posCustomizationItem, setPosCustomizationItem] = useState<{ item: CoffeeItem; group: CoffeeItem[]; initialCustomization?: DrinkCustomization } | null>(null);
-  const [showOrderReview, setShowOrderReview] = useState(false);
   const [orderNote, setOrderNote] = useState("");
   const [carTypeInput, setCarTypeInput] = useState("");
   const [carColorInput, setCarColorInput] = useState("");
@@ -516,6 +516,11 @@ export default function PosSystem() {
     rtSend("pos_cart_update", { event, ...data });
   }, [rtSend]);
 
+  const closeOrderReview = useCallback(() => {
+    setShowOrderReview(false);
+    rtSend("dual_pos_payment_update", { event: "checkout_review_cancelled" });
+  }, [rtSend]);
+
   const openDualPosDisplay = () => {
     setDualPosDisplayNotice("");
     setShowDualPosDisplayPicker(true);
@@ -628,7 +633,9 @@ export default function PosSystem() {
 
   useEffect(() => { localStorage.setItem("pos-show-vat-label", String(showVatLabel)); }, [showVatLabel]);
   useEffect(() => { localStorage.setItem("pos-zoom", String(posZoom)); }, [posZoom]);
-  useEffect(() => { if (orderItems.length === 0 && showOrderReview) setShowOrderReview(false); }, [orderItems.length, showOrderReview]);
+  useEffect(() => {
+    if (orderItems.length === 0 && showOrderReview) closeOrderReview();
+  }, [orderItems.length, showOrderReview, closeOrderReview]);
 
   // Auto-close quick print bar after 10 seconds
   useEffect(() => {
@@ -1219,6 +1226,62 @@ export default function PosSystem() {
   const finalSubtotal = useMemo(() => finalGrandTotal / 1.15, [finalGrandTotal]);
   const finalTax     = useMemo(() => finalGrandTotal - finalSubtotal, [finalGrandTotal, finalSubtotal]);
 
+  const buildDualPosCheckoutPayload = useCallback(() => {
+    const selectedMethod = allPaymentMethods.find(
+      (method: any) => String(method.id) === String(paymentMethod),
+    );
+    const builtInLabel = CUSTOMER_PAYMENT_METHOD_LABELS[paymentMethod];
+    const paymentMethodLabelAr = builtInLabel?.ar ||
+      selectedMethod?.nameAr ||
+      PAYMENT_METHOD_LABELS[paymentMethod] ||
+      String(paymentMethod);
+    const paymentMethodLabelEn = builtInLabel?.en ||
+      selectedMethod?.nameEn ||
+      selectedMethod?.nameAr ||
+      PAYMENT_METHOD_LABELS[paymentMethod] ||
+      String(paymentMethod);
+
+    return {
+      items: orderItems.map((item: any) => ({
+        lineItemId: String(item.lineItemId || ""),
+        productId: item.coffeeItem?.id ? String(item.coffeeItem.id) : undefined,
+        nameAr: item.coffeeItem?.nameAr || "",
+        nameEn: item.coffeeItem?.nameEn || "",
+        imageUrl: item.coffeeItem?.imageUrl || undefined,
+        price: getPosItemUnitPrice(item),
+        quantity: Number(item.quantity) || 0,
+        selectedSize: item.selectedSize || undefined,
+        selectedAddons: (item.customization?.selectedItemAddons || [])
+          .map((addon: any) => addon.nameAr || addon.name || "")
+          .filter(Boolean),
+      })),
+      subtotal: finalSubtotal,
+      tax: finalTax,
+      total: finalGrandTotal,
+      paymentMethod,
+      paymentMethodLabelAr,
+      paymentMethodLabelEn,
+    };
+  }, [
+    allPaymentMethods,
+    finalGrandTotal,
+    finalSubtotal,
+    finalTax,
+    orderItems,
+    paymentMethod,
+  ]);
+
+  const sendDualPosCheckoutReview = useCallback(() => {
+    rtSend("dual_pos_payment_update", {
+      event: "checkout_review",
+      payload: buildDualPosCheckoutPayload(),
+    });
+  }, [buildDualPosCheckoutPayload, rtSend]);
+
+  useEffect(() => {
+    if (showOrderReview && orderItems.length > 0) sendDualPosCheckoutReview();
+  }, [showOrderReview, orderItems, finalGrandTotal, paymentMethod, sendDualPosCheckoutReview]);
+
   // Sync tab item counts
   useEffect(() => {
     setCartTabs(prev => prev.map(t =>
@@ -1359,6 +1422,7 @@ export default function PosSystem() {
       broadcastToDisplay("dual_snapshot", buildDisplayPayload(orderItems, "dual_snapshot", {
         controlEnabled: allowCustomerControl,
       }));
+      if (showOrderReview && orderItems.length > 0) sendDualPosCheckoutReview();
       return;
     }
     if (!allowCustomerControl) return;
@@ -3857,7 +3921,11 @@ export default function PosSystem() {
                 <Button
                   className="flex-1 h-11 sm:h-13 text-sm sm:text-base font-black rounded-xl shadow-lg shadow-primary/20 gap-2"
                   disabled={orderItems.length === 0 || syncing}
-                  onClick={() => setShowOrderReview(true)}
+                  onClick={() => {
+                    setAllowCustomerControl(false);
+                    rtSend("dual_pos_control_update", { enabled: false });
+                    setShowOrderReview(true);
+                  }}
                   data-testid="button-checkout"
                 >
                   {syncing ? (
@@ -4348,7 +4416,13 @@ export default function PosSystem() {
         </Dialog>
 
         {/* Order Review Dialog */}
-        <Dialog open={showOrderReview} onOpenChange={setShowOrderReview}>
+        <Dialog
+          open={showOrderReview}
+          onOpenChange={(open) => {
+            if (open) setShowOrderReview(true);
+            else closeOrderReview();
+          }}
+        >
           <DialogContent className="max-w-lg w-full max-h-[90vh] h-[90vh] flex flex-col p-0 gap-0 overflow-hidden" dir={dir}>
             <DialogHeader className="px-5 pt-5 pb-3 border-b shrink-0">
               <DialogTitle className="flex items-center gap-2 text-lg font-black">
@@ -4506,7 +4580,7 @@ export default function PosSystem() {
                       <span className="text-sm font-bold flex-1">{t(m.tKey)}</span>
                       <button
                         className="text-xs text-muted-foreground underline"
-                        onClick={() => setShowOrderReview(false)}
+                        onClick={closeOrderReview}
                         data-testid="review-change-payment"
                       >
                         {i18n.language === 'ar' ? 'تغيير' : 'Change'}
@@ -4521,7 +4595,7 @@ export default function PosSystem() {
                 <Button
                   variant="outline"
                   className="h-11 font-bold gap-2"
-                  onClick={() => setShowOrderReview(false)}
+                  onClick={closeOrderReview}
                   data-testid="review-back-btn"
                 >
                   <ArrowRight className="w-4 h-4" />
@@ -4531,7 +4605,7 @@ export default function PosSystem() {
                   className="h-11 font-black gap-2 shadow-lg shadow-primary/20"
                   disabled={orderItems.length === 0 || syncing}
                   onClick={async () => {
-                    setShowOrderReview(false);
+                    closeOrderReview();
                     await handleCheckout();
                   }}
                   data-testid="review-confirm-pay-btn"

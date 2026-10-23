@@ -4,6 +4,7 @@
 - [POS pinch-zoom shrink bug](pos-pinch-zoom-shrink.md) — "screen shrinks to a corner" on Android POS was actually accidental pinch-zoom (viewport allowed zoom, no reset control), NOT the printing/iframe code — reproduces on any screen, unrelated to print flow.
 - [POS deploy propagation gap](pos-deploy-propagation.md) — always-on POS/kiosk tabs never reload on their own after a deploy; service worker controllerchange only fires when sw.js itself changes, not on ordinary bundle updates. Need an independent deploy-detection heartbeat.
 - [Dual POS pairing and wake behavior](dual-pos-session.md) — use fresh branch-scoped pairing and meaningful activity events so pointer noise cannot block the idle promo screen.
+- [Arabic typography](arabic-typography.md) — keep Arabic letters connected across CLUNY screens and printed output; do not apply letter spacing or tracking to Arabic text.
 - [MongoDB Atlas access](mongodb-atlas-access.md) — Replit egress IPs are not stable; use a restricted DB role and don't mistake the cluster name for the database.
 - [Atlas migration safety](mongodb-migration-ttl.md) — distinguish replace-and-reconcile resume from insert-only merge; preserve live destination records and TTL behavior until conflicts are resolved.
 - [Geidea credential safety](geidea-credential-safety.md) — CLUNY uses live Saudi keys; use the KSA endpoint and never seed credentials from source defaults.
