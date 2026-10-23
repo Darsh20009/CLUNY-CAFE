@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { CheckCircle2, Coffee, Minus, Plus, QrCode, Search, ShoppingBag, Sparkles, Wifi, WifiOff } from "lucide-react";
+import QRCode from "qrcode";
 import type { CoffeeItem } from "@shared/schema";
 import DrinkCustomizationDialog, { type DrinkCustomization } from "@/components/drink-customization-dialog";
 import SarIcon from "@/components/sar-icon";
@@ -71,6 +72,7 @@ export default function DualPOSDisplay() {
   const [showingPromo, setShowingPromo] = useState(false);
   const [promoIndex, setPromoIndex] = useState(0);
   const [orderQrDataUrl, setOrderQrDataUrl] = useState("");
+  const [orderQrError, setOrderQrError] = useState(false);
   const idleTimerRef = useRef<number | null>(null);
   const [orderItems, setOrderItems] = useState<DisplayOrderItem[]>([]);
   const [orderTotal, setOrderTotal] = useState(0);
@@ -194,27 +196,50 @@ export default function DualPOSDisplay() {
       return;
     }
     registerActivity();
+    let lastPointerPosition: { x: number; y: number } | null = null;
+    let lastPointerActivityAt = 0;
+    const handleWindowActivity = (event: Event) => {
+      if (event.type === "pointermove") {
+        const pointer = event as PointerEvent;
+        const position = { x: pointer.clientX, y: pointer.clientY };
+        if (!lastPointerPosition) {
+          lastPointerPosition = position;
+          return;
+        }
+        const moved = Math.hypot(position.x - lastPointerPosition.x, position.y - lastPointerPosition.y);
+        const now = Date.now();
+        if (moved < 24 || now - lastPointerActivityAt < 1200) return;
+        lastPointerPosition = position;
+        lastPointerActivityAt = now;
+      }
+      registerActivity();
+    };
     const activityEvents: Array<keyof WindowEventMap> = ["pointerdown", "pointermove", "touchstart", "keydown", "wheel"];
-    activityEvents.forEach((eventName) => window.addEventListener(eventName, registerActivity, { passive: true }));
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, handleWindowActivity, { passive: true }));
     return () => {
-      activityEvents.forEach((eventName) => window.removeEventListener(eventName, registerActivity));
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, handleWindowActivity));
       if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
     };
   }, [thankYouOrderNumber, registerActivity]);
 
   useEffect(() => {
     let cancelled = false;
-    import("qrcode")
-      .then(({ default: QRCode }) => QRCode.toDataURL(`${window.location.origin}/menu`, {
+    QRCode.toDataURL(`${window.location.origin}/menu`, {
         width: 240,
         margin: 1,
         errorCorrectionLevel: "M",
         color: { dark: "#092f25", light: "#ffffff" },
-      }))
-      .then((dataUrl) => {
-        if (!cancelled) setOrderQrDataUrl(dataUrl);
       })
-      .catch((error) => console.warn("[Dual POS] Could not generate order QR code:", error));
+      .then((dataUrl) => {
+        if (!cancelled) {
+          setOrderQrDataUrl(dataUrl);
+          setOrderQrError(false);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) setOrderQrError(true);
+        console.error("[Dual POS] Could not generate order QR code:", error);
+      });
     return () => { cancelled = true; };
   }, []);
 
@@ -299,8 +324,6 @@ export default function DualPOSDisplay() {
       <main
         className="relative flex h-dvh min-h-0 overflow-hidden bg-[#06271f] p-5 text-white sm:p-8"
         dir={direction}
-        onPointerDown={registerActivity}
-        onTouchStart={registerActivity}
       >
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(206,173,106,0.18),transparent_32%),radial-gradient(circle_at_82%_88%,rgba(34,120,88,0.34),transparent_35%)]" />
         <div className="pointer-events-none absolute inset-0 opacity-[0.07] [background-image:linear-gradient(45deg,transparent_48%,#d6c18b_49%,#d6c18b_51%,transparent_52%)] [background-size:46px_46px]" />
@@ -373,7 +396,11 @@ export default function DualPOSDisplay() {
             <div className="my-5 flex aspect-square w-full max-w-[190px] items-center justify-center overflow-hidden rounded-2xl bg-white p-3 shadow-xl">
               {orderQrDataUrl
                 ? <img src={orderQrDataUrl} alt={isArabic ? "رمز QR للطلب عبر الموقع" : "Order online QR code"} className="h-full w-full object-contain" />
-                : <div className="h-full w-full animate-pulse rounded-xl bg-stone-100" />}
+                : orderQrError
+                  ? <div className="flex h-full w-full items-center justify-center rounded-xl bg-stone-100 px-3 text-xs font-semibold text-stone-600">
+                      {isArabic ? "تعذر إنشاء الرمز — افتح رابط المنيو أدناه" : "QR unavailable — open the menu link below"}
+                    </div>
+                  : <div className="h-full w-full animate-pulse rounded-xl bg-stone-100" />}
             </div>
             <p className="break-all text-[11px] text-[#e4cc91]/80">{window.location.origin}/menu</p>
             <div className="mt-auto flex items-center gap-2 pt-5 text-xs text-white/40">
@@ -440,7 +467,9 @@ export default function DualPOSDisplay() {
     });
   };
 
-  const formattedPrice = (price: number) => Number(price || 0).toFixed(2);
+  function formattedPrice(price: number) {
+    return Number(price || 0).toFixed(2);
+  }
 
   if (thankYouOrderNumber) {
     return (

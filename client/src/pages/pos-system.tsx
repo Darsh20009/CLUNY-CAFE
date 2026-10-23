@@ -329,10 +329,26 @@ export default function PosSystem() {
   useEffect(() => {
     if (!wsConnected) return;
     let lastSentAt = 0;
-    const signalActivity = () => {
+    let lastPointerActivityPosition: { x: number; y: number } | null = null;
+    const signalActivity = (event: Event) => {
+      let pointerPosition: { x: number; y: number } | null = null;
+      if (event.type === "pointermove") {
+        const pointer = event as PointerEvent;
+        pointerPosition = { x: pointer.clientX, y: pointer.clientY };
+        if (!lastPointerActivityPosition) {
+          lastPointerActivityPosition = pointerPosition;
+          return;
+        }
+        const moved = Math.hypot(
+          pointerPosition.x - lastPointerActivityPosition.x,
+          pointerPosition.y - lastPointerActivityPosition.y,
+        );
+        if (moved < 24) return;
+      }
       const now = Date.now();
       if (now - lastSentAt < 1500) return;
       lastSentAt = now;
+      if (pointerPosition) lastPointerActivityPosition = pointerPosition;
       rtSend("dual_pos_activity");
     };
     const activityEvents: Array<keyof WindowEventMap> = ["pointerdown", "pointermove", "touchstart", "keydown", "wheel"];
