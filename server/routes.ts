@@ -1702,38 +1702,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // === Update active cashier shift totals (BEFORE response — financial data integrity) ===
-      // Runs synchronously to prevent data loss if server crashes between response and setImmediate.
+      // Keep the update synchronous for financial integrity, but apply all totals
+      // atomically in one database round trip instead of read-modify-save.
       try {
         const shiftEmployeeId = orderData.employeeId || (req as any).employee?._id?.toString() || (req as any).employee?.id;
         if (shiftEmployeeId && !isBackdatedOrder && orderData.status !== 'awaiting_payment') {
-          const activeShift = await CashierShiftModel.findOne({ employeeId: shiftEmployeeId, status: 'open' });
-          if (activeShift) {
-            const amount = Number(orderData.totalAmount) || 0;
-            const method = ((orderData as any).paymentMethod || '').toLowerCase();
-            activeShift.totalSales += amount;
-            activeShift.totalOrders += 1;
-            activeShift.netRevenue += amount;
-            const ordId = serializedOrder.id || serializedOrder._id?.toString();
-            if (ordId && !activeShift.orderIds.includes(ordId)) activeShift.orderIds.push(ordId);
-            if (method === 'cash') {
-              activeShift.totalCashSales += amount;
-              activeShift.paymentBreakdown.cash = (activeShift.paymentBreakdown.cash || 0) + amount;
-            } else if (method === 'qahwa-card' || method === 'loyalty-card' || method === 'qirox-card') {
-              activeShift.totalDigitalSales += amount;
-              activeShift.paymentBreakdown.loyalty = (activeShift.paymentBreakdown.loyalty || 0) + amount;
-            } else if (method) {
-              // non-cash, non-loyalty, non-empty: card/digital/Apple Pay/etc.
-              activeShift.totalCardSales += amount;
-              activeShift.paymentBreakdown.card = (activeShift.paymentBreakdown.card || 0) + amount;
-            }
-            // if method is '' (unknown/pending), still counted in totalSales but not in a specific bucket
-            const type = ((orderData as any).orderType || 'takeaway').toLowerCase();
-            if (type === 'dine_in' || type === 'dine-in') activeShift.orderTypeBreakdown.dine_in = (activeShift.orderTypeBreakdown.dine_in || 0) + 1;
-            else if (type === 'car_pickup' || type === 'car-pickup') activeShift.orderTypeBreakdown.car_pickup = (activeShift.orderTypeBreakdown.car_pickup || 0) + 1;
-            else if (type === 'delivery') activeShift.orderTypeBreakdown.delivery = (activeShift.orderTypeBreakdown.delivery || 0) + 1;
-            else activeShift.orderTypeBreakdown.takeaway = (activeShift.orderTypeBreakdown.takeaway || 0) + 1;
-            await activeShift.save();
+          const amount = Number(orderData.totalAmount) || 0;
+          const method = ((orderData as any).paymentMethod || '').toLowerCase();
+          const type = ((orderData as any).orderType || 'takeaway').toLowerCase();
+          const increments: Record<string, number> = {
+            totalSales: amount,
+            totalOrders: 1,
+            netRevenue: amount,
+          };
+          if (method === 'cash') {
+            increments.totalCashSales = amount;
+            increments['paymentBreakdown.cash'] = amount;
+          } else if (method === 'qahwa-card' || method === 'loyalty-card' || method === 'qirox-card') {
+            increments.totalDigitalSales = amount;
+            increments['paymentBreakdown.loyalty'] = amount;
+          } else if (method) {
+            // non-cash, non-loyalty, non-empty: card/digital/Apple Pay/etc.
+            increments.totalCardSales = amount;
+            increments['paymentBreakdown.card'] = amount;
           }
+
+          if (type === 'dine_in' || type === 'dine-in') {
+            increments['orderTypeBreakdown.dine_in'] = 1;
+          } else if (type === 'car_pickup' || type === 'car-pickup') {
+            increments['orderTypeBreakdown.car_pickup'] = 1;
+          } else if (type === 'delivery') {
+            increments['orderTypeBreakdown.delivery'] = 1;
+          } else {
+            increments['orderTypeBreakdown.takeaway'] = 1;
+          }
+
+          const shiftUpdate: Record<string, any> = {
+            $inc: increments,
+            $set: { updatedAt: new Date() },
+          };
+          const orderId = serializedOrder.id || serializedOrder._id?.toString();
+          if (orderId) shiftUpdate.$addToSet = { orderIds: orderId };
+
+          await CashierShiftModel.updateOne(
+            { employeeId: shiftEmployeeId, status: 'open' },
+            shiftUpdate,
+          );
         }
       } catch (shiftErr) {
         // Log but don't fail the order — shift can be recalculated from orders if needed
