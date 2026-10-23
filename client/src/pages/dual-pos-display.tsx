@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { CheckCircle2, Coffee, Minus, Plus, Search, ShoppingBag, Wifi, WifiOff } from "lucide-react";
+import { CheckCircle2, Coffee, Minus, Plus, QrCode, Search, ShoppingBag, Sparkles, Wifi, WifiOff } from "lucide-react";
 import type { CoffeeItem } from "@shared/schema";
 import DrinkCustomizationDialog, { type DrinkCustomization } from "@/components/drink-customization-dialog";
 import SarIcon from "@/components/sar-icon";
 import clunyLogo from "@assets/cluny-logo-customer.png";
 import { useRealtimeEvent, useRealtimeSend, useRealtimeStatus } from "@/hooks/useRealtimeEngine";
+import { getRealtimeEngine } from "@/lib/realtime-engine";
 
 type DisplayOrderItem = {
   lineItemId: string;
@@ -30,6 +31,8 @@ type DisplayUpdate = {
   enabled?: boolean;
   online?: boolean;
   orderNumber?: string;
+  displayNumber?: number;
+  terminalId?: string;
 };
 
 export default function DualPOSDisplay() {
@@ -37,13 +40,38 @@ export default function DualPOSDisplay() {
   const isArabic = i18n.language === "ar";
   const direction = isArabic ? "rtl" : "ltr";
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
-  const branchId = params.get("branchId") || "";
-  const terminalId = params.get("terminalId") || "";
-  const isPaired = Boolean(branchId && terminalId);
+  const branchId = useMemo(() => {
+    const queryBranchId = params.get("branchId");
+    if (queryBranchId) return queryBranchId;
+    if (!window.location.pathname.startsWith("/employee/dual-pos")) return "";
+    try {
+      const employee = JSON.parse(localStorage.getItem("currentEmployee") || "null");
+      const isAdminOwner = employee?.role === "admin" || employee?.role === "owner";
+      return String(
+        (isAdminOwner ? sessionStorage.getItem("pos_branch_id") : null) ||
+        employee?.branchId ||
+        "main"
+      );
+    } catch {
+      return "main";
+    }
+  }, [params]);
+  const [displaySessionId] = useState(() =>
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `display-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+  const [pairedTerminalId, setPairedTerminalId] = useState(() => params.get("terminalId") || "");
+  const [displayNumber, setDisplayNumber] = useState<number | null>(null);
+  const isPaired = Boolean(branchId && pairedTerminalId);
   const { connected } = useRealtimeStatus();
   const { send } = useRealtimeSend();
   const [controlEnabled, setControlEnabled] = useState(false);
   const [pairedPosOnline, setPairedPosOnline] = useState(false);
+  const [showingPromo, setShowingPromo] = useState(false);
+  const [promoIndex, setPromoIndex] = useState(0);
+  const [orderQrDataUrl, setOrderQrDataUrl] = useState("");
+  const idleTimerRef = useRef<number | null>(null);
   const [orderItems, setOrderItems] = useState<DisplayOrderItem[]>([]);
   const [orderTotal, setOrderTotal] = useState(0);
   const [orderSubtotal, setOrderSubtotal] = useState(0);
@@ -73,17 +101,39 @@ export default function DualPOSDisplay() {
   });
   const itemsWithAddonsSet = useMemo(() => new Set(itemsWithAddons.map(String)), [itemsWithAddons]);
 
+  const registerActivity = useCallback(() => {
+    setShowingPromo(false);
+    if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = window.setTimeout(() => setShowingPromo(true), 60_000);
+  }, []);
+
+  useRealtimeEvent("dual_pos_display_registered", (message: any) => {
+    const registration = message?.payload || message;
+    if (typeof registration?.displayNumber === "number") setDisplayNumber(registration.displayNumber);
+    if (typeof registration?.terminalId === "string") setPairedTerminalId(registration.terminalId);
+    setPairedPosOnline(registration?.paired === true);
+  }, {
+    clientType: "pos-display",
+    branchId,
+    dualPosDisplayId: displaySessionId,
+    dualPosTerminalId: pairedTerminalId || undefined,
+  });
+
   useRealtimeEvent("dual_pos_display_update", (message: any) => {
     const update: DisplayUpdate = message?.payload || message;
     if (!update) return;
     if (update.event === "terminal_status") {
       setPairedPosOnline(update.online === true);
       setControlEnabled(update.enabled === true);
+      if (typeof update.displayNumber === "number") setDisplayNumber(update.displayNumber);
+      if (typeof update.terminalId === "string") setPairedTerminalId(update.terminalId);
       return;
     }
     if (update.event === "terminal_offline") {
       setPairedPosOnline(false);
       setControlEnabled(false);
+      setPairedTerminalId("");
+      registerActivity();
       return;
     }
     if (update.event === "control_mode") {
@@ -91,10 +141,16 @@ export default function DualPOSDisplay() {
       setControlEnabled(update.enabled === true);
       return;
     }
-    if (update.event === "payment_processing") {
-      setControlEnabled(false);
+    if (update.event === "activity") {
+      registerActivity();
       return;
     }
+    if (update.event === "payment_processing") {
+      setControlEnabled(false);
+      registerActivity();
+      return;
+    }
+    registerActivity();
     setPairedPosOnline(true);
     if (update.controlEnabled !== undefined) setControlEnabled(update.controlEnabled === true);
     if (Array.isArray(update.items)) setOrderItems(update.items);
@@ -110,15 +166,57 @@ export default function DualPOSDisplay() {
     if (update.event === "payment_success") {
       setThankYouOrderNumber(String(update.orderNumber || "—"));
     }
-  }, {
-    clientType: "pos-display",
-    branchId,
-    dualPosTerminalId: terminalId,
   });
 
   useEffect(() => {
-    if (connected && isPaired) send("dual_pos_request_state");
-  }, [connected, isPaired, send]);
+    if (!branchId || !displaySessionId) return;
+    getRealtimeEngine({
+      clientType: "pos-display",
+      branchId,
+      dualPosDisplayId: displaySessionId,
+      dualPosTerminalId: pairedTerminalId || undefined,
+    });
+  }, [branchId, displaySessionId, pairedTerminalId]);
+
+  useEffect(() => () => {
+    send("dual_pos_unregister_display", { displayId: displaySessionId });
+  }, [displaySessionId, send]);
+
+  useEffect(() => {
+    if (!connected || !pairedPosOnline || !pairedTerminalId) return;
+    send("dual_pos_request_state");
+  }, [connected, pairedPosOnline, pairedTerminalId, send]);
+
+  useEffect(() => {
+    if (thankYouOrderNumber) {
+      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+      setShowingPromo(false);
+      return;
+    }
+    registerActivity();
+    const activityEvents: Array<keyof WindowEventMap> = ["pointerdown", "pointermove", "touchstart", "keydown", "wheel"];
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, registerActivity, { passive: true }));
+    return () => {
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, registerActivity));
+      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+    };
+  }, [thankYouOrderNumber, registerActivity]);
+
+  useEffect(() => {
+    let cancelled = false;
+    import("qrcode")
+      .then(({ default: QRCode }) => QRCode.toDataURL(`${window.location.origin}/menu`, {
+        width: 240,
+        margin: 1,
+        errorCorrectionLevel: "M",
+        color: { dark: "#092f25", light: "#ffffff" },
+      }))
+      .then((dataUrl) => {
+        if (!cancelled) setOrderQrDataUrl(dataUrl);
+      })
+      .catch((error) => console.warn("[Dual POS] Could not generate order QR code:", error));
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!thankYouOrderNumber) return;
@@ -159,6 +257,29 @@ export default function DualPOSDisplay() {
       return categoryMatches && textMatches;
     });
   }, [products, categories, search, selectedCategory]);
+  const promoProducts = useMemo(
+    () => products.filter((product) =>
+      Number(product.isAvailable) === 1 &&
+      product.availabilityStatus !== "unavailable" &&
+      product.availabilityStatus !== "out_of_stock" &&
+      product.availabilityStatus !== "temporarily_unavailable"
+    ),
+    [products],
+  );
+  const promoCards = useMemo(() => {
+    if (promoProducts.length === 0) return [];
+    return Array.from({ length: Math.min(4, promoProducts.length) }, (_, offset) =>
+      promoProducts[(promoIndex + offset) % promoProducts.length]
+    );
+  }, [promoProducts, promoIndex]);
+
+  useEffect(() => {
+    if (!showingPromo || promoProducts.length < 2) return;
+    const timer = window.setInterval(() => {
+      setPromoIndex((current) => (current + 1) % promoProducts.length);
+    }, 4500);
+    return () => window.clearInterval(timer);
+  }, [showingPromo, promoProducts.length]);
 
   const canControl = controlEnabled && isPaired && connected && pairedPosOnline;
   const sendCustomerAction = (payload: Record<string, unknown>) => {
@@ -172,6 +293,98 @@ export default function DualPOSDisplay() {
       ? url
       : `/${url}`;
   };
+
+  if (showingPromo && !thankYouOrderNumber) {
+    return (
+      <main
+        className="relative flex h-dvh min-h-0 overflow-hidden bg-[#06271f] p-5 text-white sm:p-8"
+        dir={direction}
+        onPointerDown={registerActivity}
+        onTouchStart={registerActivity}
+      >
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(206,173,106,0.18),transparent_32%),radial-gradient(circle_at_82%_88%,rgba(34,120,88,0.34),transparent_35%)]" />
+        <div className="pointer-events-none absolute inset-0 opacity-[0.07] [background-image:linear-gradient(45deg,transparent_48%,#d6c18b_49%,#d6c18b_51%,transparent_52%)] [background-size:46px_46px]" />
+        <div className="absolute end-5 top-4 z-20 flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-2 text-[11px] font-semibold text-white/75 backdrop-blur-md">
+          <span className="rounded-full bg-[#d6c18b]/15 px-2 py-1 font-black text-[#e4cc91]">
+            {displayNumber ? `${isArabic ? "شاشة" : "Screen"} #${String(displayNumber).padStart(2, "0")}` : (isArabic ? "تسجيل الشاشة" : "Registering screen")}
+          </span>
+          {connected && pairedPosOnline ? <Wifi className="h-4 w-4 text-emerald-300" /> : <WifiOff className="h-4 w-4 text-amber-300" />}
+          {pairedPosOnline
+            ? (isArabic ? "متصلة" : "Connected")
+            : (isArabic ? "بانتظار نقطة البيع" : "Waiting for POS")}
+        </div>
+        <div className="relative z-10 mx-auto grid h-full w-full max-w-[1600px] grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-5 landscape:grid-cols-[minmax(0,1fr)_minmax(220px,280px)] landscape:grid-rows-1 sm:gap-8">
+          <section className="flex min-w-0 flex-col justify-center">
+            <div className="mb-5 flex items-center gap-3">
+              <img src={clunyLogo} alt="CLUNY CAFE" className="h-12 w-12 rounded-full bg-white object-contain p-1.5" />
+              <div>
+                <p className="text-xs font-semibold tracking-[0.3em] text-[#d6c18b]">CLUNY CAFE</p>
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-white/55">
+                  <Sparkles className="h-3.5 w-3.5 text-[#d6c18b]" />
+                  {isArabic ? "اكتشف نكهاتنا المميزة" : "Discover our signature flavors"}
+                </p>
+              </div>
+            </div>
+            <h1 className="mb-5 text-2xl font-black leading-tight text-white sm:text-4xl">
+              {isArabic ? "قهوتك المفضلة… أقرب مما تتخيل" : "Your favorite coffee, closer than ever"}
+            </h1>
+            <div className="grid min-h-0 flex-1 grid-cols-2 gap-3 sm:grid-cols-4">
+              {promoCards.map((item, index) => {
+                const imageUrl = imageFor(item.imageUrl || (item as any).imageUrls?.[0]);
+                return (
+                  <article
+                    key={`${item.id}-${promoIndex}-${index}`}
+                    className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.07] shadow-[0_12px_40px_rgba(0,0,0,0.18)] backdrop-blur-sm animate-in fade-in slide-in-from-bottom-2 duration-500"
+                  >
+                    <div className="relative flex h-[55%] min-h-20 items-center justify-center overflow-hidden bg-white/5">
+                      <Coffee className="h-9 w-9 text-[#d6c18b]/60" aria-hidden="true" />
+                      {imageUrl && (
+                        <img
+                          src={imageUrl}
+                          alt=""
+                          aria-hidden="true"
+                          className="absolute inset-0 h-full w-full object-cover"
+                          onError={(event) => event.currentTarget.remove()}
+                        />
+                      )}
+                    </div>
+                    <div className="p-3">
+                      <h2 className="line-clamp-2 text-sm font-bold text-white sm:text-base">
+                        {isArabic ? item.nameAr : item.nameEn || item.nameAr}
+                      </h2>
+                      <p className="mt-2 flex items-center gap-1 text-sm font-black text-[#e4cc91]">
+                        {formattedPrice(Number(item.price))}<SarIcon size={12} />
+                      </p>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          <aside className="flex flex-col items-center justify-center rounded-[2rem] border border-[#d6c18b]/35 bg-white/[0.08] px-4 py-6 text-center shadow-2xl backdrop-blur-md sm:px-6">
+            <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-[#d6c18b]/15 text-[#e4cc91]">
+              <QrCode className="h-6 w-6" />
+            </div>
+            <h2 className="text-xl font-black text-white sm:text-2xl">{isArabic ? "اطلب الآن" : "Order now"}</h2>
+            <p className="mt-2 text-sm leading-6 text-white/65">
+              {isArabic ? "امسح الرمز بكاميرا جوالك وتصفح المنيو" : "Scan with your phone camera to browse our menu"}
+            </p>
+            <div className="my-5 flex aspect-square w-full max-w-[190px] items-center justify-center overflow-hidden rounded-2xl bg-white p-3 shadow-xl">
+              {orderQrDataUrl
+                ? <img src={orderQrDataUrl} alt={isArabic ? "رمز QR للطلب عبر الموقع" : "Order online QR code"} className="h-full w-full object-contain" />
+                : <div className="h-full w-full animate-pulse rounded-xl bg-stone-100" />}
+            </div>
+            <p className="break-all text-[11px] text-[#e4cc91]/80">{window.location.origin}/menu</p>
+            <div className="mt-auto flex items-center gap-2 pt-5 text-xs text-white/40">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-[#d6c18b]" />
+              {isArabic ? "المس الشاشة لعرض المنيو" : "Touch the screen to return to the menu"}
+            </div>
+          </aside>
+        </div>
+      </main>
+    );
+  }
 
   const openProduct = (item: CoffeeItem) => {
     if (!canControl) return;
@@ -246,7 +459,7 @@ export default function DualPOSDisplay() {
   }
 
   return (
-    <div className="flex h-dvh min-h-[520px] flex-col overflow-hidden bg-[#f5f2eb] text-stone-900" dir={direction}>
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#f5f2eb] text-stone-900" dir={direction}>
       <header className="z-10 flex shrink-0 items-center justify-between border-b border-stone-200 bg-white px-4 py-3 shadow-sm sm:px-6">
         <div className="flex items-center gap-3">
           <img src={clunyLogo} alt="CLUNY CAFE" className="h-10 w-auto object-contain sm:h-12" />
@@ -256,6 +469,9 @@ export default function DualPOSDisplay() {
           </div>
         </div>
         <div className="flex items-center gap-2 rounded-full bg-stone-50 px-3 py-2 text-xs font-semibold text-stone-600">
+          <span className="rounded-full bg-emerald-100 px-2 py-1 font-black text-emerald-900">
+            {displayNumber ? `${isArabic ? "شاشة" : "Screen"} #${String(displayNumber).padStart(2, "0")}` : (isArabic ? "تسجيل الشاشة" : "Registering screen")}
+          </span>
           {connected && pairedPosOnline ? <Wifi className="h-4 w-4 text-emerald-700" /> : <WifiOff className="h-4 w-4 text-amber-600" />}
           <span>
             {!connected
@@ -267,8 +483,8 @@ export default function DualPOSDisplay() {
         </div>
       </header>
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,3fr)_minmax(0,2fr)] lg:grid-rows-1 lg:grid-cols-[minmax(0,3fr)_minmax(340px,2fr)]">
-        <section className="flex min-h-0 flex-col border-b border-stone-200 lg:border-b-0 lg:border-e">
+      <main className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,3fr)_minmax(0,2fr)] landscape:grid-rows-1 landscape:grid-cols-[minmax(0,3fr)_minmax(280px,2fr)]">
+        <section className="flex min-h-0 flex-col border-b border-stone-200 landscape:border-b-0 landscape:border-e">
           <div className="flex shrink-0 flex-col gap-3 border-b border-stone-200 bg-white px-4 py-3 sm:px-6">
             <div className="flex items-center justify-between gap-3">
               <div>

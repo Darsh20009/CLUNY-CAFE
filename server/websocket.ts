@@ -17,6 +17,8 @@ interface WSClient {
   attendanceId?:    string;
   dualPosTerminalId?: string;
   dualPosControlEnabled?: boolean;
+  dualPosDisplayId?: string;
+  dualPosDisplayNumber?: number;
   lastPing:         number;
   isAlive:          boolean;
   lastSeq:          number;  // last acknowledged sequence from this client
@@ -113,13 +115,27 @@ class OrderWebSocketManager {
         console.log(`[WS] Client disconnected: ${code} ${reason || ''}`);
         const closingClient = this.clients.get(ws);
         if (closingClient?.type === "pos" && closingClient.branchId && closingClient.dualPosTerminalId) {
-          this.broadcastDualPosDisplay(
-            { event: "terminal_offline" },
-            closingClient.branchId,
-            closingClient.dualPosTerminalId,
-          );
+          this.unpairDualPosScreens(closingClient.branchId, closingClient.dualPosTerminalId);
+        }
+        if (closingClient?.type === "pos-display") {
+          const pairedPos = closingClient.branchId && closingClient.dualPosTerminalId
+            ? this.findDualPosTerminal(closingClient.branchId, closingClient.dualPosTerminalId)
+            : undefined;
+          if (pairedPos) {
+            this.safeSend(pairedPos.ws, JSON.stringify({
+              type: "dual_pos_display_status",
+              payload: {
+                event: "display_offline",
+                displayId: closingClient.dualPosDisplayId,
+                displayNumber: closingClient.dualPosDisplayNumber,
+              },
+            }));
+          }
         }
         this.clients.delete(ws);
+        if (closingClient?.type === "pos-display" && closingClient.branchId) {
+          this.broadcastDualPosDisplayLists(closingClient.branchId);
+        }
       });
 
       ws.on("error", (error) => {
@@ -175,25 +191,37 @@ class OrderWebSocketManager {
     switch (message.type) {
       case "subscribe":
         if (client) {
+          const previousType = client.type;
           const previousBranchId = client.branchId;
           const previousTerminalId = client.dualPosTerminalId;
+          const previousDisplayId = client.dualPosDisplayId;
+          const previousDisplayNumber = client.dualPosDisplayNumber;
+          const previousControlEnabled = client.dualPosControlEnabled === true;
           const nextBranchId = typeof message.branchId === "string" ? message.branchId : undefined;
           const nextTerminalId = typeof message.dualPosTerminalId === "string"
             ? message.dualPosTerminalId.slice(0, 100)
             : undefined;
+          const nextDisplayId = typeof message.dualPosDisplayId === "string"
+            ? message.dualPosDisplayId.slice(0, 100)
+            : undefined;
+          const nextClientType = message.clientType || "display";
           if (
-            client.type === "pos" &&
+            previousType === "pos" &&
             previousBranchId &&
             previousTerminalId &&
-            (previousBranchId !== nextBranchId || previousTerminalId !== nextTerminalId)
+            (previousBranchId !== nextBranchId || previousTerminalId !== nextTerminalId || nextClientType !== "pos")
           ) {
-            this.broadcastDualPosDisplay(
-              { event: "terminal_offline" },
-              previousBranchId,
-              previousTerminalId,
-            );
+            this.unpairDualPosScreens(previousBranchId, previousTerminalId);
           }
-          client.type            = message.clientType || "display";
+          if (
+            previousType === "pos-display" &&
+            previousBranchId &&
+            previousTerminalId &&
+            (previousBranchId !== nextBranchId || previousTerminalId !== nextTerminalId || previousDisplayId !== nextDisplayId || nextClientType !== "pos-display")
+          ) {
+            this.unpairOneDualPosScreen(client, previousBranchId, previousTerminalId);
+          }
+          client.type            = nextClientType;
           client.orderId         = message.orderId;
           client.branchId        = nextBranchId;
           client.driverId        = message.driverId;
@@ -202,11 +230,58 @@ class OrderWebSocketManager {
           client.userId          = message.userId || message.customerId;
           client.employeeId      = message.employeeId;
           client.attendanceId    = message.attendanceId;
-          client.dualPosTerminalId = nextTerminalId;
-          client.dualPosControlEnabled = false;
+          client.dualPosTerminalId = nextClientType === "pos-display" ? undefined : nextTerminalId;
+          client.dualPosControlEnabled = nextClientType === "pos" &&
+            previousType === "pos" &&
+            previousBranchId === nextBranchId &&
+            previousTerminalId === nextTerminalId
+              ? previousControlEnabled
+              : false;
+          client.dualPosDisplayId = undefined;
+          client.dualPosDisplayNumber = undefined;
+
+          if (nextClientType === "pos-display" && nextBranchId && nextDisplayId) {
+            const sameDisplaySession = previousType === "pos-display" &&
+              previousBranchId === nextBranchId &&
+              previousDisplayId === nextDisplayId;
+            client.dualPosDisplayId = nextDisplayId;
+            client.dualPosDisplayNumber = sameDisplaySession && previousDisplayNumber
+              ? previousDisplayNumber
+              : this.nextDualPosDisplayNumber();
+
+            const requestedPos = nextTerminalId
+              ? this.findDualPosTerminal(nextBranchId, nextTerminalId)
+              : undefined;
+            client.dualPosTerminalId = requestedPos ? nextTerminalId : undefined;
+            client.dualPosControlEnabled = requestedPos?.dualPosControlEnabled === true;
+          }
         }
         console.log(`[WS] Client subscribed as ${message.clientType} userId=${message.userId || message.customerId || "anon"}`);
         ws.send(JSON.stringify({ type: "subscribed", clientType: message.clientType, serverSeq: this.seq }));
+        if (client?.type === "pos" && client.branchId) {
+          this.sendDualPosDisplayList(client);
+        }
+        if (client?.type === "pos-display" && client.branchId && client.dualPosDisplayId) {
+          this.safeSend(ws, JSON.stringify({
+            type: "dual_pos_display_registered",
+            payload: {
+              displayId: client.dualPosDisplayId,
+              displayNumber: client.dualPosDisplayNumber,
+              paired: Boolean(client.dualPosTerminalId),
+              terminalId: client.dualPosTerminalId,
+            },
+          }));
+          if (client.dualPosTerminalId) {
+            this.sendDualPosDisplayUpdate(client, {
+              event: "terminal_status",
+              online: true,
+              enabled: client.dualPosControlEnabled === true,
+              displayNumber: client.dualPosDisplayNumber,
+              terminalId: client.dualPosTerminalId,
+            });
+          }
+          this.broadcastDualPosDisplayLists(client.branchId);
+        }
         break;
 
       case "ping":
@@ -294,6 +369,53 @@ class OrderWebSocketManager {
           if (pairedPos?.dualPosControlEnabled === true && (action === "add" || action === "set_quantity" || action === "clear_order")) {
             this.forwardDualPosAction(message.payload, client.branchId, client.dualPosTerminalId);
           }
+        }
+        break;
+
+      case "dual_pos_list_displays":
+        if (client?.type === "pos" && client.branchId) {
+          this.sendDualPosDisplayList(client);
+        }
+        break;
+
+      case "dual_pos_pair_display":
+        if (client?.type === "pos" && client.branchId && client.dualPosTerminalId) {
+          this.pairDualPosDisplay(client, String(message.displayId || "").slice(0, 100));
+        }
+        break;
+
+      case "dual_pos_unpair_display":
+        if (client?.type === "pos" && client.branchId && client.dualPosTerminalId) {
+          this.unpairDualPosScreens(client.branchId, client.dualPosTerminalId);
+          this.sendDualPosDisplayList(client);
+        }
+        break;
+
+      case "dual_pos_unregister_display":
+        if (
+          client?.type === "pos-display" &&
+          client.dualPosDisplayId &&
+          (!message.displayId || message.displayId === client.dualPosDisplayId)
+        ) {
+          if (client.branchId && client.dualPosTerminalId) {
+            this.unpairOneDualPosScreen(client, client.branchId, client.dualPosTerminalId);
+          }
+          const branchId = client.branchId;
+          client.dualPosDisplayId = undefined;
+          client.dualPosDisplayNumber = undefined;
+          client.dualPosTerminalId = undefined;
+          client.dualPosControlEnabled = false;
+          if (branchId) this.broadcastDualPosDisplayLists(branchId);
+        }
+        break;
+
+      case "dual_pos_activity":
+        if (client?.type === "pos" && client.branchId && client.dualPosTerminalId) {
+          this.broadcastDualPosDisplay(
+            { event: "activity" },
+            client.branchId,
+            client.dualPosTerminalId,
+          );
         }
         break;
 
@@ -581,6 +703,134 @@ class OrderWebSocketManager {
       ) return client;
     }
     return undefined;
+  }
+
+  private nextDualPosDisplayNumber(): number {
+    this.cleanupStaleClients();
+    const usedNumbers = new Set(
+      [...this.clients.values()]
+        .filter((client) => client.type === "pos-display" && Number.isInteger(client.dualPosDisplayNumber))
+        .map((client) => client.dualPosDisplayNumber as number),
+    );
+    let displayNumber = 1;
+    while (usedNumbers.has(displayNumber)) displayNumber += 1;
+    return displayNumber;
+  }
+
+  private sendDualPosDisplayList(posClient: WSClient) {
+    if (posClient.type !== "pos" || !posClient.branchId) return;
+    this.cleanupStaleClients();
+    const displays = [...this.clients.values()]
+      .filter((display) =>
+        display.type === "pos-display" &&
+        display.branchId === posClient.branchId &&
+        !!display.dualPosDisplayId &&
+        Number.isInteger(display.dualPosDisplayNumber)
+      )
+      .map((display) => ({
+        displayId: display.dualPosDisplayId,
+        displayNumber: display.dualPosDisplayNumber,
+        pairedToCurrentPos: Boolean(
+          posClient.dualPosTerminalId &&
+          display.dualPosTerminalId === posClient.dualPosTerminalId
+        ),
+        available: !display.dualPosTerminalId ||
+          display.dualPosTerminalId === posClient.dualPosTerminalId,
+      }))
+      .sort((a, b) => (a.displayNumber || 0) - (b.displayNumber || 0));
+    this.safeSend(posClient.ws, JSON.stringify({
+      type: "dual_pos_display_list",
+      payload: { displays },
+    }));
+  }
+
+  private broadcastDualPosDisplayLists(branchId: string) {
+    for (const client of this.clients.values()) {
+      if (client.type === "pos" && client.branchId === branchId) {
+        this.sendDualPosDisplayList(client);
+      }
+    }
+  }
+
+  private sendDualPosDisplayUpdate(display: WSClient, payload: any) {
+    this.safeSend(display.ws, JSON.stringify({
+      type: "dual_pos_display_update",
+      payload,
+      timestamp: Date.now(),
+    }));
+  }
+
+  private unpairOneDualPosScreen(display: WSClient, branchId: string, terminalId: string) {
+    if (
+      display.type !== "pos-display" ||
+      display.branchId !== branchId ||
+      display.dualPosTerminalId !== terminalId
+    ) return;
+    this.sendDualPosDisplayUpdate(display, {
+      event: "terminal_offline",
+      displayNumber: display.dualPosDisplayNumber,
+    });
+    display.dualPosTerminalId = undefined;
+    display.dualPosControlEnabled = false;
+  }
+
+  private unpairDualPosScreens(branchId: string, terminalId: string, exceptDisplayId?: string) {
+    let changed = false;
+    for (const display of this.clients.values()) {
+      if (
+        display.type === "pos-display" &&
+        display.branchId === branchId &&
+        display.dualPosTerminalId === terminalId &&
+        display.dualPosDisplayId !== exceptDisplayId
+      ) {
+        this.unpairOneDualPosScreen(display, branchId, terminalId);
+        changed = true;
+      }
+    }
+    if (changed) this.broadcastDualPosDisplayLists(branchId);
+  }
+
+  private pairDualPosDisplay(posClient: WSClient, displayId: string) {
+    if (!displayId || !posClient.branchId || !posClient.dualPosTerminalId) return;
+    const display = [...this.clients.values()].find((candidate) =>
+      candidate.type === "pos-display" &&
+      candidate.branchId === posClient.branchId &&
+      candidate.dualPosDisplayId === displayId
+    );
+    if (!display) {
+      this.safeSend(posClient.ws, JSON.stringify({
+        type: "dual_pos_display_pair_error",
+        payload: { reason: "display_not_found" },
+      }));
+      return;
+    }
+    if (display.dualPosTerminalId && display.dualPosTerminalId !== posClient.dualPosTerminalId) {
+      this.safeSend(posClient.ws, JSON.stringify({
+        type: "dual_pos_display_pair_error",
+        payload: { reason: "display_in_use", displayNumber: display.dualPosDisplayNumber },
+      }));
+      this.broadcastDualPosDisplayLists(posClient.branchId);
+      return;
+    }
+
+    this.unpairDualPosScreens(posClient.branchId, posClient.dualPosTerminalId, displayId);
+    display.dualPosTerminalId = posClient.dualPosTerminalId;
+    display.dualPosControlEnabled = posClient.dualPosControlEnabled === true;
+    this.sendDualPosDisplayUpdate(display, {
+      event: "terminal_status",
+      online: true,
+      enabled: display.dualPosControlEnabled,
+      displayNumber: display.dualPosDisplayNumber,
+      terminalId: display.dualPosTerminalId,
+    });
+    this.safeSend(posClient.ws, JSON.stringify({
+      type: "dual_pos_display_paired",
+      payload: {
+        displayId: display.dualPosDisplayId,
+        displayNumber: display.dualPosDisplayNumber,
+      },
+    }));
+    this.broadcastDualPosDisplayLists(posClient.branchId);
   }
 
   private broadcastDualPosDisplay(payload: any, branchId?: string, terminalId?: string) {

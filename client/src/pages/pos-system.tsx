@@ -74,6 +74,12 @@ import { PosShiftBar } from "@/components/pos-shift-bar";
 
 type OrderType = "dine_in" | "takeaway" | "delivery" | "car_pickup";
 type PaymentMethod = "cash" | "card" | "qahwa-card" | "split";
+type DualPosDisplayOption = {
+  displayId: string;
+  displayNumber: number;
+  pairedToCurrentPos: boolean;
+  available: boolean;
+};
 
 const ORDER_TYPES = [
   { id: "dine_in", name: "محلي", nameEn: "Dine-in", icon: Coffee },
@@ -163,6 +169,11 @@ export default function PosSystem() {
   const [customerPoints, setCustomerPoints] = useState(0);
   const [usePoints, setUsePoints] = useState(false);
   const [allowCustomerControl, setAllowCustomerControl] = useState(false);
+  const [dualPosDisplays, setDualPosDisplays] = useState<DualPosDisplayOption[]>([]);
+  const [showDualPosDisplayPicker, setShowDualPosDisplayPicker] = useState(false);
+  const [activeDualPosDisplayId, setActiveDualPosDisplayId] = useState("");
+  const [activeDualPosDisplayNumber, setActiveDualPosDisplayNumber] = useState<number | null>(null);
+  const [dualPosDisplayNotice, setDualPosDisplayNotice] = useState("");
   const [mobilePanelView, setMobilePanelView] = useState<'products' | 'cart'>('products');
   const [soundEnabled, setSoundEnabled] = useState(() => getSoundEnabled('pos'));
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -278,6 +289,56 @@ export default function PosSystem() {
   useEffect(() => {
     rtSend("dual_pos_control_update", { enabled: allowCustomerControl });
   }, [allowCustomerControl, wsConnected, rtSend]);
+
+  useRealtimeEvent("dual_pos_display_list", (message: any) => {
+    const payload = message?.payload || message;
+    const displays = Array.isArray(payload?.displays) ? payload.displays as DualPosDisplayOption[] : [];
+    setDualPosDisplays(displays);
+    const pairedDisplay = displays.find((display) => display.pairedToCurrentPos);
+    setActiveDualPosDisplayId(pairedDisplay?.displayId || "");
+    setActiveDualPosDisplayNumber(pairedDisplay?.displayNumber || null);
+  });
+
+  useRealtimeEvent("dual_pos_display_paired", (message: any) => {
+    const payload = message?.payload || message;
+    if (typeof payload?.displayId === "string") setActiveDualPosDisplayId(payload.displayId);
+    if (typeof payload?.displayNumber === "number") setActiveDualPosDisplayNumber(payload.displayNumber);
+    setDualPosDisplayNotice("");
+    setShowDualPosDisplayPicker(false);
+  });
+
+  useRealtimeEvent("dual_pos_display_pair_error", (message: any) => {
+    const payload = message?.payload || message;
+    setDualPosDisplayNotice(
+      payload?.reason === "display_in_use"
+        ? tc("هذه الشاشة مرتبطة بنقطة بيع أخرى. اختر شاشة متاحة.", "This screen is paired with another POS. Choose an available screen.")
+        : tc("لم تعد هذه الشاشة متصلة. حدّث القائمة واختر شاشة أخرى.", "This screen is no longer connected. Refresh the list and choose another.")
+    );
+    rtSend("dual_pos_list_displays");
+  });
+
+  useRealtimeEvent("dual_pos_display_status", (message: any) => {
+    const payload = message?.payload || message;
+    if (payload?.event === "display_offline" && payload.displayId === activeDualPosDisplayId) {
+      setActiveDualPosDisplayId("");
+      setActiveDualPosDisplayNumber(null);
+      setDualPosDisplayNotice(tc("انقطع اتصال شاشة العميل.", "Customer display disconnected."));
+    }
+  });
+
+  useEffect(() => {
+    if (!wsConnected) return;
+    let lastSentAt = 0;
+    const signalActivity = () => {
+      const now = Date.now();
+      if (now - lastSentAt < 1500) return;
+      lastSentAt = now;
+      rtSend("dual_pos_activity");
+    };
+    const activityEvents: Array<keyof WindowEventMap> = ["pointerdown", "pointermove", "touchstart", "keydown", "wheel"];
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, signalActivity, { passive: true }));
+    return () => activityEvents.forEach((eventName) => window.removeEventListener(eventName, signalActivity));
+  }, [wsConnected, rtSend]);
 
   useRealtimeEvent("new_order", (message: any) => {
     const order = message?.order || message;
@@ -433,12 +494,29 @@ export default function PosSystem() {
   }, [rtSend]);
 
   const openDualPosDisplay = () => {
+    setDualPosDisplayNotice("");
+    setShowDualPosDisplayPicker(true);
+    rtSend("dual_pos_list_displays");
+  };
+
+  const openNewDualPosDisplay = () => {
     const branchId = activeBranchId || employee?.branchId || "main";
-    const params = new URLSearchParams({
-      branchId: String(branchId),
-      terminalId: dualPosTerminalId,
-    });
+    const params = new URLSearchParams({ branchId: String(branchId) });
     window.open(`/dual-pos?${params.toString()}`, "_blank", "noopener,noreferrer");
+    setDualPosDisplayNotice(tc("تم فتح شاشة جديدة. انتظر ظهور رقمها ثم اخترها من القائمة.", "A new display was opened. Wait for its number to appear, then select it."));
+  };
+
+  const pairDualPosDisplay = (display: DualPosDisplayOption) => {
+    if (!display.available) return;
+    setDualPosDisplayNotice(tc(`جارٍ ربط الشاشة رقم ${display.displayNumber}...`, `Connecting screen ${display.displayNumber}...`));
+    rtSend("dual_pos_pair_display", { displayId: display.displayId });
+  };
+
+  const unpairDualPosDisplay = () => {
+    rtSend("dual_pos_unpair_display");
+    setActiveDualPosDisplayId("");
+    setActiveDualPosDisplayNumber(null);
+    setDualPosDisplayNotice(tc("تم فصل شاشة العرض.", "Display disconnected."));
   };
 
   useEffect(() => {
@@ -2309,7 +2387,8 @@ export default function PosSystem() {
               </Button>
               <Button variant="outline" size="sm" onClick={openDualPosDisplay} className="gap-1 px-2" data-testid="button-dual-pos-display-mobile">
                 <MonitorSmartphone className="w-4 h-4" />
-                <span className="text-[10px] font-bold">{tc("شاشة العميل", "Customer screen")}</span>
+                <span className="text-[10px] font-bold">{tc("شاشات العرض", "Displays")}</span>
+                {activeDualPosDisplayNumber && <span className="rounded bg-primary/10 px-1 text-[9px] font-black">#{String(activeDualPosDisplayNumber).padStart(2, "0")}</span>}
               </Button>
               <AudioUnlockBanner
                 pageKey="pos"
@@ -2354,7 +2433,8 @@ export default function PosSystem() {
               data-testid="button-dual-pos-display"
             >
               <MonitorSmartphone className="w-4 h-4" />
-              <span className="text-xs">{tc("فتح شاشة العميل", "Open customer screen")}</span>
+              <span className="text-xs">{tc("شاشات العرض", "Displays")}</span>
+              {activeDualPosDisplayNumber && <span className="rounded bg-primary/10 px-1 text-[10px] font-black">#{String(activeDualPosDisplayNumber).padStart(2, "0")}</span>}
             </Button>
 
             <Button
@@ -5398,6 +5478,81 @@ export default function PosSystem() {
                   </div>
                 );
               })}
+            </div>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={showDualPosDisplayPicker} onOpenChange={setShowDualPosDisplayPicker}>
+          <DialogContent className="max-w-lg" dir={dir}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <MonitorSmartphone className="h-5 w-5 text-primary" />
+                {tc("اختيار شاشة العرض", "Choose a display")}
+              </DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              {tc("اختر الشاشة المفتوحة برقمها لعرض طلب نقطة البيع عليها.", "Choose an open screen by its number to show this POS order.")}
+            </p>
+
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={openNewDualPosDisplay} className="flex-1 gap-2" data-testid="button-open-new-dual-pos-display">
+                <Plus className="h-4 w-4" />
+                {tc("فتح شاشة جديدة", "Open a new screen")}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => rtSend("dual_pos_list_displays")}
+                aria-label={tc("تحديث الشاشات", "Refresh displays")}
+                data-testid="button-refresh-dual-pos-displays"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {dualPosDisplayNotice && (
+              <p className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground" role="status">
+                {dualPosDisplayNotice}
+              </p>
+            )}
+
+            <div className="max-h-[45vh] space-y-2 overflow-y-auto">
+              {dualPosDisplays.length === 0 ? (
+                <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+                  <MonitorSmartphone className="mx-auto mb-2 h-8 w-8 opacity-40" />
+                  {tc("لا توجد شاشات مفتوحة لهذا الفرع. افتح شاشة جديدة أو افتح /dual-pos على جهاز العرض.", "No open displays for this branch. Open a new screen or visit /dual-pos on the display device.")}
+                </div>
+              ) : dualPosDisplays.map((display) => (
+                <div key={display.displayId} className={`flex items-center justify-between gap-3 rounded-xl border p-3 ${display.pairedToCurrentPos ? "border-primary/40 bg-primary/5" : "bg-background"}`}>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-lg font-black text-primary">
+                      {String(display.displayNumber).padStart(2, "0")}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-bold">{tc("شاشة العرض", "Display")} #{String(display.displayNumber).padStart(2, "0")}</p>
+                      <p className={`text-xs ${display.pairedToCurrentPos ? "text-emerald-700" : display.available ? "text-muted-foreground" : "text-amber-700"}`}>
+                        {display.pairedToCurrentPos
+                          ? tc("متصلة بنقطة البيع هذه", "Connected to this POS")
+                          : display.available
+                            ? tc("متاحة للربط", "Available to pair")
+                            : tc("مرتبطة بنقطة بيع أخرى", "Paired with another POS")}
+                      </p>
+                    </div>
+                  </div>
+                  {display.pairedToCurrentPos ? (
+                    <Button size="sm" variant="outline" onClick={unpairDualPosDisplay} data-testid={`button-unpair-display-${display.displayNumber}`}>
+                      {tc("فصل", "Disconnect")}
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      disabled={!display.available}
+                      onClick={() => pairDualPosDisplay(display)}
+                      data-testid={`button-pair-display-${display.displayNumber}`}
+                    >
+                      {tc("اختيار", "Select")}
+                    </Button>
+                  )}
+                </div>
+              ))}
             </div>
           </DialogContent>
         </Dialog>
