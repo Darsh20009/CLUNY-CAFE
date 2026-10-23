@@ -5,7 +5,7 @@
 - [POS deploy propagation gap](pos-deploy-propagation.md) — always-on POS/kiosk tabs never reload on their own after a deploy; service worker controllerchange only fires when sw.js itself changes, not on ordinary bundle updates. Need an independent deploy-detection heartbeat.
 - [Dual POS pairing](dual-pos-session.md) — pair the customer display to a fresh branch-scoped POS session; never persist a pairing ID across POS reloads.
 - [MongoDB Atlas access](mongodb-atlas-access.md) — Replit egress IPs are not stable; use a restricted DB role and don't mistake the cluster name for the database.
-- [Atlas migration with TTL data](mongodb-migration-ttl.md) — keep destination TTL indexes disabled until copy verification; long snapshot sessions may expire on large collections.
+- [Atlas migration safety](mongodb-migration-ttl.md) — distinguish replace-and-reconcile resume from insert-only merge; preserve live destination records and TTL behavior until conflicts are resolved.
 - [Geidea credential safety](geidea-credential-safety.md) — CLUNY uses live Saudi keys; use the KSA endpoint and never seed credentials from source defaults.
 - [Payment confirmation security](payment-confirmation-security.md) — never trust browser success parameters; confirm transactions server-side and require valid webhook HMAC.
 - [Paymob integration IDs](paymob-integration-ids.md) — card and Apple Pay IDs must belong to the active Paymob merchant; API credential success does not validate integration IDs.
