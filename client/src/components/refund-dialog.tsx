@@ -78,6 +78,16 @@ export default function RefundDialog({ open, onOpenChange, employeeName, initial
     });
     setSelectedItems(initSel);
     setRefundQtys(initQty);
+    const provider = String(order.paymentProvider || '').toLowerCase();
+    const method = String(order.paymentMethod || '').toLowerCase();
+    setPayMethod(
+      ['paymob', 'geidea', 'neoleap'].includes(provider) ||
+      ['paymob-card', 'paymob-wallet', 'paymob-apple-pay', 'geidea', 'neoleap', 'apple_pay'].includes(method)
+        ? 'card'
+        : 'cash'
+    );
+    setCashAmount("");
+    setCardAmount("");
   }, [open, initialOrder?.id, initialOrder?._id]);
 
   const reset = () => {

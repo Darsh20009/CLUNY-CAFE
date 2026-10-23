@@ -110,10 +110,12 @@ export default function PaymobCheckout({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ provider: "paymob", sessionId: orderNumber }),
+          body: JSON.stringify({ provider: "paymob", sessionId: orderNumber, orderNumber, amount }),
         });
         const result = await response.json();
-        if (result.verified === true) return true;
+        if (result.verified === true && result.orderUpdated === true) {
+          return await verifyPaymentStatus(2, 700);
+        }
       } catch {}
       if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, delayMs));
     }
@@ -195,33 +197,12 @@ export default function PaymobCheckout({
           const verifyRes = await fetch('/api/payments/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider: 'paymob', sessionId: orderNumber }),
+            body: JSON.stringify({ provider: 'paymob', sessionId: orderNumber, orderNumber, amount }),
           });
           const verifyData = await verifyRes.json();
-          if (verifyData.verified) {
-            // Attempt to create the order from sessionStorage
-            const pendingRaw = sessionStorage.getItem('pendingOrderData');
-            if (pendingRaw) {
-              try {
-                const orderData = JSON.parse(pendingRaw);
-                const createRes = await fetch('/api/orders', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    ...orderData,
-                    paymentStatus: 'paid',
-                    status: 'payment_confirmed',
-                    paymentTransactionId: verifyData.transactionId || orderNumber,
-                    paymentReference: `PAYMOB-${verifyData.transactionId || orderNumber}`,
-                  }),
-                  credentials: 'include',
-                });
-                if (createRes.ok) {
-                  sessionStorage.removeItem('pendingOrderData');
-                  sessionStorage.removeItem('paymentProvider');
-                }
-              } catch {}
-            }
+          if (verifyData.verified && verifyData.orderUpdated && await verifyPaymentStatus(2, 700)) {
+            sessionStorage.removeItem('pendingOrderData');
+            sessionStorage.removeItem('paymentProvider');
             triggerSuccess();
             return;
           }

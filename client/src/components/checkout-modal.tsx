@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { useCartStore } from "@/lib/cart-store";
 import { useCustomer } from "@/contexts/CustomerContext";
+import { useBranch } from "@/contexts/BranchContext";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getErrorMessage } from "@/lib/queryClient";
 import PaymentMethods from "./payment-methods";
@@ -24,7 +25,7 @@ import ApplePayButton from "./apple-pay-button";
 import SarIcon from "@/components/sar-icon";
 
 const GEIDEA_HPP_METHODS = ['geidea', 'neoleap'];
-const PAYMOB_METHODS = ['paymob-card', 'paymob-wallet'];
+const PAYMOB_METHODS = ['paymob-card', 'paymob-wallet', 'paymob-apple-pay'];
 
 type CheckoutStep = 'review' | 'delivery' | 'payment' | 'confirmation' | 'success';
 type DeliveryType = 'pickup' | 'delivery' | 'curbside' | null;
@@ -41,6 +42,7 @@ const CheckoutModal = memo(() => {
  getTotalPrice
  } = useCartStore();
  const { customer } = useCustomer();
+  const { selectedBranchId } = useBranch();
 
  const { toast } = useToast();
  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod | null>(null);
@@ -84,6 +86,10 @@ const CheckoutModal = memo(() => {
  const createOrderMutation = useMutation({
  mutationFn: async (orderData: any) => {
  const response = await apiRequest("POST", "/api/orders", orderData);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "فشل إنشاء الطلب");
+  }
  return response.json();
  },
  onSuccess: async (order) => {
@@ -208,7 +214,12 @@ const CheckoutModal = memo(() => {
       }),
       totalAmount: getTotalPrice().toString(),
       paymentMethod: selectedPaymentMethod,
-      status: "pending",
+      status: selectedPaymentMethod && (
+        GEIDEA_HPP_METHODS.includes(selectedPaymentMethod as string) ||
+        PAYMOB_METHODS.includes(selectedPaymentMethod as string) ||
+        ["apple_pay", "paymob-apple-pay"].includes(selectedPaymentMethod as string)
+      ) ? "awaiting_payment" : "pending",
+      channel: "online",
       customerId: customer?.id || null,
       customerInfo: { name: customerName, phone: customerPhone },
       deliveryType: deliveryType,
@@ -222,7 +233,7 @@ const CheckoutModal = memo(() => {
       carColor: deliveryType === 'curbside' ? carColor : null,
       carPlate: deliveryType === 'curbside' ? carPlate : null,
       plateNumber: deliveryType === 'curbside' ? carPlate : null,
-      branchId: (deliveryType === 'pickup' || deliveryType === 'curbside') ? selectedBranch : null,
+      branchId: selectedBranch || selectedBranchId || undefined,
       deliveryAddress: deliveryType === 'delivery' ? deliveryAddress : null,
       deliveryNotes: deliveryNotes || null,
       paymentReceiptUrl: receiptPreview || null,

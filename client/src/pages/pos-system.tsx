@@ -117,6 +117,7 @@ export default function PosSystem() {
       ? crypto.randomUUID()
       : `pos-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   });
+  const processedOnlineOrderIdsRef = useRef(new Set<string>());
 
   // ── Branch selector for admin/owner ──────────────────────────────────────
   const isAdminOwner = employee?.role === 'admin' || employee?.role === 'owner';
@@ -278,7 +279,18 @@ export default function PosSystem() {
     rtSend("dual_pos_control_update", { enabled: allowCustomerControl });
   }, [allowCustomerControl, wsConnected, rtSend]);
 
-  useRealtimeEvent("new_order", (order: any) => {
+  useRealtimeEvent("new_order", (message: any) => {
+    const order = message?.order || message;
+    if (!order || typeof order !== 'object') return;
+    const orderId = String(order.id || order._id || order.orderNumber || '');
+    if (orderId && processedOnlineOrderIdsRef.current.has(orderId)) return;
+    if (orderId) {
+      processedOnlineOrderIdsRef.current.add(orderId);
+      if (processedOnlineOrderIdsRef.current.size > 500) {
+        const oldest = processedOnlineOrderIdsRef.current.values().next().value;
+        if (oldest) processedOnlineOrderIdsRef.current.delete(oldest);
+      }
+    }
     queryClient.invalidateQueries({ queryKey: ["/api/orders/live"] });
     const isOnlineWebOrder = order?.channel === 'online' || order?.channel === 'web';
     const isPosOrder = order?.channel === 'pos';
@@ -299,10 +311,12 @@ export default function PosSystem() {
 
     if (isOnlineWebOrder || isTableOrder || isCarPickup) {
       setNewOrdersCount(prev => prev + 1);
-      if (isTableOrder) {
-        playChannelSound('table');
-      } else {
-        playChannelSound('online');
+      if (soundEnabled) {
+        if (isTableOrder) {
+          playChannelSound('table').catch(() => {});
+        } else {
+          playChannelSound('online').catch(() => {});
+        }
       }
       toast({
         title: t('pos.new_order_toast'),
@@ -312,7 +326,15 @@ export default function PosSystem() {
         }),
       });
       const printerSettings = loadPrinterSettings();
-      if (printerSettings.autoPrint && order?.items?.length > 0) {
+      const isPaidOnlineOrder = isOnlineWebOrder && (
+        order.paymentStatus === 'paid' ||
+        ['payment_confirmed', 'confirmed', 'in_progress', 'ready', 'delivered', 'received', 'completed'].includes(order.status)
+      );
+      const isCashOnDeliveryOrder = isOnlineWebOrder &&
+        ['cash', 'cash_on_delivery', 'pay_at_branch'].includes(String(order.paymentMethod || '').toLowerCase()) &&
+        order.status !== 'awaiting_payment';
+      const isReadyForPrint = !isOnlineWebOrder || isPaidOnlineOrder || isCashOnDeliveryOrder;
+      if (printerSettings.autoPrint && isReadyForPrint && order?.items?.length > 0) {
         const onlineOrderType = order.orderType || 'online';
         const onlineOrderTypeName =
           onlineOrderType === 'dine_in'    || onlineOrderType === 'dine-in'    ? 'محلي'   :
@@ -2289,6 +2311,12 @@ export default function PosSystem() {
                 <MonitorSmartphone className="w-4 h-4" />
                 <span className="text-[10px] font-bold">{tc("شاشة العميل", "Customer screen")}</span>
               </Button>
+              <AudioUnlockBanner
+                pageKey="pos"
+                soundEnabled={soundEnabled}
+                onToggleSound={(val) => { setSoundEnabled(val); saveSoundEnabled('pos', val); }}
+                compact
+              />
             </div>
           </div>
 

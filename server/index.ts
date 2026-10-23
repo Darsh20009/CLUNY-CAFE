@@ -666,7 +666,7 @@ app.use(
       // a second connection pool to Atlas.
       clientPromise: mongoose.connection
         .asPromise()
-        .then((connection) => connection.getClient()),
+        .then((connection) => connection.getClient() as unknown as import("mongodb").MongoClient),
       dbName: process.env.MONGODB_DATABASE,
       collectionName: 'sessions',
       ttl: 30 * 24 * 60 * 60,

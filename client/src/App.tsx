@@ -332,7 +332,7 @@ function AppRouter() {
       <Route path="/employee/dashboard"><AuthGuard userType="employee"><EmployeeDashboard /></AuthGuard></Route>
       <Route path="/employee/cashier"><AuthGuard userType="employee"><EmployeeCashier /></AuthGuard></Route>
       <Route path="/employee/pos"><AuthGuard userType="employee"><POSSystem /></AuthGuard></Route>
-      <Route path="/employee/dual-pos"><AuthGuard userType="employee"><POSSystem /></AuthGuard></Route>
+      <Route path="/employee/dual-pos"><AuthGuard userType="employee"><DualPOSDisplay /></AuthGuard></Route>
       <Route path="/employee/shifts"><AuthGuard userType="employee"><ShiftManagement /></AuthGuard></Route>
       <Route path="/employee/kitchen"><AuthGuard userType="employee"><KitchenDisplay /></AuthGuard></Route>
       <Route path="/employee/tables"><AuthGuard userType="employee"><CashierTables /></AuthGuard></Route>

@@ -351,13 +351,18 @@ class OrderWebSocketManager {
     if (!this.wss) return;
     this.cleanupStaleClients();
     const message = this.makeEvent("new_order", { order });
-    const orderBranchId = order.branchId;
+    const orderBranchId = String(order.branchId || "");
 
     this.clients.forEach((client, ws) => {
       if (ws.readyState === WebSocket.OPEN) {
         if (client.type === "kitchen" || client.type === "display" || client.type === "pos") {
-          // Branch filter: send only to same branch (or when either side has no branchId)
-          const branchMatches = !orderBranchId || !client.branchId || client.branchId === orderBranchId;
+          // Never send a branch-assigned order to an unscoped terminal.
+          // Legacy paid orders with no resolvable branch go only to global staff screens.
+          const branchMatches = orderBranchId === "unassigned"
+            ? client.branchId === "all"
+            : orderBranchId
+              ? client.branchId === orderBranchId || client.branchId === "all"
+              : client.branchId === "main" || client.branchId === "all";
           if (branchMatches) this.safeSend(ws, message);
         }
       }
@@ -369,6 +374,7 @@ class OrderWebSocketManager {
       body:  `طلب رقم #${order.orderNumber} بقيمة ${order.totalAmount} ر.س`,
       url:   "/employee/orders",
       orderId: order.id,
+      branchId: orderBranchId === "unassigned" ? "all" : (orderBranchId || "main"),
       sound: true,
       isOnlineOrder: isOnline,
     });

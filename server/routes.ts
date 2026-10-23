@@ -1032,6 +1032,101 @@ async function verifyPaymobPayment(input: {
 
 export async function registerRoutes(app: Express): Promise<Server> {
   registerObjectStorageRoutes(app);
+  const resolveOnlineOrderBranch = async (tenantId: string, requestedBranchId: unknown) => {
+    const requested = String(requestedBranchId || '').trim();
+    const isPlaceholder = !requested || ['default', 'none', 'null', 'undefined', 'all'].includes(requested.toLowerCase());
+    const branches = await BranchModel.find({
+      tenantId,
+      isActive: { $in: [1, true] },
+      allowOnlineOrders: { $ne: false },
+    }).sort({ createdAt: 1 }).lean() as any[];
+
+    if (!isPlaceholder) {
+      const selected = branches.find((branch: any) =>
+        String(branch.id || '') === requested || String(branch._id || '') === requested
+      );
+      if (!selected) {
+        return { error: 'الفرع المحدد غير متاح لاستقبال الطلبات الإلكترونية', code: 'BRANCH_UNAVAILABLE' };
+      }
+      return { branchId: String(selected.id || selected._id) };
+    }
+
+    if (branches.length === 1) {
+      return { branchId: String(branches[0].id || branches[0]._id) };
+    }
+    if (branches.length === 0) {
+      return { error: 'لا يوجد فرع نشط يستقبل الطلبات الإلكترونية', code: 'NO_ONLINE_BRANCH' };
+    }
+    return { error: 'يرجى اختيار الفرع قبل إتمام الطلب والدفع', code: 'BRANCH_SELECTION_REQUIRED' };
+  };
+  const verifyGeideaSession = async (input: {
+    tenantId: string;
+    sessionId?: string;
+    transactionId?: string;
+    expectedAmount: number;
+    orderReference?: string;
+  }) => {
+    const config = await BusinessConfigModel.findOne({ tenantId: input.tenantId }).lean() as any;
+    const geidea = config?.paymentGateway?.geidea;
+    if (!geidea?.publicKey || !geidea?.apiPassword) {
+      return { verified: false, error: 'بيانات اعتماد جيديا غير مكتملة' };
+    }
+    const clauses: any[] = [];
+    if (input.sessionId) clauses.push({ sessionId: input.sessionId });
+    if (input.orderReference) clauses.push({ orderId: input.orderReference });
+    const paymentInit = clauses.length
+      ? await PaymentLogModel.findOne({
+          tenantId: input.tenantId,
+          provider: 'geidea',
+          event: 'init',
+          $or: clauses,
+        }).sort({ createdAt: -1 }).lean() as any
+      : null;
+    if (!paymentInit || Math.abs(Number(paymentInit.amount) - input.expectedAmount) > 0.01) {
+      return { verified: false, error: 'جلسة الدفع لا تطابق الطلب أو المبلغ' };
+    }
+
+    const baseUrl = (geidea.baseUrl || 'https://api.ksamerchant.geidea.net').replace(/\/$/, '');
+    const sessionRef = String(paymentInit.sessionId || input.sessionId || input.transactionId || '');
+    if (!sessionRef) return { verified: false, error: 'معرّف جلسة جيديا غير موجود' };
+    const credentials = Buffer.from(`${geidea.publicKey}:${geidea.apiPassword}`).toString('base64');
+    const isPaidStatus = (data: any) => {
+      const status = String(data?.session?.status || data?.eInvoice?.status || data?.status || '').toLowerCase();
+      return ['paymentsuccess', 'success', 'paid', 'completed'].includes(status);
+    };
+
+    try {
+      const sessionRes = await fetch(`${baseUrl}/payment-intent/api/v2/direct/session/${encodeURIComponent(sessionRef)}`, {
+        method: 'GET',
+        headers: { Authorization: `Basic ${credentials}`, Accept: 'application/json' },
+      });
+      let data: any = await sessionRes.json().catch(() => ({}));
+      let verified = sessionRes.ok && isPaidStatus(data);
+      if (!verified && input.orderReference) {
+        const eInvoiceRes = await fetch(`${baseUrl}/payment-intent/api/v1/direct/eInvoice/${encodeURIComponent(input.orderReference)}`, {
+          method: 'GET',
+          headers: { Authorization: `Basic ${credentials}`, Accept: 'application/json' },
+        });
+        const invoiceData = await eInvoiceRes.json().catch(() => ({}));
+        if (eInvoiceRes.ok && isPaidStatus(invoiceData)) {
+          data = invoiceData;
+          verified = true;
+        }
+      }
+      const transactionId = String(
+        data?.transaction?.transactionId ||
+        data?.transactionId ||
+        data?.order?.orderId ||
+        data?.orderId ||
+        data?.session?.paymentIntentId ||
+        ''
+      );
+      return { verified, transactionId, paymentInit };
+    } catch (error: any) {
+      console.warn('[Geidea Verify] Server-side session verification failed:', error?.message);
+      return { verified: false, error: 'فشل التحقق من جلسة جيديا' };
+    }
+  };
 
   // ── Visitor tracking middleware ──────────────────────────────────────────
   app.use((req, res, next) => {
@@ -1391,6 +1486,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const tenantId = isBackdatedOrder
         ? (backdatedEmployee.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId())
         : (body.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId());
+
+      if (body.channel === 'online' || body.channel === 'web') {
+        const branchResolution = await resolveOnlineOrderBranch(tenantId, body.branchId);
+        if (!branchResolution.branchId) {
+          return res.status(409).json({
+            error: branchResolution.error,
+            code: branchResolution.code,
+          });
+        }
+        body.branchId = branchResolution.branchId;
+      }
 
       const mappedPaymentMethod = paymentMethodMap[body.paymentMethod] || body.paymentMethod || 'other';
       if (isBackdatedOrder && !['cash', 'pos', 'pos-network', 'split', 'mada'].includes(mappedPaymentMethod)) {
@@ -4556,6 +4662,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!paymentToken) return res.status(400).json({ error: "paymentToken مطلوب" });
 
       const tenantId = getTenantIdFromRequest(req) || 'demo-tenant';
+      const orderRef = String(orderData?.orderRef || '').trim();
+      const amount = Number(orderData?.totalAmount || 0);
+      if (!orderRef || !Number.isFinite(amount) || amount <= 0) {
+        return res.status(400).json({ error: "مرجع الطلب والمبلغ مطلوبان للدفع" });
+      }
+      const existingOrder = await storage.getOrderByNumber(orderRef);
+      if (!existingOrder || (existingOrder.tenantId && String(existingOrder.tenantId) !== tenantId)) {
+        return res.status(404).json({ error: "الطلب غير موجود أو لا يتبع هذا المتجر" });
+      }
+      if (Math.abs(Number(existingOrder.totalAmount) - amount) > 0.01) {
+        return res.status(409).json({ error: "المبلغ لا يطابق إجمالي الطلب" });
+      }
+      if (existingOrder.paymentStatus === 'paid') {
+        return res.status(409).json({ error: "تم دفع هذا الطلب بالفعل" });
+      }
       const config = await BusinessConfigModel.findOne({ tenantId }).lean();
       const pg = (config as any)?.paymentGateway;
 
@@ -4568,8 +4689,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const credentials = Buffer.from(`${publicKey}:${apiPassword}`).toString('base64');
 
       // Build request body per Geidea Apple Pay Direct API v2 docs
-      const amount = Number(orderData?.totalAmount || 0).toFixed(2);
-      const merchantReferenceId = (orderData?.orderRef || sessionId || nanoid()).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
+      const amountText = amount.toFixed(2);
+      const merchantReferenceId = (orderRef || sessionId || nanoid()).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
       const callbackUrl = 'https://www.cluny.cafe/api/payments/geidea/callback';
 
       // Build body exactly per Geidea Apple Pay Direct API docs:
@@ -4628,7 +4749,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           transactionIdentifier: paymentToken.transactionIdentifier || paymentToken.TransactionIdentifier || '',
         },
         ...(sessionId ? { sessionId } : {}),
-        Amount: parseFloat(amount),
+        Amount: parseFloat(amountText),
         Currency: orderData?.currency || 'SAR',
         MerchantReferenceId: merchantReferenceId,
         CallbackUrl: callbackUrl,
@@ -4696,7 +4817,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const transactionId = processData?.transaction?.transactionId || processData?.order?.orderId || merchantReferenceId;
+      const transactionId = String(processData?.transaction?.transactionId || processData?.transactionId || processData?.order?.orderId || '');
+      const updatedOrder = await OrderModel.findOneAndUpdate(
+        { id: String(existingOrder.id || existingOrder._id), tenantId, paymentStatus: { $ne: 'paid' } },
+        {
+          $set: {
+            status: 'payment_confirmed',
+            paymentStatus: 'paid',
+            paymentProvider: 'geidea',
+            ...(transactionId ? { paymentTransactionId: transactionId } : {}),
+          },
+        },
+        { new: true },
+      );
+      if (updatedOrder) {
+        cache.invalidate('live-orders:');
+        cache.invalidate('analytics:advanced:');
+        wsManager.broadcastNewOrder(serializeDoc(updatedOrder));
+      }
+      await logPayment({
+        tenantId,
+        event: 'verify',
+        provider: 'geidea',
+        amount,
+        currency: orderData?.currency || 'SAR',
+        status: 'success',
+        externalId: transactionId || undefined,
+        merchantReferenceId,
+        orderId: orderRef,
+        rawData: { source: 'apple-pay-direct-process' },
+        ipAddress: req.ip,
+      });
       return res.json({ success: true, transactionId, details: processData });
     } catch (err: any) {
       console.error('[Apple Pay] process error:', err);
@@ -4787,16 +4938,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           console.log(`[Geidea Verify] eInvoice ${eInvoiceId}: ${isPaid ? 'PAID' : 'NOT PAID'}`);
+          let resolvedTransactionId = String(
+            verifyData?.transaction?.transactionId ||
+            verifyData?.transactionId ||
+            verifyData?.orderId ||
+            verifyData?.session?.paymentIntentId ||
+            transactionId ||
+            ''
+          );
           const resolvedOrderNumber = orderNumber || paymentInit?.orderId;
-          if (isPaid && resolvedOrderNumber) {
+          if (isPaid && resolvedOrderNumber && paymentInit) {
             const order = await storage.getOrderByNumber(String(resolvedOrderNumber));
-            if (order) {
-              await storage.updateOrderStatus(order.id || order._id, 'payment_confirmed');
+            const initAmount = Number(paymentInit.amount);
+            const orderAmount = Number(order?.totalAmount);
+            if (!order || !Number.isFinite(initAmount) || !Number.isFinite(orderAmount) ||
+                Math.abs(initAmount - orderAmount) > 0.01) {
+              console.warn('[Payment Verify] Geidea verified result did not match the stored order/amount');
+              isPaid = false;
+            } else {
+              const updatedOrder = await OrderModel.findOneAndUpdate(
+                { id: String(order.id || order._id), tenantId, paymentStatus: { $ne: 'paid' } },
+                {
+                  $set: {
+                    status: 'payment_confirmed',
+                    paymentStatus: 'paid',
+                    paymentProvider: 'geidea',
+                    ...(resolvedTransactionId ? { paymentTransactionId: resolvedTransactionId } : {}),
+                  },
+                },
+                { new: true },
+              );
+              if (updatedOrder) {
+                cache.invalidate('live-orders:');
+                cache.invalidate('analytics:advanced:');
+                wsManager.broadcastNewOrder(serializeDoc(updatedOrder));
+              }
             }
           }
+          await logPayment({
+            tenantId,
+            event: 'verify',
+            provider: 'geidea',
+            status: isPaid ? 'success' : 'pending',
+            sessionId: sessionId || undefined,
+            externalId: resolvedTransactionId || undefined,
+            orderId: resolvedOrderNumber ? String(resolvedOrderNumber) : undefined,
+            rawData: { source: 'server-api-verification' },
+            ipAddress: req.ip,
+          });
           return res.json({
             verified: isPaid,
-            transactionId: verifyData?.orderId || verifyData?.session?.paymentIntentId || transactionId,
+            transactionId: resolvedTransactionId,
             provider: 'geidea',
           });
         } catch (err: any) {
@@ -4863,13 +5055,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.json({ verified: false, error: "تم إلغاء الدفع أو فشل عبر Paymob", provider: 'paymob' });
         }
 
+        const requestedOrderNumber = orderNumber ? String(orderNumber) : '';
+        const existingOrder = requestedOrderNumber
+          ? await storage.getOrderByNumber(requestedOrderNumber)
+          : null;
+        const expectedAmount = existingOrder
+          ? Number(existingOrder.totalAmount)
+          : req.body.amount ? Number(req.body.amount) : undefined;
         const verification = await verifyPaymobPayment({
           tenantId,
           sessionId: sessionId || undefined,
           transactionId: paymobTransactionId ? String(paymobTransactionId) : undefined,
-          expectedAmount: req.body.amount ? Number(req.body.amount) : undefined,
-          orderReference: req.body.orderNumber ? String(req.body.orderNumber) : undefined,
+          expectedAmount,
+          orderReference: requestedOrderNumber || undefined,
         });
+        let orderUpdated = false;
+        if (verification.verified && existingOrder && requestedOrderNumber) {
+          const paymentInit: any = await PaymentLogModel.findOne({
+            tenantId,
+            provider: 'paymob',
+            event: 'init',
+            orderId: requestedOrderNumber,
+          }).sort({ createdAt: -1 }).lean();
+          const initAmount = Number(paymentInit?.amount);
+          const orderAmount = Number(existingOrder.totalAmount);
+          if (paymentInit && Number.isFinite(initAmount) && Number.isFinite(orderAmount) &&
+              Math.abs(initAmount - orderAmount) <= 0.01) {
+            const verifiedTxn = String(verification.transactionId || '');
+            const updateSet: Record<string, any> = {
+              status: 'payment_confirmed',
+              paymentStatus: 'paid',
+              paymentProvider: 'paymob',
+            };
+            if (/^\d+$/.test(verifiedTxn)) updateSet.paymentTransactionId = verifiedTxn;
+            const updatedOrder = await OrderModel.findOneAndUpdate(
+              { id: String(existingOrder.id || existingOrder._id), tenantId, paymentStatus: { $ne: 'paid' } },
+              { $set: updateSet },
+              { new: true },
+            );
+            if (updatedOrder) {
+              orderUpdated = true;
+              cache.invalidate('live-orders:');
+              cache.invalidate('analytics:advanced:');
+              wsManager.broadcastNewOrder(serializeDoc(updatedOrder));
+            } else {
+              orderUpdated = existingOrder.paymentStatus === 'paid';
+            }
+          }
+        }
         await logPayment({
           tenantId,
           event: 'verify',
@@ -4877,11 +5110,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: verification.verified ? 'success' : verification.failed ? 'failed' : 'pending',
           sessionId: sessionId || undefined,
           externalId: verification.transactionId || (paymobTransactionId ? String(paymobTransactionId) : undefined),
+          orderId: requestedOrderNumber || undefined,
           rawData: { source: 'server-api-verification', verified: verification.verified, pending: !!paymobPending },
           ipAddress: req.ip,
         });
         return res.json({
           verified: verification.verified,
+          orderUpdated,
           transactionId: verification.transactionId,
           error: verification.verified ? undefined : (paymobPending === 'true' ? "الدفع قيد المعالجة — يرجى الانتظار" : "لم يؤكد Paymob نجاح الدفع بعد"),
           provider: 'paymob',
@@ -4999,8 +5234,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.warn('[Geidea Webhook] Payment callback does not match an order/amount');
             return res.json({ received: true, orderId: geideaOrderId, status: 'noted' });
           }
-          await OrderModel.updateOne(
-            { id: String(order.id || order._id), tenantId },
+          const updatedOrder = await OrderModel.findOneAndUpdate(
+            { id: String(order.id || order._id), tenantId, paymentStatus: { $ne: 'paid' } },
             {
               $set: {
                 status: 'payment_confirmed',
@@ -5009,7 +5244,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 paymentTransactionId: String(geideaOrderId),
               },
             },
+            { new: true },
           );
+          if (updatedOrder) {
+            cache.invalidate('live-orders:');
+            cache.invalidate('analytics:advanced:');
+            wsManager.broadcastNewOrder(serializeDoc(updatedOrder));
+          }
           console.log(`[Geidea Webhook] Order ${orderNumber} confirmed as paid`);
         } catch (findErr: any) {
           console.warn('[Geidea Webhook] Could not update order:', findErr.message);
@@ -5025,6 +5266,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: isPaid ? 'success' : 'failed',
         externalId: geideaOrderId ? String(geideaOrderId) : undefined,
         merchantReferenceId: merchantRefId || undefined,
+        orderId: merchantRefId || undefined,
         ipAddress: req.ip,
       });
 
@@ -5261,11 +5503,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!methodProvider || methodProvider !== gatewayProvider) {
         return res.status(409).json({ error: "طريقة الدفع لا تطابق بوابة الدفع المفعّلة. حدّث الصفحة واختر طريقة متاحة." });
       }
+      const branchResolution = await resolveOnlineOrderBranch(tenantId, orderData.branchId);
+      if (!branchResolution.branchId) {
+        return res.status(409).json({
+          error: branchResolution.error,
+          code: branchResolution.code,
+        });
+      }
+      const safeOrderData = {
+        ...orderData,
+        tenantId,
+        branchId: branchResolution.branchId,
+        channel: 'online',
+        status: 'awaiting_payment',
+      };
       const token = crypto.randomBytes(32).toString("hex");
       const expiresAt = new Date(Date.now() + 25 * 60 * 1000); // 25 minutes
       await PaymentSessionTokenModel.create({
         token, customerPhone, customerId: customerId || null,
-        customerName: customerName || "", orderData, gatewayProvider,
+        customerName: customerName || "", orderData: safeOrderData, gatewayProvider,
         paymentMethod, expiresAt,
       });
       return res.json({ token });
@@ -5374,15 +5630,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const isGeideaPayment = record.gatewayProvider === 'geidea' && ['geidea', 'apple_pay'].includes(recordedPaymentMethod);
       const isPaymobPayment = record.gatewayProvider === 'paymob' &&
         ['paymob', 'paymob-card', 'paymob-wallet', 'paymob-apple-pay'].includes(recordedPaymentMethod);
+      const orderTenantId = record.orderData?.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId();
+      let verifiedTransactionId = '';
 
       if (isPaymobPayment && paymobSuccess === "false") {
         return res.status(402).json({ error: "لم تتم عملية الدفع", paymentFailed: true });
       }
 
       if (isPaymobPayment) {
-        const tenantId = record.orderData?.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId();
         const verification = await verifyPaymobPayment({
-          tenantId,
+          tenantId: orderTenantId,
           sessionId: internalSession || undefined,
           transactionId: paymobTxId ? String(paymobTxId) : undefined,
           expectedAmount: Number(record.orderData?.totalAmount) || undefined,
@@ -5394,9 +5651,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           return res.json({ waiting: true, message: "Paymob لم يؤكد الدفع بعد؛ جارٍ التحقق" });
         }
-      } else if (!isGeideaPayment) {
+        const candidateTransactionId = String(verification.transactionId || '');
+        verifiedTransactionId = /^\d+$/.test(candidateTransactionId) ? candidateTransactionId : '';
+      } else if (isGeideaPayment) {
+        const verification = await verifyGeideaSession({
+          tenantId: orderTenantId,
+          sessionId: internalSession || undefined,
+          transactionId: paymobTxId ? String(paymobTxId) : undefined,
+          expectedAmount: Number(record.orderData?.totalAmount) || 0,
+          orderReference: String(record.orderData?.orderNumber || ''),
+        });
+        if (!verification.verified) {
+          return res.json({ waiting: true, message: "لم تؤكد جيديا الدفع بعد؛ جارٍ التحقق" });
+        }
+        verifiedTransactionId = String(verification.transactionId || '');
+      } else {
         return res.status(400).json({ error: "طريقة الدفع المرتبطة برمز الطلب غير مدعومة" });
       }
+
+      const branchResolution = await resolveOnlineOrderBranch(orderTenantId, record.orderData?.branchId);
+      const branchAssignmentRequired = !branchResolution.branchId;
 
       // ── Mark as used now (payment verified or explicitly success=true) ──
       record.used = true;
@@ -5406,25 +5680,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const customerData = await autoLoginCustomer();
 
       // ── Build order data ────────────────────────────────────────────────
-      const tenantId = record.orderData?.tenantId || getTenantIdFromRequest(req) || await getDefaultTenantId();
       const VAT = 0.15;
       const rawTotal = Number(record.orderData?.totalAmount) || 0;
       const orderData: any = {
         ...record.orderData,
-        tenantId,
+        tenantId: orderTenantId,
         paymentStatus: "paid",
         status: "pending",
         paymentMethod: record.orderData?.paymentMethod || "geidea",
+        branchId: branchResolution.branchId || 'unassigned',
+        ...(branchAssignmentRequired ? { branchAssignmentRequired: true } : {}),
         ...((record.gatewayProvider || (isPaymobPayment ? 'paymob' : isGeideaPayment ? 'geidea' : undefined))
           && ['paymob', 'geidea', 'neoleap'].includes(record.gatewayProvider || (isPaymobPayment ? 'paymob' : 'geidea'))
           ? { paymentProvider: record.gatewayProvider || (isPaymobPayment ? 'paymob' : 'geidea') }
           : {}),
-        ...(paymobTxId ? { paymentTransactionId: String(paymobTxId) } : {}),
+        ...(verifiedTransactionId ? { paymentTransactionId: verifiedTransactionId } : {}),
         customerInfo: record.orderData?.customerInfo || {
           customerName: record.customerName || record.orderData?.customerName,
           customerPhone: record.customerPhone || record.orderData?.customerPhone,
         },
       };
+      if (branchAssignmentRequired) {
+        console.error('[confirm-payment-order] Paid order created without a resolvable branch; it requires staff assignment', {
+          tenantId: orderTenantId,
+          orderReference: record.orderData?.orderNumber || record.orderData?.orderId || 'unknown',
+        });
+      }
       // Ensure subtotal/tax are stored
       if (rawTotal > 0 && (orderData.subtotal == null || orderData.tax == null)) {
         const sub = rawTotal / (1 + VAT);
@@ -5459,7 +5740,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const phone = record.customerPhone;
           if (phone && rawTotal > 0) {
             const { LoyaltyCardModel: LCM, BusinessConfigModel: BCM } = await import("@shared/schema");
-            const biz = await BCM.findOne({ tenantId }).lean() as any;
+            const biz = await BCM.findOne({ tenantId: orderTenantId }).lean() as any;
             const ptsPerDrink = Number(biz?.loyalty?.pointsPerDrink) || 10;
             const itemCount = Array.isArray(orderData.items) ? orderData.items.reduce((s: number, i: any) => s + (Number(i.quantity) || 1), 0) : 1;
             const earnedPts = ptsPerDrink * itemCount;
@@ -14743,6 +15024,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // If marking as paid, also move pending orders to payment_confirmed so kitchen sees them
       const existingOrder = await OrderModel.findOne({ id }) || await OrderModel.findById(id);
+      const becamePaid = paymentStatus === 'paid' && existingOrder?.paymentStatus !== 'paid';
       if (paymentStatus === 'paid' && existingOrder?.status === 'pending') {
         updates.status = 'payment_confirmed';
       }
@@ -14762,6 +15044,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (!updatedOrder) return res.status(404).json({ error: "الطلب غير موجود" });
+      if (becamePaid) {
+        const serializedOrder = serializeDoc(updatedOrder);
+        cache.invalidate('live-orders:');
+        cache.invalidate('analytics:advanced:');
+        wsManager.broadcastNewOrder(serializedOrder);
+      }
       res.json(serializeDoc(updatedOrder));
     } catch (error) {
       console.error("[PAYMENT-STATUS] Error:", error);
@@ -19225,7 +19513,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           totalCogs: Math.round(totalCogs * 100) / 100,
           grossProfit: grossProfit === null ? null : Math.round(grossProfit * 100) / 100,
           netProfit: netProfit === null ? null : Math.round(netProfit * 100) / 100,
-          profitMargin: profitPendingCount > 0 ? null : (netRevenue > 0 ? Math.round((netProfit / netRevenue * 100) * 100) / 100 : 0),
+          profitMargin: profitPendingCount > 0 ? null : (netRevenue > 0 ? Math.round(((netProfit ?? 0) / netRevenue * 100) * 100) / 100 : 0),
           profitPending: profitPendingCount > 0,
           profitPendingCount,
           profitPendingSalesRevenue: Math.round(profitPendingSalesRevenue * 100) / 100,

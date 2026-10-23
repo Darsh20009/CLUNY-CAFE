@@ -260,9 +260,9 @@ export default function KioskPage() {
         paymentMethod,
         orderType: diningLocation === "dine_in" ? "dine_in" : "takeaway",
         deliveryType: diningLocation === "dine_in" ? "dine_in" : "pickup",
-        channel: "pos",
+        channel: paymentChoice === "online" ? "online" : "pos",
         source: "kiosk",
-        status: paymentChoice === "counter_cash" ? "pending" : "pending",
+        status: paymentChoice === "online" ? "awaiting_payment" : "pending",
         notes: t("طلب عبر الكيوسك الذاتي", "Self-order kiosk"),
         ...(branchId ? { branchId } : {}),
       };

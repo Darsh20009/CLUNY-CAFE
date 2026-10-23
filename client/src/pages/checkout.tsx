@@ -28,6 +28,7 @@ import { useTranslation } from "react-i18next";
 import type { PaymentMethodInfo, PaymentMethod } from "@shared/schema";
 import SarIcon from "@/components/sar-icon";
 import { ApplePayLogo } from "@/components/payment-brand-logos";
+import { useBranch } from "@/contexts/BranchContext";
 
 
 function LoyaltyCheckoutCard({
@@ -201,6 +202,7 @@ function getCartItemUnitPrice(i: any): number {
 
 export default function CheckoutPage() {
   const tc = useTranslate();
+  const { selectedBranchId } = useBranch();
   const { t, i18n } = useTranslation();
   const [, setLocation] = useLocation();
   const { cartItems, clearCart, getFinalTotal, deliveryInfo } = useCartStore();
@@ -1054,8 +1056,10 @@ export default function CheckoutPage() {
       }),
       totalAmount: finalTotal,
       paymentMethod: selectedPaymentMethod as PaymentMethod,
-      status: "pending",
-      branchId: deliveryInfo?.branchId || "default",
+      status: ["geidea", "neoleap", "apple_pay", "paymob", "paymob-card", "paymob-wallet", "paymob-apple-pay"].includes(String(selectedPaymentMethod || ""))
+        ? "awaiting_payment"
+        : "pending",
+      branchId: deliveryInfo?.branchId || selectedBranchId || undefined,
       orderType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup'
               : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup'
               : deliveryInfo?.type === 'delivery' ? 'delivery'
@@ -1131,7 +1135,7 @@ export default function CheckoutPage() {
         }),
       });
       const tokenData = await tokenRes.json();
-      if (!tokenData.token) throw new Error("فشل إنشاء رمز الدفع الآمن");
+      if (!tokenData.token) throw new Error(tokenData.error || "فشل إنشاء رمز الدفع الآمن");
 
       const paymentToken = tokenData.token;
       const returnUrl = `${window.location.origin}/payment-return?pt=${paymentToken}&provider=geidea`;
@@ -1183,7 +1187,7 @@ export default function CheckoutPage() {
         }),
       });
       const tokenData = await tokenRes.json();
-      if (!tokenData.token) throw new Error("فشل إنشاء رمز الدفع الآمن");
+      if (!tokenData.token) throw new Error(tokenData.error || "فشل إنشاء رمز الدفع الآمن");
 
       const paymentToken = tokenData.token;
       const returnUrl = `${window.location.origin}/payment-return?pt=${paymentToken}&provider=geidea`;
@@ -1242,7 +1246,7 @@ export default function CheckoutPage() {
         }),
       });
       const tokenData = await tokenRes.json();
-      if (!tokenData.token) throw new Error("فشل إنشاء رمز الدفع الآمن");
+      if (!tokenData.token) throw new Error(tokenData.error || "فشل إنشاء رمز الدفع الآمن");
 
       const paymentToken = tokenData.token;
       const returnUrl = `${window.location.origin}/payment-return?pt=${paymentToken}&provider=paymob`;
@@ -1330,7 +1334,7 @@ export default function CheckoutPage() {
       totalAmount: finalTotal,
       paymentMethod: selectedPaymentMethod as PaymentMethod,
       status: "pending",
-      branchId: deliveryInfo?.branchId || "default",
+      branchId: deliveryInfo?.branchId || selectedBranchId || undefined,
       orderType: deliveryInfo?.type === 'car-pickup' ? 'car_pickup'
               : deliveryInfo?.type === 'scheduled-pickup' ? 'pickup'
               : deliveryInfo?.type === 'delivery' ? 'delivery'
