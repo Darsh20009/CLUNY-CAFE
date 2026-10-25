@@ -3,9 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { ManagerSidebar, MobileBottomNav } from "./manager-sidebar";
 import { ManagerNotificationCenter } from "./manager-notification-center";
-import { Menu } from "lucide-react";
+import { Menu, UserRound } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { brand } from "@/lib/brand";
+import { LanguageToggle } from "@/components/language-toggle";
 
 interface ManagerLayoutProps {
   children: ReactNode;
@@ -81,6 +82,16 @@ export function ManagerLayout({ children }: ManagerLayoutProps) {
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
+            <LanguageToggle variant="ghost" />
+            <div
+              className="hidden sm:flex items-center gap-2 rounded-lg px-2 py-1 text-sm text-slate-600"
+              title={manager?.fullName || manager?.nameAr || (isAr ? "حساب المدير" : "Manager account")}
+            >
+              <span className="max-w-[120px] truncate">{manager?.fullName || manager?.nameAr || ""}</span>
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground">
+                {(manager?.fullName || manager?.nameAr || "").trim().charAt(0).toUpperCase() || <UserRound className="h-4 w-4" />}
+              </span>
+            </div>
             <ManagerNotificationCenter />
           </div>
         </header>
