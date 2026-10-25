@@ -10882,41 +10882,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Search order for refund (by order number or phone)
   app.get("/api/refunds/search-order", requireAuth, requirePermission('order.refund'), async (req: any, res) => {
     try {
-      const { q } = req.query as { q?: string };
-      if (!q) return res.status(400).json({ error: "يرجى إدخال رقم الطلب أو رقم الجوال" });
+      const { q: rawQuery } = req.query as { q?: string };
+      if (!rawQuery) return res.status(400).json({ error: "يرجى إدخال رقم الطلب أو رقم الجوال" });
+      const q = String(rawQuery).replace(/[٠-٩۰-۹]/g, digit => {
+        const arabicIndic = "٠١٢٣٤٥٦٧٨٩".indexOf(digit);
+        return String(arabicIndic >= 0 ? arabicIndic : "۰۱۲۳۴۵۶۷۸۹".indexOf(digit));
+      });
 
       const tenantId = req.employee?.tenantId || getTenantIdFromRequest(req) || 'demo-tenant';
       const { OrderModel } = await import('@shared/schema');
 
-      let order: any = null;
-      const isPhone = /^\d{7,12}$/.test(q.replace(/\D/g, ""));
+      const searchDigits = q.replace(/\D/g, "");
+      const isPhone = /^(?:(?:966|0)?5\d{8}|0[1-9]\d{7,9})$/.test(searchDigits);
+      let orders: any[] = [];
 
       if (isPhone) {
-        const phone = q.replace(/\D/g, "");
+        const phone = searchDigits;
         const normalizedPhone = phone.startsWith('0') ? phone.slice(1) : phone;
-        order = await OrderModel.findOne({
+        orders = await OrderModel.find({
           tenantId,
           $or: [{ 'customerInfo.phone': phone }, { 'customerInfo.phone': normalizedPhone }, { customerPhone: phone }, { customerPhone: normalizedPhone }],
-        }).sort({ createdAt: -1 });
+        }).sort({ createdAt: -1 }).limit(50).lean();
       } else {
-        const num = q.replace(/^#/, "");
-        const numAsNumber = parseInt(num, 10);
-        order = await OrderModel.findOne({
+        const num = q.replace(/^#/, "").trim();
+        const numericPart = num.replace(/^(?:ORDER|ORD)[\s#:_-]*/i, '').replace(/\D/g, '');
+        const numAsNumber = /^\d+$/.test(numericPart) ? Number(numericPart) : NaN;
+        const unpaddedNumber = Number.isNaN(numAsNumber) ? '' : String(numAsNumber);
+        const paddedNumber = numericPart ? numericPart.padStart(4, '0') : '';
+        const numberVariants = [...new Set([
+          num,
+          numericPart,
+          unpaddedNumber,
+          paddedNumber,
+          paddedNumber ? `ORD#${paddedNumber}` : '',
+          unpaddedNumber ? `ORD#${unpaddedNumber}` : '',
+          paddedNumber ? `#${paddedNumber}` : '',
+          unpaddedNumber ? `#${unpaddedNumber}` : '',
+        ].filter(Boolean))];
+        orders = await OrderModel.find({
           tenantId,
           $or: [
-            { orderNumber: num },
-            ...(isNaN(numAsNumber) ? [] : [{ orderNumber: numAsNumber }, { dailyNumber: numAsNumber }]),
+            { orderNumber: { $in: [...numberVariants, ...(Number.isNaN(numAsNumber) ? [] : [numAsNumber])] } },
+            ...(Number.isNaN(numAsNumber) ? [] : [{ dailyNumber: numAsNumber }]),
           ],
-        }).sort({ createdAt: -1 });
+        }).sort({ createdAt: -1 }).limit(50).lean();
       }
 
-      if (!order) return res.status(404).json({ error: "لم يتم العثور على الطلب" });
+      if (!orders.length) return res.status(404).json({ error: "لم يتم العثور على الطلب" });
 
-      const serialized = serializeDoc(order);
-      if (typeof serialized.items === 'string') {
-        try { serialized.items = JSON.parse(serialized.items); } catch { serialized.items = []; }
-      }
-      res.json(serialized);
+      const branchIds = [...new Set(orders.map(order => String(order.branchId || '')).filter(Boolean))];
+      const branches = branchIds.length
+        ? await BranchModel.find({ tenantId, id: { $in: branchIds } }).select('id nameAr nameEn').lean()
+        : [];
+      const branchNames = new Map(branches.map((branch: any) => [String(branch.id), {
+        nameAr: branch.nameAr,
+        nameEn: branch.nameEn,
+      }]));
+      const serializedOrders = orders.map(order => {
+        const serialized = serializeDoc(order);
+        if (typeof serialized.items === 'string') {
+          try { serialized.items = JSON.parse(serialized.items); } catch { serialized.items = []; }
+        }
+        const branchName = branchNames.get(String(order.branchId || ''));
+        return {
+          ...serialized,
+          branchNameAr: branchName?.nameAr,
+          branchNameEn: branchName?.nameEn,
+        };
+      });
+      res.json(serializedOrders);
     } catch (error) {
       console.error('[Refund Search]', error);
       res.status(500).json({ error: "فشل البحث عن الطلب" });
@@ -11216,6 +11250,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (cardCents > 0 && paymentProvider === 'paymob') {
         const paymobBaseUrl = String(config?.paymentGateway?.paymob?.baseUrl || 'https://ksa.paymob.com').replace(/\/+$/, '');
         const apiKey = config?.paymentGateway?.paymob?.apiKey || process.env.PAYMOB_API_KEY;
+        const providerConfirmed = (value: unknown) =>
+          value === true || value === 1 || (typeof value === 'string' && ['true', '1'].includes(value.trim().toLowerCase()));
         try {
           const authResponse = await fetch(`${paymobBaseUrl}/api/auth/tokens`, {
             method: 'POST',
@@ -11240,7 +11276,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
             const refundData: any = await refundResponse.json().catch(() => ({}));
             providerResponseCode = String(refundData.response_code || refundData.responseCode || '');
-            const confirmed = refundResponse.ok && refundData.success === true && refundData.is_refunded === true;
+            const confirmed = refundResponse.ok
+              && providerConfirmed(refundData.success)
+              && providerConfirmed(refundData.is_refunded);
             if (confirmed) {
               processorRefundId = String(refundData.id || refundData.refund_id || '');
             } else if (refundResponse.status >= 500 || refundData.pending === true || (refundResponse.ok && refundData.success == null)) {

@@ -51,6 +51,7 @@ export default function RefundDialog({ open, onOpenChange, employeeName, initial
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [foundOrder, setFoundOrder] = useState<any>(null);
+  const [matchingOrders, setMatchingOrders] = useState<any[]>([]);
   const [searchError, setSearchError] = useState("");
 
   const [selectedItems, setSelectedItems] = useState<Record<string, boolean>>({});
@@ -68,6 +69,7 @@ export default function RefundDialog({ open, onOpenChange, employeeName, initial
     const items = typeof initialOrder.items === "string" ? JSON.parse(initialOrder.items) : (initialOrder.items || []);
     const order = { ...initialOrder, items };
     setFoundOrder(order);
+    setMatchingOrders([]);
     setSearchQuery(order.orderNumber || "");
     setStep(2);
     const initSel: Record<string, boolean> = {};
@@ -94,6 +96,7 @@ export default function RefundDialog({ open, onOpenChange, employeeName, initial
     setStep(1);
     setSearchQuery("");
     setFoundOrder(null);
+    setMatchingOrders([]);
     setSearchError("");
     setSelectedItems({});
     setRefundQtys({});
@@ -110,44 +113,59 @@ export default function RefundDialog({ open, onOpenChange, employeeName, initial
     onOpenChange(false);
   };
 
+  const selectOrderForRefund = (rawOrder: any) => {
+    let items: any[];
+    try {
+      items = typeof rawOrder.items === "string" ? JSON.parse(rawOrder.items) : (rawOrder.items || []);
+      if (!Array.isArray(items)) items = [];
+    } catch {
+      setSearchError(tc("تعذر قراءة تفاصيل الطلب. أعد البحث أو حدّث الصفحة.", "Could not read the order details. Search again or refresh."));
+      return;
+    }
+    const order = { ...rawOrder, items };
+    setFoundOrder(order);
+    setMatchingOrders([]);
+    setSearchError("");
+    setStep(2);
+
+    const initSel: Record<string, boolean> = {};
+    const initQty: Record<string, number> = {};
+    items.forEach((item: any, idx: number) => {
+      initSel[String(idx)] = true;
+      initQty[String(idx)] = Number(item.quantity) || 1;
+    });
+    setSelectedItems(initSel);
+    setRefundQtys(initQty);
+
+    const provider = String(order.paymentProvider || "").toLowerCase();
+    const method = String(order.paymentMethod || "").toLowerCase();
+    setPayMethod(
+      ["paymob", "geidea", "neoleap"].includes(provider)
+      || ["paymob-card", "paymob-wallet", "paymob-apple-pay", "geidea", "neoleap", "apple_pay"].includes(method)
+        ? "card"
+        : "cash",
+    );
+    setCashAmount("");
+    setCardAmount("");
+  };
+
   const handleSearch = async () => {
     const q = searchQuery.trim();
     if (!q) return;
     setIsSearching(true);
     setSearchError("");
     setFoundOrder(null);
+    setMatchingOrders([]);
     try {
-      let order: any = null;
-      const isPhone = /^\d{9,11}$/.test(q.replace(/\D/g, ""));
-      if (isPhone) {
-        const res = await fetch(`/api/orders/customer/${q}?limit=5`, { credentials: "include" });
-        if (res.ok) {
-          const data = await res.json();
-          const orders = Array.isArray(data) ? data : (data.orders || []);
-          order = orders[0] || null;
-        }
-      } else {
-        const num = q.replace(/^#/, "");
-        const res = await fetch(`/api/orders/number/${num}`, { credentials: "include" });
-        if (res.ok) {
-          order = await res.json();
-        }
-      }
-      if (!order) {
+      const res = await fetch(`/api/refunds/search-order?q=${encodeURIComponent(q)}`, { credentials: "include" });
+      const data = await res.json().catch(() => ({}));
+      const orders = Array.isArray(data) ? data : Array.isArray(data.orders) ? data.orders : data?.id ? [data] : [];
+      if (!res.ok || orders.length === 0) {
         setSearchError(tc("لم يتم العثور على الطلب — تحقق من الرقم أو الجوال", "Order not found — check the number or phone"));
+      } else if (orders.length === 1) {
+        selectOrderForRefund(orders[0]);
       } else {
-        const items = typeof order.items === "string" ? JSON.parse(order.items) : (order.items || []);
-        order.items = items;
-        setFoundOrder(order);
-        const initSel: Record<string, boolean> = {};
-        const initQty: Record<string, number> = {};
-        items.forEach((item: any, idx: number) => {
-          const key = String(idx);
-          initSel[key] = true;
-          initQty[key] = Number(item.quantity) || 1;
-        });
-        setSelectedItems(initSel);
-        setRefundQtys(initQty);
+        setMatchingOrders(orders);
       }
     } catch {
       setSearchError(tc("حدث خطأ أثناء البحث", "An error occurred while searching"));
@@ -337,7 +355,12 @@ export default function RefundDialog({ open, onOpenChange, employeeName, initial
                   <Input
                     placeholder={tc("مثال: 42  أو  0501234567", "e.g. 42 or 0501234567")}
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setMatchingOrders([]);
+                      setFoundOrder(null);
+                      setSearchError("");
+                    }}
                     onKeyDown={(e) => e.key === "Enter" && handleSearch()}
                     className="flex-1 text-right"
                     data-testid="input-refund-search"
@@ -352,6 +375,42 @@ export default function RefundDialog({ open, onOpenChange, employeeName, initial
                 <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
                   <AlertTriangle className="w-4 h-4 shrink-0" />
                   {searchError}
+                </div>
+              )}
+
+              {matchingOrders.length > 1 && (
+                <div className="space-y-2" data-testid="refund-order-matches">
+                  <p className="text-sm font-bold">
+                    {tc(`وجدنا ${matchingOrders.length} طلبات بهذا الرقم. اختر الطلب الصحيح:`, `Found ${matchingOrders.length} orders with this number. Choose the right one:`)}
+                  </p>
+                  {matchingOrders.map((order) => {
+                    const orderId = String(order.id || order._id);
+                    const branchLabel = order.branchNameAr || order.branchNameEn || order.branchId || tc("غير محدد", "Unknown branch");
+                    const customerName = order.customerInfo?.customerName || order.customerName;
+                    return (
+                      <button
+                        type="button"
+                        key={orderId}
+                        onClick={() => selectOrderForRefund(order)}
+                        className="w-full rounded-xl border bg-card p-3 text-right transition-colors hover:border-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        data-testid={`refund-order-match-${orderId}`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <Badge variant="outline" className="font-bold">
+                            {tc("طلب", "Order")} #{order.orderNumber}
+                          </Badge>
+                          <span className="text-sm font-black text-primary">
+                            {Number(order.totalAmount || 0).toFixed(2)} <SarIcon size={12} />
+                          </span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                          <span>{order.createdAt ? format(new Date(order.createdAt), "dd/MM/yyyy HH:mm") : "—"}</span>
+                          <span>{tc("الفرع:", "Branch:")} {branchLabel}</span>
+                          {customerName && <span>{customerName}</span>}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
 
