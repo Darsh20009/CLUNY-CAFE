@@ -8,6 +8,7 @@ import CurrentOrderBanner from "@/components/current-order-banner";
 import { useRealtimeEvent } from "@/hooks/useRealtimeEngine";
 import { useState } from "react";
 import { CustomerFooter } from "@/components/customer-footer";
+import { CustomerBottomNav } from "@/components/customer-bottom-nav";
 import bannerImage1 from "@assets/images/banner-1.png";
 import bannerImage2 from "@assets/images/banner-2.png";
 
@@ -275,8 +276,7 @@ export default function WelcomePage() {
         <motion.div
           animate={{ y: [0, 7, 0] }}
           transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
-          className="relative z-20 flex justify-center"
-          style={{ paddingBottom: "max(env(safe-area-inset-bottom, 20px), 20px)" }}
+          className="relative z-20 flex justify-center pb-[calc(4.25rem+env(safe-area-inset-bottom,20px))] sm:pb-5"
         >
           <div className="w-5 h-8 border border-white/20 rounded-full flex justify-center pt-1.5">
             <div className="w-1 h-2 bg-white/40 rounded-full" />
@@ -365,6 +365,7 @@ export default function WelcomePage() {
         </div>
       </section>
       <CustomerFooter />
+      <CustomerBottomNav />
     </div>
   );
 }

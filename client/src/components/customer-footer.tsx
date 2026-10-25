@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { brand } from "@/lib/brand";
 import { useQuery } from "@tanstack/react-query";
 import { SiInstagram, SiX, SiFacebook, SiSnapchat, SiTiktok, SiWhatsapp } from "react-icons/si";
+import { MapPin, Phone } from "lucide-react";
 
 export function CustomerFooter() {
   const { t } = useTranslation();
@@ -26,7 +27,7 @@ export function CustomerFooter() {
       <div className="container px-4 flex flex-col items-center gap-10">
         {/* Social Section */}
         <div className="flex flex-col items-center gap-4 w-full">
-          <h4 className="text-sm font-bold text-primary/60 uppercase tracking-widest">{t("footer.connect_with_us")}</h4>
+          <h4 className="text-sm font-bold text-primary/60 uppercase">{t("footer.connect_with_us")}</h4>
           {businessConfig?.socialLinks && (
             <div className="flex items-center gap-6 flex-wrap justify-center">
               {Object.entries(businessConfig.socialLinks).map(([platform, url]) => {
@@ -49,6 +50,27 @@ export function CustomerFooter() {
               })}
             </div>
           )}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-xs text-muted-foreground">
+          <a
+            href="tel:+966566507666"
+            className="inline-flex items-center gap-2 transition-colors hover:text-primary"
+            data-testid="link-footer-call"
+          >
+            <Phone className="h-4 w-4" aria-hidden="true" />
+            <span dir="ltr">+966 56 650 7666</span>
+          </a>
+          <a
+            href="https://maps.app.goo.gl/zhHFfQVjWRxVKEBn6?g_st=ic"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 transition-colors hover:text-primary"
+            data-testid="link-footer-maps"
+          >
+            <MapPin className="h-4 w-4" aria-hidden="true" />
+            <span>موقعنا</span>
+          </a>
         </div>
 
         {/* Logo & Info Grid */}
@@ -96,6 +118,16 @@ export function CustomerFooter() {
             {brand.copyrightEn.toUpperCase()}
           </div>
           <div className="h-1 w-8 bg-primary/20 rounded-full" />
+          <a
+            href="https://qiroxstudio.online"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[10px] font-semibold text-muted-foreground/50 transition-colors hover:text-primary"
+            data-testid="link-qirox-studio"
+            aria-label="Powered by QIROX STUDIO"
+          >
+            Powered by QIROX STUDIO
+          </a>
           <a
             href="/employee/gateway"
             className="text-[10px] text-muted-foreground/25 hover:text-muted-foreground/60 transition-colors duration-300 mt-1 font-ibm-arabic"

@@ -47,6 +47,8 @@ import { useTranslation } from "react-i18next";
 import { ClassicMenuLayout, CardsMenuLayout, ListMenuLayout } from "@/components/menu-layouts";
 import type { AddonPreview } from "@/components/menu-layouts";
 import SarIcon from "@/components/sar-icon";
+import { CustomerFooter } from "@/components/customer-footer";
+import { CustomerBottomNav } from "@/components/customer-bottom-nav";
 
 interface MenuCategory {
   id: string;
@@ -1169,7 +1171,7 @@ export default function MenuPage() {
         <motion.div 
           initial={{ y: 100, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="fixed bottom-6 inset-x-4 z-50"
+          className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] inset-x-4 z-50 sm:bottom-6"
         >
           <Button 
             onClick={() => setLocation("/cart")}
@@ -1224,41 +1226,8 @@ export default function MenuPage() {
       <BranchesSection />
       {/* Branch selector modal — shown on first visit or when user clicks the branch button */}
       <BranchSelectorModal />
-      <footer className="text-center py-5 space-y-2">
-        <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground/70">
-          <a
-            href="tel:+966566507666"
-            className="flex items-center gap-1 hover:text-primary transition-colors"
-            data-testid="link-footer-call"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.63 3.45 2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 9a16 16 0 0 0 6 6l1.06-1.06a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 21.73 16z"/></svg>
-            <span dir="ltr">+966 56 650 7666</span>
-          </a>
-          <span className="text-muted-foreground/30">•</span>
-          <a
-            href="https://maps.app.goo.gl/zhHFfQVjWRxVKEBn6?g_st=ic"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 hover:text-primary transition-colors"
-            data-testid="link-footer-maps"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-            <span>موقعنا</span>
-          </a>
-        </div>
-        <div className="text-xs text-muted-foreground/40">
-          <a
-            href="https://qiroxstudio.online"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-muted-foreground/70 transition-colors underline underline-offset-2"
-            data-testid="link-qirox-studio"
-            aria-label="Powered by QIROX STUDIO"
-          >
-            Powered by QIROX STUDIO
-          </a>
-        </div>
-      </footer>
+      <CustomerFooter />
+      <CustomerBottomNav />
     </div>
   );
 }
