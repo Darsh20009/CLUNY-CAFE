@@ -111,8 +111,8 @@ export default function MenuView() {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="text-center space-y-4">
-          <div className="w-16 h-16 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-amber-400 text-lg font-medium">جاري التحميل...</p>
+          <div className="w-16 h-16 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-primary text-lg font-medium">جاري التحميل...</p>
         </div>
       </div>
     );
@@ -142,7 +142,7 @@ export default function MenuView() {
             <img src={clunyLogo} alt="CLUNY" className="w-10 h-10 rounded-xl" />
             <div>
               <p className="text-white font-black text-base leading-tight tracking-wide">CLUNY CAFE</p>
-              <p className="text-amber-400 text-xs font-medium tracking-widest uppercase">قائمة المشروبات</p>
+              <p className="text-primary text-xs font-medium">قائمة المشروبات</p>
             </div>
           </div>
 
@@ -175,7 +175,7 @@ export default function MenuView() {
         {/* ── Progress Bar ── */}
         <div className="relative z-20 mx-6 h-0.5 bg-white/10 rounded-full mt-2">
           <div
-            className="h-full bg-gradient-to-l from-amber-400 to-amber-600 rounded-full transition-none"
+            className="h-full bg-primary rounded-full transition-none"
             style={{ width: `${progress}%` }}
           />
         </div>
@@ -198,8 +198,8 @@ export default function MenuView() {
                 }}
               />
             ) : (
-              <div className="w-72 h-72 mx-auto rounded-3xl bg-gradient-to-br from-amber-900/40 to-black flex items-center justify-center">
-                <Coffee className="w-24 h-24 text-amber-700/50" />
+              <div className="w-72 h-72 mx-auto rounded-3xl bg-gradient-to-br from-primary/20 to-black flex items-center justify-center">
+                <Coffee className="w-24 h-24 text-primary/50" />
               </div>
             )}
           </div>
@@ -212,9 +212,9 @@ export default function MenuView() {
         >
           {/* Category badge */}
           {current && getCategoryName(current) && (
-            <div className="inline-flex items-center gap-1.5 bg-amber-500/15 border border-amber-500/30 rounded-full px-4 py-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-              <span className="text-amber-400 text-xs font-semibold tracking-wider">{getCategoryName(current)}</span>
+            <div className="inline-flex items-center gap-1.5 bg-primary/15 border border-primary/30 rounded-full px-4 py-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+              <span className="text-primary text-xs font-semibold">{getCategoryName(current)}</span>
             </div>
           )}
 
@@ -236,12 +236,12 @@ export default function MenuView() {
           {/* Price + Stars row */}
           <div className="flex items-center justify-between">
             <div className="flex items-baseline gap-2">
-              <span className="text-5xl font-black text-amber-400 leading-none">{current?.price}</span>
+              <span className="text-5xl font-black text-primary leading-none">{current?.price}</span>
               <SarIcon size={16} className="opacity-40 invert" />
             </div>
             <div className="flex items-center gap-0.5">
               {[...Array(5)].map((_, i) => (
-                <Star key={i} className="w-5 h-5 fill-amber-400 text-amber-400" />
+                <Star key={i} className="w-5 h-5 fill-primary text-primary" />
               ))}
             </div>
           </div>
@@ -267,7 +267,7 @@ export default function MenuView() {
                 onClick={() => goTo(i)}
                 className={`rounded-full transition-all duration-300 ${
                   i === currentIndex
-                    ? "w-6 h-2 bg-amber-400"
+                    ? "w-6 h-2 bg-primary"
                     : "w-2 h-2 bg-white/20 hover:bg-white/40"
                 }`}
                 data-testid={`dot-${i}`}
@@ -302,7 +302,7 @@ export default function MenuView() {
             <p className="text-white/40 text-xs leading-relaxed">
               امسح الكود وتصفح قائمتنا الكاملة واطلب مشروبك المفضل بسهولة
             </p>
-            <div className="mt-2 text-amber-400 text-xs font-mono opacity-60">
+            <div className="mt-2 text-primary text-xs font-mono opacity-60">
               {window.location.origin}/menu
             </div>
           </div>
@@ -331,7 +331,7 @@ export default function MenuView() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setMode("portrait")}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 rounded-full text-black text-xs font-semibold transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary hover:bg-primary/90 rounded-full text-primary-foreground text-xs font-semibold transition-colors"
               data-testid="button-portrait-mode"
             >
               <Tv className="w-3.5 h-3.5" />
@@ -353,7 +353,7 @@ export default function MenuView() {
             <div
               key={item.id}
               onClick={() => { setCurrentIndex(i); setMode("portrait"); setFade(true); }}
-              className="break-inside-avoid mb-3 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-amber-500/30 rounded-2xl overflow-hidden cursor-pointer transition-all active:scale-95"
+              className="break-inside-avoid mb-3 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-primary/30 rounded-2xl overflow-hidden cursor-pointer transition-all active:scale-95"
               data-testid={`card-item-${item.id}`}
             >
               {item.imageUrl ? (
@@ -363,14 +363,14 @@ export default function MenuView() {
                   className={`w-full object-cover ${i % 3 === 0 ? "h-44" : "h-32"}`}
                 />
               ) : (
-                <div className={`w-full bg-gradient-to-br from-amber-900/30 to-black flex items-center justify-center ${i % 3 === 0 ? "h-44" : "h-32"}`}>
-                  <Coffee className="w-10 h-10 text-amber-700/40" />
+                <div className={`w-full bg-gradient-to-br from-primary/15 to-black flex items-center justify-center ${i % 3 === 0 ? "h-44" : "h-32"}`}>
+                  <Coffee className="w-10 h-10 text-primary/40" />
                 </div>
               )}
               <div className="p-3">
                 <p className="text-white font-bold text-sm leading-tight mb-1">{item.nameAr}</p>
                 <div className="flex items-center justify-between">
-                  <span className="text-amber-400 font-black text-base">{item.price}</span>
+                  <span className="text-primary font-black text-base">{item.price}</span>
                   <SarIcon size={10} className="opacity-30 invert" />
                 </div>
               </div>
@@ -390,7 +390,7 @@ export default function MenuView() {
           <span className="text-white font-black text-sm">CLUNY CAFE</span>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setMode("portrait")} className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 rounded-full text-black text-xs font-semibold" data-testid="button-portrait">
+          <button onClick={() => setMode("portrait")} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary rounded-full text-primary-foreground text-xs font-semibold" data-testid="button-portrait">
             <Tv className="w-3.5 h-3.5" />TV
           </button>
           <button onClick={() => setLocation("/menu")} className="w-8 h-8 bg-white/10 rounded-full flex items-center justify-center" data-testid="button-back">
@@ -404,8 +404,8 @@ export default function MenuView() {
             {item.imageUrl ? (
               <img src={item.imageUrl} alt={item.nameAr} className="w-24 h-24 object-cover flex-shrink-0" />
             ) : (
-              <div className="w-24 h-24 bg-gradient-to-br from-amber-900/30 to-black flex items-center justify-center flex-shrink-0">
-                <Coffee className="w-8 h-8 text-amber-700/40" />
+              <div className="w-24 h-24 bg-gradient-to-br from-primary/15 to-black flex items-center justify-center flex-shrink-0">
+                <Coffee className="w-8 h-8 text-primary/40" />
               </div>
             )}
             <div className="flex-1 p-3 flex flex-col justify-center gap-1">
@@ -414,7 +414,7 @@ export default function MenuView() {
                 <p className="text-white/40 text-xs line-clamp-1">{item.descriptionAr || item.description}</p>
               )}
               <div className="flex items-center gap-1">
-                <span className="text-amber-400 font-black text-lg">{item.price}</span>
+                <span className="text-primary font-black text-lg">{item.price}</span>
                 <SarIcon size={10} className="opacity-30 invert" />
               </div>
             </div>

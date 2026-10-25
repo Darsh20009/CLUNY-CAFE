@@ -1,5 +1,6 @@
 import cardFrame from "@assets/Screenshot_2026-04-23_at_2.48.53_AM_1776901738354.png";
 import SarIcon from "@/components/sar-icon";
+import { brand } from "@/lib/brand";
 
 interface ClunyCardProps {
   phone?: string;
@@ -16,6 +17,7 @@ export default function ClunyCard({
   customerName,
   className = "",
 }: ClunyCardProps) {
+  const brandGreen = brand.colors.primary.hex;
   const displayPhone = phone
     ? phone.replace(/^\+?966|^00966/, "966").replace(/^0(\d{9})$/, "966$1")
     : "966XXXXXXXXX";
@@ -43,7 +45,7 @@ export default function ClunyCard({
         backgroundSize: "cover",
         backgroundPosition: "center",
         boxShadow:
-          "0 32px 80px rgba(0,0,0,0.85), 0 0 0 1px rgba(200,165,58,0.18), inset 0 1px 0 rgba(200,165,58,0.08)",
+          "0 32px 80px rgba(0,0,0,0.85), 0 0 0 1px rgba(45,155,110,0.25), inset 0 1px 0 rgba(45,155,110,0.1)",
       }}
       data-testid="loyalty-card"
     >
@@ -60,7 +62,7 @@ export default function ClunyCard({
         <p
           dir="ltr"
           style={{
-            color: "#E5C461",
+             color: brandGreen,
             fontWeight: 700,
             fontSize: "clamp(11px, 3vw, 18px)",
             letterSpacing: "0.18em",
@@ -75,10 +77,9 @@ export default function ClunyCard({
         {customerName && (
           <p
             style={{
-              color: "rgba(229,196,97,0.85)",
+              color: "rgba(45,155,110,0.9)",
               fontSize: "clamp(7px, 1.6vw, 11px)",
               margin: "5px 0 0",
-              letterSpacing: "0.12em",
               textShadow: "0 1px 6px rgba(0,0,0,0.8)",
               textTransform: "uppercase",
             }}
@@ -103,7 +104,7 @@ export default function ClunyCard({
         <div>
           <p
             style={{
-              color: "rgba(229,196,97,0.7)",
+              color: "rgba(45,155,110,0.8)",
               fontSize: "clamp(5px, 1.3vw, 8px)",
               letterSpacing: "0.35em",
               margin: 0,
@@ -115,7 +116,7 @@ export default function ClunyCard({
           </p>
           <p
             style={{
-              color: "#E5C461",
+              color: brandGreen,
               fontWeight: 900,
               fontSize: "clamp(20px, 5.2vw, 32px)",
               margin: 0,
@@ -131,7 +132,7 @@ export default function ClunyCard({
         <div style={{ textAlign: "right" }}>
           <p
             style={{
-              color: "rgba(229,196,97,0.65)",
+              color: "rgba(45,155,110,0.75)",
               fontSize: "clamp(5px, 1.3vw, 8px)",
               letterSpacing: "0.25em",
               margin: 0,
@@ -143,7 +144,7 @@ export default function ClunyCard({
           </p>
           <p
             style={{
-              color: "#E5C461",
+              color: brandGreen,
               fontSize: "clamp(10px, 2.4vw, 14px)",
               margin: 0,
               fontFamily: "monospace",

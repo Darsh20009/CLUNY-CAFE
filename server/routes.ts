@@ -12604,13 +12604,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const passTypeId = process.env.APPLE_PASS_TYPE_ID  || "pass.cluny.cafe";
       const teamId     = process.env.APPLE_TEAM_ID       || "V4K6RM59LS";
       const keyPhrase  = process.env.APPLE_KEY_PASSPHRASE;
+      const missingWalletConfig = [
+        !wwdrRaw && "APPLE_WWDR_PEM",
+        !certRaw && "APPLE_SIGNER_CERT_PEM",
+        !keyRaw && "APPLE_SIGNER_KEY_PEM",
+        !passTypeId && "APPLE_PASS_TYPE_ID",
+        !teamId && "APPLE_TEAM_ID",
+      ].filter(Boolean);
 
-      if (!wwdrRaw || !certRaw || !keyRaw || !passTypeId || !teamId) {
+      if (missingWalletConfig.length > 0) {
         return res.status(503).json({
           error: "Apple Wallet غير مهيأ",
-          message: "يجب إعداد شهادات Apple Developer أولاً في إعدادات المتغيرات البيئية",
+          message: "بطاقات Wallet تحتاج شهادة Pass Type ID ومفتاحها الخاص وشهادة Apple WWDR. شهادة Apple Pay التجارية منفصلة ولا تُستخدم لتوقيع البطاقة.",
           setup: {
-            required: ["APPLE_WWDR_PEM", "APPLE_SIGNER_CERT_PEM", "APPLE_SIGNER_KEY_PEM", "APPLE_PASS_TYPE_ID", "APPLE_TEAM_ID"],
+            required: missingWalletConfig,
             optional: ["APPLE_KEY_PASSPHRASE"],
             docs: "https://developer.apple.com/documentation/walletpasses",
           }
@@ -12652,7 +12659,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const cardNumber = loyaltyCard.cardNumber || rawDigits.slice(-9);
 
-      // Tier display names + QIROX green accent shades per tier
+      // Tier display names + CLUNY green accent shades per tier
       const tierLabelsAr: Record<string, string> = {
         bronze: "برونزي 🥉", silver: "فضي 🥈", gold: "ذهبي 🥇", platinum: "بلاتيني 💎"
       };
@@ -12663,7 +12670,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const passJson = {
         formatVersion: 1,
         passTypeIdentifier: passTypeId,
-        serialNumber: `BR-${rawDigits.slice(-9)}-${Date.now().toString(36).toUpperCase()}`,
+        serialNumber: `CLUNY-${rawDigits.slice(-9)}-${Date.now().toString(36).toUpperCase()}`,
         teamIdentifier: teamId,
         organizationName: "CLUNY CAFE",
         description: `بطاقة ولاء CLUNY`,
@@ -12719,7 +12726,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             {
               key: "contact",
               label: "تواصل معنا",
-              value: "qirox.cafe\n@qiroxcafe"
+              value: "cluny.cafe\n@clunycafe"
             }
           ]
         },
@@ -12739,12 +12746,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       };
 
-      // Build pass images using sharp for proper QIROX branding
+      // Build pass images using the CLUNY customer logo and brand colors.
       const os   = await import('os');
       const sharpLib = await import('sharp');
       const sharp = (sharpLib as any).default || sharpLib;
 
-      const logoSourcePath = path.join(process.cwd(), "attached_assets/qirox-logo-customer.png");
+      const logoSourcePath = path.join(process.cwd(), "attached_assets/cluny-logo-customer.png");
       const logoExists = fs.existsSync(logoSourcePath);
 
       const makeIconPng = async (size: number): Promise<Buffer> => {
@@ -12786,7 +12793,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         fs.writeFileSync(path.join(passDir, 'pass.json'), JSON.stringify(passJson));
 
-        // Generate proper icon PNGs from QIROX logo
+        // Generate Apple Wallet icon and logo assets from the CLUNY logo.
         fs.writeFileSync(path.join(passDir, 'icon.png'),    await makeIconPng(29));
         fs.writeFileSync(path.join(passDir, 'icon@2x.png'), await makeIconPng(58));
         fs.writeFileSync(path.join(passDir, 'icon@3x.png'), await makeIconPng(87));
@@ -12811,7 +12818,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         res.set({
           "Content-Type":        "application/vnd.apple.pkpass",
-          "Content-Disposition": `inline; filename="qirox-loyalty-${safeName}.pkpass"`,
+          "Content-Disposition": `inline; filename="cluny-loyalty-${safeName}.pkpass"`,
           "Cache-Control":       "no-store",
           "Content-Length":      String(passBuffer.length),
         });

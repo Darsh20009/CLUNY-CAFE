@@ -14,6 +14,7 @@ import { useTranslate } from "@/lib/useTranslate";
 import { useTranslation } from "react-i18next";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { brand } from "@/lib/brand";
 import clunyLogo from "@assets/cluny-logo-customer.png";
 import { isCapacitorNative, getServerUrl } from "@/lib/server-url";
 
@@ -30,6 +31,7 @@ export default function MyCardPage() {
   const [transferPin, setTransferPin] = useState("");
   const tc = useTranslate();
   const { i18n } = useTranslation();
+  const brandGreen = brand.colors.primary.hex;
   const dir = i18n.language === "en" ? "ltr" : "rtl";
 
   const { data: loyaltyCards = [], isLoading: loadingCards } = useQuery<any[]>({
@@ -158,14 +160,14 @@ export default function MyCardPage() {
     return (
       <CustomerLayout>
         <div className="flex flex-col items-center justify-center min-h-screen gap-5 p-8" style={{ background: "#0a0a0a" }} dir={dir}>
-          <div style={{ width: 72, height: 72, borderRadius: "50%", background: "rgba(200,165,58,0.1)", border: "1px solid rgba(200,165,58,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Star style={{ color: "#C8A53A", width: 32, height: 32 }} />
+          <div style={{ width: 72, height: 72, borderRadius: "50%", background: "rgba(45,155,110,0.1)", border: "1px solid rgba(45,155,110,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Star style={{ color: brandGreen, width: 32, height: 32 }} />
           </div>
           <div className="text-center">
             <p className="text-white font-bold text-lg mb-1">{tc("بطاقة الولاء", "Loyalty Card")}</p>
             <p className="text-white/40 text-sm">{tc("سجّل دخولك للوصول إلى بطاقتك", "Log in to access your card")}</p>
           </div>
-          <Button onClick={() => setLocation("/auth")} data-testid="button-login" style={{ background: "#C8A53A", color: "#111", fontWeight: 700, height: 48, paddingInline: 32 }}>
+          <Button onClick={() => setLocation("/auth")} data-testid="button-login" style={{ background: brandGreen, color: "#fff", fontWeight: 700, height: 48, paddingInline: 32 }}>
             {tc("تسجيل الدخول", "Log In")}
           </Button>
         </div>
@@ -178,7 +180,7 @@ export default function MyCardPage() {
     return (
       <CustomerLayout>
         <div className="flex items-center justify-center min-h-screen" style={{ background: "#0a0a0a" }}>
-          <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: "#C8A53A", borderTopColor: "transparent" }} />
+          <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: brandGreen, borderTopColor: "transparent" }} />
         </div>
       </CustomerLayout>
     );
@@ -194,7 +196,7 @@ export default function MyCardPage() {
           <Button variant="ghost" size="icon" onClick={() => setLocation("/")} data-testid="button-back" style={{ color: "rgba(255,255,255,0.4)" }}>
             <ChevronRight className="w-5 h-5" />
           </Button>
-          <p style={{ color: "rgba(255,255,255,0.35)", fontSize: 13, fontWeight: 600, letterSpacing: "0.08em" }}>
+          <p style={{ color: "rgba(255,255,255,0.55)", fontSize: 13, fontWeight: 600 }}>
             {tc("بطاقة الولاء", "Loyalty Card")}
           </p>
           <img src={clunyLogo} alt="CLUNY" style={{ width: 36, height: 36, borderRadius: 10, objectFit: "cover" }} />
@@ -203,7 +205,7 @@ export default function MyCardPage() {
         {/* ── Hero: greeting + points ── */}
         <div className="px-5 pt-4 pb-6">
           {/* Customer name */}
-          <p style={{ color: "rgba(200,165,58,0.6)", fontSize: 11, fontWeight: 600, letterSpacing: "0.15em", margin: "0 0 4px", textTransform: "uppercase" }}>
+          <p style={{ color: "rgba(45,155,110,0.8)", fontSize: 11, fontWeight: 600, margin: "0 0 4px", textTransform: "uppercase" }}>
             {tc("مرحباً،", "Welcome,")}
           </p>
           <p style={{ color: "#fff", fontSize: 26, fontWeight: 800, margin: "0 0 20px", lineHeight: 1.1 }} data-testid="text-customer-name">
@@ -212,16 +214,16 @@ export default function MyCardPage() {
 
           {/* Points stat cards */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div style={{ background: "rgba(200,165,58,0.07)", border: "1px solid rgba(200,165,58,0.15)", borderRadius: 16, padding: "14px 16px" }}>
-              <p style={{ color: "rgba(200,165,58,0.55)", fontSize: 10, letterSpacing: "0.2em", margin: "0 0 6px", textTransform: "uppercase" }}>
+            <div style={{ background: "rgba(45,155,110,0.07)", border: "1px solid rgba(45,155,110,0.2)", borderRadius: 16, padding: "14px 16px" }}>
+              <p style={{ color: "rgba(45,155,110,0.8)", fontSize: 10, margin: "0 0 6px", textTransform: "uppercase" }}>
                 {tc("نقاطي", "My Points")}
               </p>
-              <p style={{ color: "#C8A53A", fontSize: 30, fontWeight: 900, margin: 0, lineHeight: 1, textShadow: "0 0 20px rgba(200,165,58,0.4)" }} data-testid="text-hero-points">
+              <p style={{ color: brandGreen, fontSize: 30, fontWeight: 900, margin: 0, lineHeight: 1, textShadow: "0 0 20px rgba(45,155,110,0.4)" }} data-testid="text-hero-points">
                 {points.toLocaleString()}
               </p>
             </div>
             <div style={{ background: "rgba(45,155,110,0.07)", border: "1px solid rgba(45,155,110,0.15)", borderRadius: 16, padding: "14px 16px" }}>
-              <p style={{ color: "rgba(45,155,110,0.6)", fontSize: 10, letterSpacing: "0.2em", margin: "0 0 6px", textTransform: "uppercase" }}>
+            <p style={{ color: "rgba(45,155,110,0.8)", fontSize: 10, margin: "0 0 6px", textTransform: "uppercase" }}>
                 {tc("القيمة", "Value")}
               </p>
               <p style={{ color: "#fff", fontSize: 22, fontWeight: 800, margin: 0, lineHeight: 1 }}>
@@ -248,13 +250,13 @@ export default function MyCardPage() {
             <div style={{ background: "#fff", borderRadius: 20, padding: 16, boxShadow: "0 10px 50px rgba(0,0,0,0.6)", display: "inline-block" }}>
               <img src={qrCodeUrl} alt="QR Code" style={{ width: 180, height: 180, display: "block" }} data-testid="img-qr-code" />
             </div>
-            <p style={{ color: "rgba(255,255,255,0.25)", fontSize: 11, marginTop: 10, letterSpacing: "0.1em" }}>
+            <p style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, marginTop: 10 }}>
               {tc("امسح لتسجيل نقاطك", "Scan to collect points")}
             </p>
           </div>
         ) : card ? (
           <div className="flex justify-center mb-6">
-            <div className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: "#C8A53A", borderTopColor: "transparent" }} />
+            <div className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: brandGreen, borderTopColor: "transparent" }} />
           </div>
         ) : null}
 
@@ -343,7 +345,7 @@ export default function MyCardPage() {
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                     width: "100%", height: 52, borderRadius: 14, background: "none",
-                    border: "1px solid rgba(200,165,58,0.2)", color: "rgba(200,165,58,0.7)",
+                  border: "1px solid rgba(45,155,110,0.35)", color: brandGreen,
                     cursor: "pointer", fontSize: 14, fontWeight: 600,
                     transition: "all 0.2s",
                   }}
@@ -352,8 +354,8 @@ export default function MyCardPage() {
                   {tc("تحويل نقاط لصديق", "Transfer points to friend")}
                 </button>
               ) : (
-                <div style={{ background: "rgba(200,165,58,0.05)", border: "1px solid rgba(200,165,58,0.15)", borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
-                  <p style={{ color: "#C8A53A", fontSize: 13, fontWeight: 700, margin: 0, letterSpacing: "0.05em" }}>
+                <div style={{ background: "rgba(45,155,110,0.06)", border: "1px solid rgba(45,155,110,0.2)", borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
+                  <p style={{ color: brandGreen, fontSize: 13, fontWeight: 700, margin: 0 }}>
                     {tc("تحويل النقاط", "Transfer Points")}
                   </p>
                   <div className="space-y-1">
@@ -372,7 +374,7 @@ export default function MyCardPage() {
                       className="bg-white/5 border-white/10 text-white placeholder:text-white/20 h-11 rounded-xl" data-testid="input-transfer-pin" />
                   </div>
                   <div className="flex gap-2">
-                    <Button className="flex-1 h-11 rounded-xl font-bold" style={{ background: "#C8A53A", color: "#111" }}
+                    <Button className="flex-1 h-11 rounded-xl font-bold" style={{ background: brandGreen, color: "#fff" }}
                       onClick={handleTransfer} disabled={transferMutation.isPending || !transferPhone || !transferPoints} data-testid="button-confirm-transfer">
                       {transferMutation.isPending ? tc("جاري...", "Sending...") : tc("تأكيد التحويل", "Confirm")}
                     </Button>
