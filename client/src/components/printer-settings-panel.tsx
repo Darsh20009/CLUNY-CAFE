@@ -190,6 +190,7 @@ export default function PrinterSettingsPanel() {
       }
     } catch (e: any) {
       toast({ title: tc("خطأ في الاتصال", "Connection Error"), description: e?.message || tc("فشل الاتصال", "Failed to connect"), variant: "destructive" });
+      await refreshStatus();
     } finally {
       setConnecting(false);
     }
@@ -763,6 +764,11 @@ export default function PrinterSettingsPanel() {
             <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-2 text-xs text-red-800">
               <p className="font-bold text-sm">⚠️ {tc("تم اختيار الطابعة لكن اتصال USB المباشر غير جاهز", "Printer selected, but direct USB access is not ready")}</p>
               <p>{tc("المتصفح لا يستطيع تجاوز تعريف Windows. بعض الطابعات تحتاج واجهة WinUSB حتى يرسل لها النظام أوامر ESC/POS.", "The browser cannot bypass Windows drivers. Some printers require a WinUSB interface before the app can send ESC/POS commands.")}</p>
+              {status?.usbError && (
+                <p className="rounded-md bg-white/70 p-2 font-medium" dir="auto">
+                  {tc("تفاصيل الاتصال:", "Connection details:")} {status.usbError}
+                </p>
+              )}
               <p className="font-semibold text-red-700">
                 {tc("استبدال تعريف Windows عبر Zadig قد يعطّل الطباعة من برامج Windows الأخرى؛ لا تغيّره قبل معرفة موديل الطابعة والتأكد من طريقة الرجوع.", "Replacing the Windows driver with Zadig may stop printing from other Windows apps. Do not change it until the printer model and rollback method are confirmed.")}
               </p>

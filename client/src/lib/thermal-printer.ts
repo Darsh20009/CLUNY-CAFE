@@ -214,12 +214,12 @@ export async function requestUSBPrinter(): Promise<USBDevice | null> {
   _usbLastError = null;
   try {
     const device = await (navigator as any).usb.requestDevice({ filters: [] });
-    await _openDevice(device);
     localStorage.setItem(DEVICE_KEY, JSON.stringify({
       vendorId: device.vendorId,
       productId: device.productId,
       productName: device.productName || 'Thermal Printer',
     }));
+    await _openDevice(device);
     _usbDevice = device;
     return device;
   } catch (error: any) {
@@ -326,7 +326,7 @@ async function _openDevice(device: USBDevice): Promise<void> {
     const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
     if (!isAndroid) {
       throw new Error(
-        'لا يمكن الاستئثار بالطابعة USB — على Windows استخدم Zadig لتثبيت درايفر WinUSB، أو استخدم وضع الشبكة (LAN) بدلاً من USB'
+        'منع نظام التشغيل المتصفح من فتح واجهة الطابعة USB. صفحة الويب لا تستطيع تجاوز تعريف النظام؛ لا تستبدل تعريف الطابعة قبل التأكد من توافق الموديل وطريقة الرجوع.'
       );
     }
     console.warn('[Printer] Could not claim interface on Android — attempting fallback to interface 0');
@@ -2950,6 +2950,7 @@ export interface PrinterStatus {
   isWebUSBSupported: boolean;
   isDeviceConnected: boolean;
   savedDevice: { vendorId: number; productId: number; productName: string } | null;
+  usbError: string | null;
   settings: PrinterSettings;
 }
 
@@ -2969,6 +2970,7 @@ export async function getPrinterStatus(): Promise<PrinterStatus> {
     isWebUSBSupported: isWebUSBSupported(),
     isDeviceConnected,
     savedDevice,
+    usbError: savedDevice && !isDeviceConnected ? _usbLastError : null,
     settings,
   };
 }
