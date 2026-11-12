@@ -24,6 +24,7 @@ import { CapacitorServerSetup, useCapacitorServerReady } from "@/components/capa
 import { useProximityNotify } from "@/hooks/useProximityNotify";
 import { SplashScreen, useSplash } from "@/components/splash-screen";
 import { NativeAppInit } from "@/components/native-app-init";
+import WelcomePage from "@/pages/welcome";
 
 const CartModal = lazy(() => import("@/components/cart-modal"));
 const CheckoutModal = lazy(() => import("@/components/checkout-modal"));
@@ -160,7 +161,6 @@ const DeliveryZoneSettings = lazy(() => import("@/pages/delivery-zone-settings")
 const DriverPortal = lazy(() => import("@/pages/driver-portal"));
 const DriverLogin = lazy(() => import("@/pages/driver-login"));
 const DeliveryTracking = lazy(() => import("@/pages/delivery-tracking"));
-const WelcomePage = lazy(() => import("@/pages/welcome"));
 const PromoPage = lazy(() => import("@/pages/promo"));
 const PricingPage = lazy(() => import("@/pages/pricing"));
 const EmployeeHome = lazy(() => import("@/pages/employee-home"));
