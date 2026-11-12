@@ -12,6 +12,7 @@ import clunyLogo from "@assets/cluny-logo-customer.png";
 import DualPosIdlePromo from "@/components/dual-pos-idle-promo";
 import { useRealtimeEvent, useRealtimeSend, useRealtimeStatus } from "@/hooks/useRealtimeEngine";
 import { getRealtimeEngine } from "@/lib/realtime-engine";
+import { PWAInstallButton } from "@/components/pwa-install";
 
 type DisplayOrderItem = {
   lineItemId: string;
@@ -42,7 +43,14 @@ type DisplayUpdate = {
   paymentMethodLabelAr?: string;
   paymentMethodLabelEn?: string;
   amountDue?: number;
+  syncMode?: "independent" | "follow" | "customer";
+  category?: string;
+  department?: "all" | "drinks" | "food";
+  search?: string;
+  scrollRatio?: number;
+  selectedProductId?: string;
 };
+type DisplaySyncMode = "independent" | "follow" | "customer";
 
 type DisplayPaymentPrompt = {
   stage: "processing" | "cash_due";
@@ -68,7 +76,9 @@ export default function DualPOSDisplay() {
   const branchId = useMemo(() => {
     const queryBranchId = params.get("branchId");
     if (queryBranchId) return queryBranchId;
-    if (!window.location.pathname.startsWith("/employee/dual-pos")) return "";
+    if (!window.location.pathname.startsWith("/employee/dual-pos")) {
+      return localStorage.getItem("dual-pos:last-branch") || "";
+    }
     try {
       const employee = JSON.parse(localStorage.getItem("currentEmployee") || "null");
       const isAdminOwner = employee?.role === "admin" || employee?.role === "owner";
@@ -92,6 +102,7 @@ export default function DualPOSDisplay() {
   const { connected } = useRealtimeStatus();
   const { send } = useRealtimeSend();
   const [controlEnabled, setControlEnabled] = useState(false);
+  const [syncMode, setSyncMode] = useState<DisplaySyncMode>("independent");
   const [pairedPosOnline, setPairedPosOnline] = useState(false);
   const [showingPromo, setShowingPromo] = useState(false);
   const [promoIndex, setPromoIndex] = useState(0);
@@ -106,8 +117,12 @@ export default function DualPOSDisplay() {
   const [paymentPrompt, setPaymentPrompt] = useState<DisplayPaymentPrompt | null>(null);
   const [checkoutReview, setCheckoutReview] = useState<DisplayCheckoutReview | null>(null);
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedDepartment, setSelectedDepartment] = useState<"all" | "drinks" | "food">("all");
   const [search, setSearch] = useState("");
   const [customizing, setCustomizing] = useState<{ item: CoffeeItem; group: CoffeeItem[] } | null>(null);
+  const productScrollRef = useRef<HTMLDivElement | null>(null);
+  const pendingCashierNavigationRef = useRef<{ productId?: string; scrollRatio: number } | null>(null);
+  const [cashierSelectedProductId, setCashierSelectedProductId] = useState("");
 
   const { data: products = [], isLoading, isError } = useQuery<CoffeeItem[]>({
     queryKey: ["/api/coffee-items"],
@@ -135,10 +150,29 @@ export default function DualPOSDisplay() {
     idleTimerRef.current = window.setTimeout(() => setShowingPromo(true), 60_000);
   }, []);
 
+  useEffect(() => {
+    if (!branchId) return;
+    localStorage.setItem("dual-pos:last-branch", branchId);
+  }, [branchId]);
+
+  useEffect(() => {
+    const manifest = document.getElementById("main-manifest") as HTMLLinkElement | null;
+    if (!manifest) return;
+    const previousHref = manifest.href;
+    manifest.href = "/dual-pos-manifest.json";
+    return () => {
+      if (manifest.href.endsWith("/dual-pos-manifest.json")) manifest.href = previousHref;
+    };
+  }, []);
+
   useRealtimeEvent("dual_pos_display_registered", (message: any) => {
     const registration = message?.payload || message;
     if (typeof registration?.displayNumber === "number") setDisplayNumber(registration.displayNumber);
     if (typeof registration?.terminalId === "string") setPairedTerminalId(registration.terminalId);
+    if (registration?.syncMode === "independent" || registration?.syncMode === "follow" || registration?.syncMode === "customer") {
+      setSyncMode(registration.syncMode);
+      setControlEnabled(registration.syncMode === "customer");
+    }
     setPairedPosOnline(registration?.paired === true);
   }, {
     clientType: "pos-display",
@@ -153,6 +187,9 @@ export default function DualPOSDisplay() {
     if (update.event === "terminal_status") {
       setPairedPosOnline(update.online === true);
       setControlEnabled(update.enabled === true);
+      setSyncMode(update.syncMode === "independent" || update.syncMode === "follow" || update.syncMode === "customer"
+        ? update.syncMode
+        : update.enabled ? "customer" : "independent");
       if (typeof update.displayNumber === "number") setDisplayNumber(update.displayNumber);
       if (typeof update.terminalId === "string") setPairedTerminalId(update.terminalId);
       if (update.online !== true) {
@@ -169,6 +206,7 @@ export default function DualPOSDisplay() {
     if (update.event === "terminal_offline") {
       setPairedPosOnline(false);
       setControlEnabled(false);
+      setSyncMode("independent");
       setPairedTerminalId("");
       setPaymentPrompt(null);
       setCheckoutReview(null);
@@ -183,6 +221,24 @@ export default function DualPOSDisplay() {
     if (update.event === "control_mode") {
       if (update.online !== false) setPairedPosOnline(true);
       setControlEnabled(update.enabled === true);
+      setSyncMode(update.syncMode === "independent" || update.syncMode === "follow" || update.syncMode === "customer"
+        ? update.syncMode
+        : update.enabled ? "customer" : "independent");
+      return;
+    }
+    if (update.event === "cashier_navigation" && syncMode === "follow") {
+      if (typeof update.category === "string") setSelectedCategory(update.category);
+      if (update.department === "all" || update.department === "drinks" || update.department === "food") {
+        setSelectedDepartment(update.department);
+      }
+      if (typeof update.search === "string") setSearch(update.search);
+      const productId = typeof update.selectedProductId === "string" ? update.selectedProductId : "";
+      setCashierSelectedProductId(productId);
+      pendingCashierNavigationRef.current = {
+        productId: productId || undefined,
+        scrollRatio: Math.min(1, Math.max(0, Number(update.scrollRatio) || 0)),
+      };
+      registerActivity();
       return;
     }
     if (update.event === "activity") {
@@ -392,6 +448,8 @@ export default function DualPOSDisplay() {
     return products.filter((product) => {
       if (Number(product.isAvailable) !== 1) return false;
       if (product.availabilityStatus === "unavailable" || product.availabilityStatus === "out_of_stock" || product.availabilityStatus === "temporarily_unavailable") return false;
+      const departmentMatches = selectedDepartment === "all"
+        || String((product as any).department || "drinks") === selectedDepartment;
       const categoryMatches = selectedCategory === "all"
         || String(product.category) === selectedCategory
         || categories.some((category) =>
@@ -401,9 +459,9 @@ export default function DualPOSDisplay() {
       const textMatches = !query
         || [product.nameAr, product.nameEn, product.description, product.descriptionEn]
           .some((value) => String(value || "").toLocaleLowerCase().includes(query));
-      return categoryMatches && textMatches;
+      return departmentMatches && categoryMatches && textMatches;
     });
-  }, [products, categories, search, selectedCategory]);
+  }, [products, categories, search, selectedCategory, selectedDepartment]);
   const promoProducts = useMemo(
     () => products.filter((product) =>
       Number(product.isAvailable) === 1 &&
@@ -419,6 +477,28 @@ export default function DualPOSDisplay() {
       promoProducts[(promoIndex + offset) % promoProducts.length]
     );
   }, [promoProducts, promoIndex]);
+
+  useEffect(() => {
+    const pending = pendingCashierNavigationRef.current;
+    const viewport = productScrollRef.current;
+    if (!pending || !viewport) return;
+    const frame = window.requestAnimationFrame(() => {
+      const productCard = pending.productId
+        ? viewport.querySelector<HTMLElement>(`[data-product-id="${CSS.escape(pending.productId)}"]`)
+        : null;
+      if (productCard) {
+        const cardTop = productCard.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+        viewport.scrollTo({ top: viewport.scrollTop + cardTop - viewport.clientHeight / 3, behavior: "smooth" });
+      } else {
+        viewport.scrollTo({
+          top: pending.scrollRatio * Math.max(0, viewport.scrollHeight - viewport.clientHeight),
+          behavior: "smooth",
+        });
+      }
+      pendingCashierNavigationRef.current = null;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedCategory, selectedDepartment, search, visibleProducts]);
 
   useEffect(() => {
     if (!showingPromo || promoProducts.length < 2) return;
@@ -572,7 +652,9 @@ export default function DualPOSDisplay() {
             <p className="text-xs text-stone-500">{isArabic ? "قائمة الطلب" : "Order menu"}</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 rounded-full bg-stone-50 px-3 py-2 text-xs font-semibold text-stone-600">
+        <div className="flex items-center gap-2">
+          <PWAInstallButton className="!px-3 !py-2 !text-xs" />
+          <div className="flex items-center gap-2 rounded-full bg-stone-50 px-3 py-2 text-xs font-semibold text-stone-600">
           <span className="rounded-full bg-emerald-100 px-2 py-1 font-black text-emerald-900">
             {displayNumber ? `${isArabic ? "شاشة" : "Screen"} #${String(displayNumber).padStart(2, "0")}` : (isArabic ? "تسجيل الشاشة" : "Registering screen")}
           </span>
@@ -584,6 +666,7 @@ export default function DualPOSDisplay() {
                 ? (isArabic ? "متصل بنقطة البيع" : "Connected to POS")
                 : (isArabic ? "بانتظار نقطة البيع" : "Waiting for POS")}
           </span>
+          </div>
         </div>
       </header>
 
@@ -623,10 +706,12 @@ export default function DualPOSDisplay() {
             </nav>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
+          <div ref={productScrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
             {!canControl && (
               <div className="mb-3 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                {isArabic ? "يمكنك تصفح القائمة. اطلب من الموظف تفعيل التحكم لإضافة المنتجات." : "Browse the menu. Ask staff to enable customer control to add items."}
+                {syncMode === "follow"
+                  ? (isArabic ? "الشاشة تتبع حركة الكاشير. يمكنك تصفح المنتجات، والإضافة من نقطة البيع." : "This screen follows the cashier. Browse products; items are added at the POS.")
+                  : (isArabic ? "يمكنك تصفح القائمة. اطلب من الموظف تفعيل التحكم لإضافة المنتجات." : "Browse the menu. Ask staff to enable customer control to add items.")}
               </div>
             )}
             {isLoading ? (
@@ -645,12 +730,13 @@ export default function DualPOSDisplay() {
                 {visibleProducts.map((item) => (
                   <button
                     key={item.id}
+                    data-product-id={String(item.id)}
                     type="button"
                     onClick={() => openProduct(item)}
                     disabled={!canControl}
                     className={`group overflow-hidden rounded-2xl border border-stone-200 bg-white text-start shadow-sm transition ${
                       canControl ? "cursor-pointer hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md" : "cursor-default"
-                    }`}
+                    } ${cashierSelectedProductId === String(item.id) ? "ring-2 ring-emerald-600 ring-offset-2" : ""}`}
                     aria-label={`${isArabic ? item.nameAr : item.nameEn || item.nameAr} ${canControl ? (isArabic ? "إضافة للطلب" : "Add to order") : ""}`}
                   >
                     <div className="relative aspect-[4/3] overflow-hidden bg-[#ece8df]">

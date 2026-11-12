@@ -17,6 +17,7 @@ interface WSClient {
   attendanceId?:    string;
   dualPosTerminalId?: string;
   dualPosControlEnabled?: boolean;
+  dualPosSyncMode?: "independent" | "follow" | "customer";
   dualPosDisplayId?: string;
   dualPosDisplayNumber?: number;
   lastPing:         number;
@@ -197,6 +198,7 @@ class OrderWebSocketManager {
           const previousDisplayId = client.dualPosDisplayId;
           const previousDisplayNumber = client.dualPosDisplayNumber;
           const previousControlEnabled = client.dualPosControlEnabled === true;
+          const previousSyncMode = client.dualPosSyncMode || "independent";
           const nextBranchId = typeof message.branchId === "string" ? message.branchId : undefined;
           const nextTerminalId = typeof message.dualPosTerminalId === "string"
             ? message.dualPosTerminalId.slice(0, 100)
@@ -237,6 +239,12 @@ class OrderWebSocketManager {
             previousTerminalId === nextTerminalId
               ? previousControlEnabled
               : false;
+          client.dualPosSyncMode = nextClientType === "pos" &&
+            previousType === "pos" &&
+            previousBranchId === nextBranchId &&
+            previousTerminalId === nextTerminalId
+              ? previousSyncMode
+              : "independent";
           client.dualPosDisplayId = undefined;
           client.dualPosDisplayNumber = undefined;
 
@@ -254,6 +262,7 @@ class OrderWebSocketManager {
               : undefined;
             client.dualPosTerminalId = requestedPos ? nextTerminalId : undefined;
             client.dualPosControlEnabled = requestedPos?.dualPosControlEnabled === true;
+            client.dualPosSyncMode = requestedPos?.dualPosSyncMode || "independent";
           }
         }
         console.log(`[WS] Client subscribed as ${message.clientType} userId=${message.userId || message.customerId || "anon"}`);
@@ -269,6 +278,7 @@ class OrderWebSocketManager {
               displayNumber: client.dualPosDisplayNumber,
               paired: Boolean(client.dualPosTerminalId),
               terminalId: client.dualPosTerminalId,
+              syncMode: client.dualPosSyncMode || "independent",
             },
           }));
           if (client.dualPosTerminalId) {
@@ -276,6 +286,7 @@ class OrderWebSocketManager {
               event: "terminal_status",
               online: true,
               enabled: client.dualPosControlEnabled === true,
+              syncMode: client.dualPosSyncMode || "independent",
               displayNumber: client.dualPosDisplayNumber,
               terminalId: client.dualPosTerminalId,
             });
@@ -355,12 +366,48 @@ class OrderWebSocketManager {
 
       case "dual_pos_control_update":
         if (client && client.type === "pos" && client.dualPosTerminalId) {
-          client.dualPosControlEnabled = message.enabled === true;
+          const requestedMode = message.syncMode;
+          client.dualPosSyncMode =
+            requestedMode === "follow" || requestedMode === "customer" || requestedMode === "independent"
+              ? requestedMode
+              : message.enabled === true ? "customer" : "independent";
+          client.dualPosControlEnabled =
+            message.enabled === true && client.dualPosSyncMode === "customer";
           this.broadcastDualPosDisplay(
-            { event: "control_mode", enabled: client.dualPosControlEnabled, online: true },
+            {
+              event: "control_mode",
+              enabled: client.dualPosControlEnabled,
+              syncMode: client.dualPosSyncMode,
+              online: true,
+            },
             client.branchId,
             client.dualPosTerminalId,
           );
+        }
+        break;
+
+      case "dual_pos_navigation_update":
+        if (
+          client?.type === "pos" &&
+          client.branchId &&
+          client.dualPosTerminalId &&
+          client.dualPosSyncMode === "follow"
+        ) {
+          const navigation = message.payload && typeof message.payload === "object"
+            ? message.payload
+            : {};
+          this.broadcastDualPosDisplay({
+            event: "cashier_navigation",
+            category: typeof navigation.category === "string" ? navigation.category.slice(0, 100) : "all",
+            department: ["all", "drinks", "food"].includes(navigation.department) ? navigation.department : "all",
+            search: typeof navigation.search === "string" ? navigation.search.slice(0, 100) : "",
+            scrollRatio: Number.isFinite(Number(navigation.scrollRatio))
+              ? Math.min(1, Math.max(0, Number(navigation.scrollRatio)))
+              : 0,
+            selectedProductId: typeof navigation.selectedProductId === "string"
+              ? navigation.selectedProductId.slice(0, 100)
+              : "",
+          }, client.branchId, client.dualPosTerminalId);
         }
         break;
 
@@ -372,6 +419,7 @@ class OrderWebSocketManager {
               event: "terminal_status",
               online: !!pairedPos,
               enabled: pairedPos?.dualPosControlEnabled === true,
+              syncMode: pairedPos?.dualPosSyncMode || "independent",
             },
             client.branchId,
             client.dualPosTerminalId,
@@ -790,6 +838,7 @@ class OrderWebSocketManager {
     });
     display.dualPosTerminalId = undefined;
     display.dualPosControlEnabled = false;
+    display.dualPosSyncMode = "independent";
   }
 
   private unpairDualPosScreens(branchId: string, terminalId: string, exceptDisplayId?: string) {
@@ -834,10 +883,12 @@ class OrderWebSocketManager {
     this.unpairDualPosScreens(posClient.branchId, posClient.dualPosTerminalId, displayId);
     display.dualPosTerminalId = posClient.dualPosTerminalId;
     display.dualPosControlEnabled = posClient.dualPosControlEnabled === true;
+    display.dualPosSyncMode = posClient.dualPosSyncMode || "independent";
     this.sendDualPosDisplayUpdate(display, {
       event: "terminal_status",
       online: true,
       enabled: display.dualPosControlEnabled,
+      syncMode: display.dualPosSyncMode,
       displayNumber: display.dualPosDisplayNumber,
       terminalId: display.dualPosTerminalId,
     });

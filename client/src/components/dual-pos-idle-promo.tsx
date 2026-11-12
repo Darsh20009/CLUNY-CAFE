@@ -2,6 +2,7 @@ import { ArrowRight, Hand, QrCode, Wifi, WifiOff } from "lucide-react";
 import type { CoffeeItem } from "@shared/schema";
 import clunyLogo from "@assets/cluny-logo-customer.png";
 import SarIcon from "@/components/sar-icon";
+import { PWAInstallButton } from "@/components/pwa-install";
 
 type DualPosIdlePromoProps = {
   isArabic: boolean;
@@ -58,7 +59,9 @@ export default function DualPosIdlePromo({
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2 rounded-full border border-[#dce4dd] bg-white px-3 py-2 text-[10px] font-bold text-[#53675b] shadow-sm sm:gap-2.5 sm:px-4 sm:text-xs">
+          <div className="flex shrink-0 items-center gap-2">
+            <PWAInstallButton className="!px-3 !py-2 !text-xs" />
+            <div className="flex items-center gap-2 rounded-full border border-[#dce4dd] bg-white px-3 py-2 text-[10px] font-bold text-[#53675b] shadow-sm sm:gap-2.5 sm:px-4 sm:text-xs">
             <span className="hidden sm:inline">
               {displayNumber
                 ? `${isArabic ? "شاشة" : "Screen"} #${String(displayNumber).padStart(2, "0")}`
@@ -69,6 +72,7 @@ export default function DualPosIdlePromo({
               ? <Wifi className="h-4 w-4 text-[#2d9b6e]" aria-hidden="true" />
               : <WifiOff className="h-4 w-4 text-[#b68743]" aria-hidden="true" />}
             <span>{isOnline ? (isArabic ? "متصلة" : "Connected") : (isArabic ? "بانتظار نقطة البيع" : "Waiting for POS")}</span>
+            </div>
           </div>
         </header>
 

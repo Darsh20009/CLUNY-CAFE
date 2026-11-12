@@ -204,9 +204,14 @@ export function isWebUSBSupported(): boolean {
 }
 
 let _usbDevice: USBDevice | null = null;
+// Last USB error — exposed so thermalPrint can include it in the failure message.
+let _usbLastError: string | null = null;
 
 export async function requestUSBPrinter(): Promise<USBDevice | null> {
-  if (!isWebUSBSupported()) return null;
+  if (!isWebUSBSupported()) {
+    throw new Error('الاتصال المباشر عبر USB يتطلب Chrome أو Edge على Windows مع اتصال HTTPS.');
+  }
+  _usbLastError = null;
   try {
     const device = await (navigator as any).usb.requestDevice({ filters: [] });
     await _openDevice(device);
@@ -217,13 +222,13 @@ export async function requestUSBPrinter(): Promise<USBDevice | null> {
     }));
     _usbDevice = device;
     return device;
-  } catch {
-    return null;
+  } catch (error: any) {
+    if (error?.name === 'NotFoundError') return null; // The user closed the device picker.
+    const message = error?.message || 'تعذر فتح واجهة USB للطابعة.';
+    _usbLastError = message;
+    throw new Error(message);
   }
 }
-
-// Last USB error — exposed so thermalPrint can include it in the failure message
-let _usbLastError: string | null = null;
 
 export function getUSBLastError(): string | null { return _usbLastError; }
 
@@ -360,12 +365,12 @@ async function _sendToUSB(data: Uint8Array): Promise<boolean> {
   // Helper: try transferOut on a specific endpoint, returns true on success
   const tryTransfer = async (epNum: number): Promise<boolean> => {
     try {
-      await _withTimeout(
+      const result = await _withTimeout(
         _usbDevice!.transferOut(epNum, data as unknown as BufferSource),
         5000,
         'انتهت مهلة إرسال البيانات إلى طابعة USB',
       );
-      return true;
+      return result.status === 'ok';
     } catch {
       return false;
     }
@@ -421,9 +426,11 @@ async function _sendToUSB(data: Uint8Array): Promise<boolean> {
     }
 
     console.warn('[Printer] No usable OUT endpoint found on USB device');
+    _usbLastError = 'تم فتح الطابعة لكن لم يتم العثور على منفذ USB لإرسال أوامر ESC/POS. قد تحتاج هذه الطابعة إلى تعريف Windows أو اتصال شبكة.';
     return false;
   } catch (err) {
     console.error('[Printer] USB transfer error:', err);
+    _usbLastError = err instanceof Error ? err.message : 'فشل إرسال البيانات إلى طابعة USB.';
     _usbDevice = null;
     _claimedInterface = null;
     return false;

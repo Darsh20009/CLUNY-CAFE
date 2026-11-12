@@ -761,15 +761,13 @@ export default function PrinterSettingsPanel() {
           {/* Windows USB driver warning — shown when device is saved but NOT usable */}
           {savedDevice && !isNetworkMode && !isBluetoothMode && !isUsbConnected && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-2 text-xs text-red-800">
-              <p className="font-bold text-sm">⚠️ {tc("الطابعة مُعرَّفة لكن لا تطبع — مشكلة درايفر Windows", "Printer detected but not printing — Windows driver conflict")}</p>
-              <p>{tc("ويندوز يحتجز المنفذ USB ويمنع المتصفح من التحكم في الطابعة مباشرة. الحل:", "Windows holds the USB port and blocks the browser from controlling the printer directly. Fix:")}</p>
-              <ol className="list-decimal list-inside space-y-1 mr-2">
-                <li>{tc("حمّل برنامج Zadig (zadig.akeo.ie) مجاناً", "Download Zadig (zadig.akeo.ie) — free")}</li>
-                <li>{tc("اختر طابعتك من القائمة → اضغط 'Replace Driver' → اختر WinUSB", "Select your printer → click 'Replace Driver' → choose WinUSB")}</li>
-                <li>{tc("أعد تشغيل المتصفح واضغط 'اختر الطابعة (USB)' مجدداً", "Restart browser and click 'Select Printer (USB)' again")}</li>
-              </ol>
+              <p className="font-bold text-sm">⚠️ {tc("تم اختيار الطابعة لكن اتصال USB المباشر غير جاهز", "Printer selected, but direct USB access is not ready")}</p>
+              <p>{tc("المتصفح لا يستطيع تجاوز تعريف Windows. بعض الطابعات تحتاج واجهة WinUSB حتى يرسل لها النظام أوامر ESC/POS.", "The browser cannot bypass Windows drivers. Some printers require a WinUSB interface before the app can send ESC/POS commands.")}</p>
               <p className="font-semibold text-red-700">
-                {tc("أو بدلاً عن ذلك: بدّل وضع الطباعة إلى 'شبكة LAN' أو 'وكيل محلي' — أسهل وأكثر استقراراً.", "Or: Switch print mode to 'LAN Network' or 'Local Relay' — easier and more stable.")}
+                {tc("استبدال تعريف Windows عبر Zadig قد يعطّل الطباعة من برامج Windows الأخرى؛ لا تغيّره قبل معرفة موديل الطابعة والتأكد من طريقة الرجوع.", "Replacing the Windows driver with Zadig may stop printing from other Windows apps. Do not change it until the printer model and rollback method are confirmed.")}
+              </p>
+              <p className="font-semibold text-red-700">
+                {tc("الاختبار الحقيقي هو «طباعة تجريبية». إذا لم يظهر الجهاز في نافذة USB أو لم تصل الطباعة، أرسل موديل الطابعة؛ لا يمكن إرسال أمر USB إذا كان Windows يحجب الواجهة.", "Use Test Print to verify. If the device is missing from the USB picker or nothing prints, share its model; USB commands cannot be sent while Windows blocks the interface.")}
               </p>
             </div>
           )}
@@ -1795,9 +1793,8 @@ export default function PrinterSettingsPanel() {
                     <li>{tc("وصّل الطابعة الحرارية بـ USB", "Connect thermal printer via USB")}</li>
                     <li>{tc("اضغط 'اختر الطابعة (USB)' واختر طابعتك", "Click 'Select Printer (USB)' and choose your printer")}</li>
                     <li>{tc("اضغط 'طباعة تجريبية' للتأكد", "Click 'Test Print' to verify")}</li>
-                    <li>{tc("الآن كل طلب يُطبع تلقائياً بدون نوافذ", "Every order prints automatically without dialogs")}</li>
                   </ol>
-                  <p>{tc("💡 لطابعة شبكية (ProPos/LAN) غيّر الوضع إلى 'شبكة LAN' من القائمة أعلاه", "💡 For network printer (ProPos/LAN), switch mode to 'Network LAN' above")}</p>
+                  <p>{tc("الطباعة التلقائية تبدأ بعد نجاح الاختبار. بعض موديلات USB تتطلب تعريف WinUSB، وقد يؤثر استبدال تعريف Windows على الطباعة من البرامج الأخرى.", "Auto-print starts after a successful test. Some USB models require WinUSB, and replacing a Windows driver may affect printing from other apps.")}</p>
                 </>
               )}
             </div>

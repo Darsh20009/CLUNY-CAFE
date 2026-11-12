@@ -1,0 +1,30 @@
+{
+  "id": "/dual-pos",
+  "name": "CLUNY CAFE - شاشة العميل",
+  "short_name": "CLUNY Display",
+  "description": "شاشة العميل التفاعلية لنظام CLUNY CAFE",
+  "start_url": "/dual-pos",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#f5f2eb",
+  "theme_color": "#2D9B6E",
+  "orientation": "landscape",
+  "lang": "ar",
+  "dir": "rtl",
+  "categories": ["food", "business"],
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

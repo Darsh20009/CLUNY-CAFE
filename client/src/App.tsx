@@ -616,7 +616,10 @@ function App() {
 
     const manifestTag = document.getElementById('main-manifest') as HTMLLinkElement;
     if (manifestTag) {
-      manifestTag.href = isEmployeePath ? '/employee-manifest.json' : '/manifest.json';
+      const isDualPosPath = currentPath === '/dual-pos' || currentPath === '/employee/dual-pos';
+      manifestTag.href = isDualPosPath
+        ? '/dual-pos-manifest.json'
+        : isEmployeePath ? '/employee-manifest.json' : '/manifest.json';
     }
 
     document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';

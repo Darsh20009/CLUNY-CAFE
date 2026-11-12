@@ -7,7 +7,7 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(['/logo.png', '/manifest.json']).catch(() => {});
+      return cache.addAll(['/logo.png', '/manifest.json', '/dual-pos-manifest.json']).catch(() => {});
     })
   );
 });

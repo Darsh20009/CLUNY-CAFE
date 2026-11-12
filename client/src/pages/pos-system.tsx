@@ -80,6 +80,7 @@ type DualPosDisplayOption = {
   pairedToCurrentPos: boolean;
   available: boolean;
 };
+type DualPosSyncMode = "independent" | "follow" | "customer";
 
 const ORDER_TYPES = [
   { id: "dine_in", name: "محلي", nameEn: "Dine-in", icon: Coffee },
@@ -158,6 +159,9 @@ export default function PosSystem() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedDepartment, setSelectedDepartment] = useState<'all' | 'drinks' | 'food'>('all');
   const [searchQuery, setSearchQuery] = useState("");
+  const productMenuRef = useRef<HTMLDivElement | null>(null);
+  const selectedDisplayProductIdRef = useRef("");
+  const navigationFrameRef = useRef<number | null>(null);
   const [orderItems, setOrderItems] = useState<any[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [orderType, setOrderType] = useState<OrderType>("dine_in");
@@ -176,6 +180,7 @@ export default function PosSystem() {
   const [customerPoints, setCustomerPoints] = useState(0);
   const [usePoints, setUsePoints] = useState(false);
   const [allowCustomerControl, setAllowCustomerControl] = useState(false);
+  const [dualPosSyncMode, setDualPosSyncMode] = useState<DualPosSyncMode>("independent");
   const [dualPosDisplays, setDualPosDisplays] = useState<DualPosDisplayOption[]>([]);
   const [showDualPosDisplayPicker, setShowDualPosDisplayPicker] = useState(false);
   const [activeDualPosDisplayId, setActiveDualPosDisplayId] = useState("");
@@ -294,8 +299,11 @@ export default function PosSystem() {
   }, [activeBranchId, employee?.id, dualPosTerminalId]);
 
   useEffect(() => {
-    rtSend("dual_pos_control_update", { enabled: allowCustomerControl });
-  }, [allowCustomerControl, wsConnected, rtSend]);
+    rtSend("dual_pos_control_update", {
+      enabled: dualPosSyncMode === "customer",
+      syncMode: dualPosSyncMode,
+    });
+  }, [dualPosSyncMode, wsConnected, rtSend]);
 
   useRealtimeEvent("dual_pos_display_list", (message: any) => {
     const payload = message?.payload || message;
@@ -515,6 +523,63 @@ export default function PosSystem() {
   const broadcastToDisplay = useCallback((event: string, data?: any) => {
     rtSend("pos_cart_update", { event, ...data });
   }, [rtSend]);
+
+  const chooseDualPosSyncMode = (mode: DualPosSyncMode) => {
+    setDualPosSyncMode(mode);
+    setAllowCustomerControl(mode === "customer");
+  };
+
+  const dualPosModeLabel = dualPosSyncMode === "follow"
+    ? tc("يتبع الكاشير", "Follow cashier")
+    : dualPosSyncMode === "customer"
+      ? tc("تحكم العميل", "Customer control")
+      : tc("شاشة مستقلة", "Independent");
+
+  const renderDualPosModePicker = (compact = false) => (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant={dualPosSyncMode === "customer" ? "default" : "outline"}
+          size="sm"
+          className={`gap-1 ${compact ? "px-2" : ""}`}
+          data-testid={compact ? "button-dual-pos-mode-mobile" : "button-dual-pos-mode"}
+          aria-label={tc("طريقة تحكم شاشة العميل", "Customer display control mode")}
+        >
+          <Users className="h-4 w-4" />
+          <span className={compact ? "text-[10px] font-bold" : "text-xs font-bold"}>
+            {compact ? dualPosModeLabel : `${tc("شاشة العميل", "Customer display")}: ${dualPosModeLabel}`}
+          </span>
+          <ChevronDown className="h-3 w-3 opacity-70" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64 p-2">
+        <p className="px-2 py-1 text-xs font-bold text-muted-foreground">
+          {tc("اختر طريقة تفاعل الشاشة", "Choose how the display behaves")}
+        </p>
+        {([
+          ["independent", tc("مستقلة", "Independent"), tc("العميل يتصفح الشاشة بنفسه", "Customer browses independently")],
+          ["follow", tc("تتبع الكاشير", "Follow cashier"), tc("تزامن القسم والبحث والتمرير والمنتج المحدد", "Sync category, search, scroll, and selected product")],
+          ["customer", tc("تحكم العميل", "Customer control"), tc("العميل يستطيع إضافة المنتجات وتعديل الطلب", "Customer can add items and edit the order")],
+        ] as const).map(([mode, title, description]) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => chooseDualPosSyncMode(mode)}
+            className={`flex w-full items-start gap-2 rounded-lg px-2 py-2 text-start transition-colors hover:bg-muted ${
+              dualPosSyncMode === mode ? "bg-primary/10 text-primary" : ""
+            }`}
+            data-testid={`button-dual-pos-mode-${mode}`}
+          >
+            <span className="mt-0.5 w-4 shrink-0">{dualPosSyncMode === mode ? <Check className="h-4 w-4" /> : null}</span>
+            <span>
+              <span className="block text-sm font-bold">{title}</span>
+              <span className="block text-xs text-muted-foreground">{description}</span>
+            </span>
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
 
   const closeOrderReview = useCallback(() => {
     setShowOrderReview(false);
@@ -1373,6 +1438,49 @@ export default function PosSystem() {
     };
   };
 
+  const sendDualPosNavigation = useCallback((selectedProductId?: string) => {
+    if (dualPosSyncMode !== "follow") return;
+    const viewport = productMenuRef.current?.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]");
+    const scrollRatio = viewport && viewport.scrollHeight > viewport.clientHeight
+      ? viewport.scrollTop / (viewport.scrollHeight - viewport.clientHeight)
+      : 0;
+    if (selectedProductId) selectedDisplayProductIdRef.current = selectedProductId;
+    rtSend("dual_pos_navigation_update", {
+      payload: {
+        category: selectedCategory,
+        department: selectedDepartment,
+        search: searchQuery,
+        scrollRatio: Math.min(1, Math.max(0, scrollRatio)),
+        selectedProductId: selectedDisplayProductIdRef.current || undefined,
+      },
+    });
+  }, [dualPosSyncMode, rtSend, searchQuery, selectedCategory, selectedDepartment]);
+
+  useEffect(() => {
+    if (dualPosSyncMode !== "follow") return;
+    const viewport = productMenuRef.current?.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]");
+    if (!viewport) return;
+    const handleScroll = () => {
+      if (navigationFrameRef.current !== null) cancelAnimationFrame(navigationFrameRef.current);
+      navigationFrameRef.current = requestAnimationFrame(() => {
+        navigationFrameRef.current = null;
+        sendDualPosNavigation();
+      });
+    };
+    viewport.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      viewport.removeEventListener("scroll", handleScroll);
+      if (navigationFrameRef.current !== null) cancelAnimationFrame(navigationFrameRef.current);
+      navigationFrameRef.current = null;
+    };
+  }, [dualPosSyncMode, sendDualPosNavigation]);
+
+  useEffect(() => {
+    if (dualPosSyncMode !== "follow") return;
+    const timer = window.setTimeout(() => sendDualPosNavigation(), searchQuery ? 160 : 0);
+    return () => window.clearTimeout(timer);
+  }, [dualPosSyncMode, selectedCategory, selectedDepartment, searchQuery, sendDualPosNavigation]);
+
   const getPosItemUnitPrice = getPosItemUnitPriceEarly;
 
   const addToOrder = (product: CoffeeItem, customization?: { selectedItemAddons: Array<{nameAr: string; nameEn?: string; price: number}> }, selectedSize?: string | null, quantity: number = 1, fullCustomization?: DrinkCustomization) => {
@@ -1895,8 +2003,7 @@ export default function PosSystem() {
         paymentMethodLabelAr,
         paymentMethodLabelEn,
       });
-      setAllowCustomerControl(false);
-      rtSend("dual_pos_control_update", { enabled: false });
+      chooseDualPosSyncMode("independent");
 
       const orderData: any = {
         items: orderItems.map(item => {
@@ -2492,18 +2599,7 @@ export default function PosSystem() {
               >
                 <Settings className="w-4 h-4" />
               </Button>
-              <Button
-                variant={allowCustomerControl ? "default" : "outline"}
-                size="sm"
-                onClick={() => setAllowCustomerControl(current => !current)}
-                className="gap-1 px-2"
-                data-testid="button-dual-pos-control-mobile"
-                aria-pressed={allowCustomerControl}
-                title={tc("السماح للعميل بإضافة وتعديل الطلب", "Allow the customer to edit the order")}
-              >
-                <Users className="w-4 h-4" />
-                <span className="text-[10px] font-bold">{tc("تحكم العميل", "Customer control")}</span>
-              </Button>
+              {renderDualPosModePicker(true)}
               <Button variant="outline" size="sm" onClick={openDualPosDisplay} className="gap-1 px-2" data-testid="button-dual-pos-display-mobile">
                 <MonitorSmartphone className="w-4 h-4" />
                 <span className="text-[10px] font-bold">{tc("شاشات العرض", "Displays")}</span>
@@ -2556,18 +2652,7 @@ export default function PosSystem() {
               {activeDualPosDisplayNumber && <span className="rounded bg-primary/10 px-1 text-[10px] font-black">#{String(activeDualPosDisplayNumber).padStart(2, "0")}</span>}
             </Button>
 
-            <Button
-              variant={allowCustomerControl ? "default" : "outline"}
-              size="sm"
-              onClick={() => setAllowCustomerControl(current => !current)}
-              className="hidden sm:flex gap-1"
-              data-testid="button-dual-pos-control"
-              aria-pressed={allowCustomerControl}
-            >
-              <Users className="w-4 h-4" />
-              <span className="text-xs font-bold">{tc("السماح للعميل بالتحكم", "Allow customer control")}</span>
-              <span className={`h-2 w-2 rounded-full ${allowCustomerControl ? "bg-white" : "bg-muted-foreground"}`} />
-            </Button>
+            <div className="hidden sm:block">{renderDualPosModePicker()}</div>
 
             <Button
               variant="ghost"
@@ -2861,7 +2946,7 @@ export default function PosSystem() {
               </div>
             </div>
 
-            <ScrollArea className="flex-1 p-2 sm:p-4 lg:p-6">
+            <ScrollArea ref={productMenuRef} className="flex-1 p-2 sm:p-4 lg:p-6">
               {isLoadingProducts ? (
                 <LoadingState message={t('pos.loading_products')} />
               ) : (
@@ -2869,11 +2954,13 @@ export default function PosSystem() {
                   {filteredItemsList.map((item: any) => (
                     <Card 
                       key={item.id}
+                      data-product-id={String(item.id)}
                       className={`group relative overflow-hidden cursor-pointer transition-shadow hover:shadow-lg border-2 ${
                         !item.isAvailable ? 'opacity-60 grayscale cursor-not-allowed' : 'hover:border-primary/50'
                       }`}
                       onClick={() => {
                         if (!item.isAvailable) return;
+                        sendDualPosNavigation(String(item.id));
                         const groupKey = getGroupingKey(item);
                         const group = groupedItemsMap[groupKey] || [item];
                         const hasVariants = group.length > 1;
@@ -3922,8 +4009,7 @@ export default function PosSystem() {
                   className="flex-1 h-11 sm:h-13 text-sm sm:text-base font-black rounded-xl shadow-lg shadow-primary/20 gap-2"
                   disabled={orderItems.length === 0 || syncing}
                   onClick={() => {
-                    setAllowCustomerControl(false);
-                    rtSend("dual_pos_control_update", { enabled: false });
+                    chooseDualPosSyncMode("independent");
                     setShowOrderReview(true);
                   }}
                   data-testid="button-checkout"
