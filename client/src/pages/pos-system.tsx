@@ -43,6 +43,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useNotifications } from "@/hooks/use-notifications";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { filterProductsForBranch } from "@/lib/branch-products";
+import { openWindowOnSecondaryScreen } from "@/lib/multi-screen-window";
 import { queueOfflineOrder, syncOfflineOrders, countPendingOrders } from "@/lib/offline-queue";
 import type { CoffeeItem, Order, Table, Employee } from "@shared/schema";
 import clunyLogo from "@assets/cluny-logo-customer.png";
@@ -186,6 +187,7 @@ export default function PosSystem() {
   const [activeDualPosDisplayId, setActiveDualPosDisplayId] = useState("");
   const [activeDualPosDisplayNumber, setActiveDualPosDisplayNumber] = useState<number | null>(null);
   const [dualPosDisplayNotice, setDualPosDisplayNotice] = useState("");
+  const pendingAutoPairDisplayIdRef = useRef("");
   const [showOrderReview, setShowOrderReview] = useState(false);
   const [mobilePanelView, setMobilePanelView] = useState<'products' | 'cart'>('products');
   const [soundEnabled, setSoundEnabled] = useState(() => getSoundEnabled('pos'));
@@ -309,6 +311,18 @@ export default function PosSystem() {
     const payload = message?.payload || message;
     const displays = Array.isArray(payload?.displays) ? payload.displays as DualPosDisplayOption[] : [];
     setDualPosDisplays(displays);
+    const pendingDisplayId = pendingAutoPairDisplayIdRef.current;
+    const newlyOpenedDisplay = pendingDisplayId
+      ? displays.find((display) => display.displayId === pendingDisplayId && display.available)
+      : undefined;
+    if (newlyOpenedDisplay) {
+      pendingAutoPairDisplayIdRef.current = "";
+      setDualPosDisplayNotice(tc(
+        `تم فتح شاشة العميل وربطها تلقائيًا بالشاشة رقم ${newlyOpenedDisplay.displayNumber}.`,
+        `Customer display opened and paired automatically as screen ${newlyOpenedDisplay.displayNumber}.`,
+      ));
+      rtSend("dual_pos_pair_display", { displayId: newlyOpenedDisplay.displayId });
+    }
     const pairedDisplay = displays.find((display) => display.pairedToCurrentPos);
     setActiveDualPosDisplayId(pairedDisplay?.displayId || "");
     setActiveDualPosDisplayNumber(pairedDisplay?.displayNumber || null);
@@ -594,9 +608,44 @@ export default function PosSystem() {
 
   const openNewDualPosDisplay = () => {
     const branchId = activeBranchId || employee?.branchId || "main";
-    const params = new URLSearchParams({ branchId: String(branchId) });
-    window.open(`/dual-pos?${params.toString()}`, "_blank", "noopener,noreferrer");
-    setDualPosDisplayNotice(tc("تم فتح شاشة جديدة. انتظر ظهور رقمها ثم اخترها من القائمة.", "A new display was opened. Wait for its number to appear, then select it."));
+    const displayId = typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `display-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const params = new URLSearchParams({ branchId: String(branchId), displayId });
+    pendingAutoPairDisplayIdRef.current = displayId;
+    const preferenceKey = `dual-pos-secondary-screen:${branchId}:${employee?.id || "terminal"}`;
+    const opened = openWindowOnSecondaryScreen(`/dual-pos?${params.toString()}`, preferenceKey);
+    if (!opened.popup) {
+      pendingAutoPairDisplayIdRef.current = "";
+      setDualPosDisplayNotice(tc(
+        "المتصفح منع فتح النافذة. اسمح بالنوافذ المنبثقة لهذا الموقع ثم جرّب مرة أخرى.",
+        "The browser blocked the popup. Allow popups for this site, then try again.",
+      ));
+      return;
+    }
+    setDualPosDisplayNotice(tc(
+      "جارٍ فتح شاشة العميل وربطها تلقائيًا. وافق على إذن الشاشات المتعددة إذا ظهر.",
+      "Opening and pairing the customer display. Allow multi-screen access if prompted.",
+    ));
+    rtSend("dual_pos_list_displays");
+    void opened.placement.then((result) => {
+      if (result === "no-secondary-screen") {
+        setDualPosDisplayNotice(tc(
+          "لم يُعثر على شاشة ثانية. افتح إعدادات Windows واجعل الشاشتين على وضع التوسيع، ثم أعد المحاولة.",
+          "No second screen was found. Set Windows to Extend these displays, then try again.",
+        ));
+      } else if (result === "unsupported") {
+        setDualPosDisplayNotice(tc(
+          "فتح المتصفح شاشة العميل، لكن نقلها تلقائيًا غير مدعوم هنا. استخدم Chrome أو Edge وحدّث إذن الشاشات.",
+          "The customer display opened, but automatic placement is unsupported here. Use Chrome or Edge and allow screen access.",
+        ));
+      } else if (result === "permission-denied") {
+        setDualPosDisplayNotice(tc(
+          "رفض المتصفح إذن اكتشاف الشاشات؛ اسمح به من إعدادات الموقع ليتم فتح الشاشة الخلفية تلقائيًا.",
+          "Screen detection permission was denied. Allow it in site settings to open on the secondary display.",
+        ));
+      }
+    });
   };
 
   const pairDualPosDisplay = (display: DualPosDisplayOption) => {
@@ -5724,13 +5773,16 @@ export default function PosSystem() {
               </DialogTitle>
             </DialogHeader>
             <p className="text-sm text-muted-foreground">
-              {tc("اختر الشاشة المفتوحة برقمها لعرض طلب نقطة البيع عليها.", "Choose an open screen by its number to show this POS order.")}
+              {tc(
+                "افتح شاشة العميل مباشرة على الشاشة الخلفية واربطها تلقائيًا. اسمح بإذن الشاشات المتعددة في Chrome أو Edge أول مرة فقط.",
+                "Open and pair the customer display on the second monitor. Allow multi-screen access in Chrome or Edge the first time.",
+              )}
             </p>
 
             <div className="flex flex-wrap gap-2">
               <Button onClick={openNewDualPosDisplay} className="flex-1 gap-2" data-testid="button-open-new-dual-pos-display">
                 <Plus className="h-4 w-4" />
-                {tc("فتح شاشة جديدة", "Open a new screen")}
+                {tc("فتح وربط تلقائيًا", "Open and pair automatically")}
               </Button>
               <Button
                 variant="outline"

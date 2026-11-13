@@ -93,11 +93,15 @@ export default function DualPOSDisplay() {
       return "main";
     }
   }, [params]);
-  const [displaySessionId] = useState(() =>
-    typeof crypto !== "undefined" && "randomUUID" in crypto
+  const [displaySessionId] = useState(() => {
+    const requestedSessionId = params.get("displayId");
+    if (requestedSessionId && /^[a-zA-Z0-9-]{16,100}$/.test(requestedSessionId)) {
+      return requestedSessionId;
+    }
+    return typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
-      : `display-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  );
+      : `display-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  });
   const [pairedTerminalId, setPairedTerminalId] = useState(() => params.get("terminalId") || "");
   const [displayNumber, setDisplayNumber] = useState<number | null>(null);
   const isPaired = Boolean(branchId && pairedTerminalId);
