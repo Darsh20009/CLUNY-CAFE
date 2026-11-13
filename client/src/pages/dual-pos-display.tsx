@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { CheckCircle2, Coffee, Minus, Plus, Search, ShoppingBag, Wifi, WifiOff } from "lucide-react";
@@ -123,9 +123,16 @@ export default function DualPOSDisplay() {
   const productScrollRef = useRef<HTMLDivElement | null>(null);
   const pendingCashierNavigationRef = useRef<{ productId?: string; scrollRatio: number } | null>(null);
   const [cashierSelectedProductId, setCashierSelectedProductId] = useState("");
+  const [cashierNavigationRevision, setCashierNavigationRevision] = useState(0);
 
   const { data: products = [], isLoading, isError } = useQuery<CoffeeItem[]>({
-    queryKey: ["/api/coffee-items"],
+    queryKey: ["/api/coffee-items", branchId || "all"],
+    queryFn: async () => {
+      const query = branchId ? `?branchId=${encodeURIComponent(branchId)}` : "";
+      const response = await fetch(`/api/coffee-items${query}`, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to load products for this branch");
+      return response.json();
+    },
     staleTime: 5 * 60 * 1000,
   });
   const { data: menuCategories = [] } = useQuery<Array<{
@@ -233,11 +240,12 @@ export default function DualPOSDisplay() {
       }
       if (typeof update.search === "string") setSearch(update.search);
       const productId = typeof update.selectedProductId === "string" ? update.selectedProductId : "";
-      setCashierSelectedProductId(productId);
+      if (productId) setCashierSelectedProductId(productId);
       pendingCashierNavigationRef.current = {
         productId: productId || undefined,
         scrollRatio: Math.min(1, Math.max(0, Number(update.scrollRatio) || 0)),
       };
+      setCashierNavigationRevision((revision) => revision + 1);
       registerActivity();
       return;
     }
@@ -443,9 +451,20 @@ export default function DualPOSDisplay() {
     ];
   }, [menuCategories]);
 
+  const productsForBranch = useMemo(() => products.filter((product: any) => {
+    if (!branchId) return true;
+    const publishedBranches = Array.isArray(product.publishedBranches) ? product.publishedBranches : [];
+    if (publishedBranches.length > 0 && !publishedBranches.includes("*") && !publishedBranches.includes(branchId)) {
+      return false;
+    }
+    const branchAvailability = Array.isArray(product.branchAvailability) ? product.branchAvailability : [];
+    const branchRule = branchAvailability.find((entry: any) => String(entry.branchId) === branchId);
+    return !(branchRule && Number(branchRule.isAvailable) === 0);
+  }), [products, branchId]);
+
   const visibleProducts = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
-    return products.filter((product) => {
+    return productsForBranch.filter((product) => {
       if (Number(product.isAvailable) !== 1) return false;
       if (product.availabilityStatus === "unavailable" || product.availabilityStatus === "out_of_stock" || product.availabilityStatus === "temporarily_unavailable") return false;
       const departmentMatches = selectedDepartment === "all"
@@ -461,15 +480,15 @@ export default function DualPOSDisplay() {
           .some((value) => String(value || "").toLocaleLowerCase().includes(query));
       return departmentMatches && categoryMatches && textMatches;
     });
-  }, [products, categories, search, selectedCategory, selectedDepartment]);
+  }, [productsForBranch, categories, search, selectedCategory, selectedDepartment]);
   const promoProducts = useMemo(
-    () => products.filter((product) =>
+    () => productsForBranch.filter((product) =>
       Number(product.isAvailable) === 1 &&
       product.availabilityStatus !== "unavailable" &&
       product.availabilityStatus !== "out_of_stock" &&
       product.availabilityStatus !== "temporarily_unavailable"
     ),
-    [products],
+    [productsForBranch],
   );
   const promoCards = useMemo(() => {
     if (promoProducts.length === 0) return [];
@@ -478,27 +497,24 @@ export default function DualPOSDisplay() {
     );
   }, [promoProducts, promoIndex]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const pending = pendingCashierNavigationRef.current;
     const viewport = productScrollRef.current;
     if (!pending || !viewport) return;
-    const frame = window.requestAnimationFrame(() => {
-      const productCard = pending.productId
-        ? viewport.querySelector<HTMLElement>(`[data-product-id="${CSS.escape(pending.productId)}"]`)
-        : null;
-      if (productCard) {
-        const cardTop = productCard.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
-        viewport.scrollTo({ top: viewport.scrollTop + cardTop - viewport.clientHeight / 3, behavior: "smooth" });
-      } else {
-        viewport.scrollTo({
-          top: pending.scrollRatio * Math.max(0, viewport.scrollHeight - viewport.clientHeight),
-          behavior: "smooth",
-        });
-      }
-      pendingCashierNavigationRef.current = null;
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [selectedCategory, selectedDepartment, search, visibleProducts]);
+    const productCard = pending.productId
+      ? viewport.querySelector<HTMLElement>(`[data-product-id="${CSS.escape(pending.productId)}"]`)
+      : null;
+    if (productCard) {
+      const cardTop = productCard.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+      viewport.scrollTo({ top: viewport.scrollTop + cardTop - viewport.clientHeight / 3, behavior: "smooth" });
+    } else {
+      viewport.scrollTo({
+        top: pending.scrollRatio * Math.max(0, viewport.scrollHeight - viewport.clientHeight),
+        behavior: "auto",
+      });
+    }
+    pendingCashierNavigationRef.current = null;
+  }, [cashierNavigationRevision, selectedCategory, selectedDepartment, search, visibleProducts]);
 
   useEffect(() => {
     if (!showingPromo || promoProducts.length < 2) return;
@@ -543,7 +559,7 @@ export default function DualPOSDisplay() {
   const openProduct = (item: CoffeeItem) => {
     if (!canControl) return;
     const group = item.groupId
-      ? products.filter((candidate) => candidate.groupId === item.groupId && Number(candidate.isAvailable) === 1)
+      ? productsForBranch.filter((candidate) => candidate.groupId === item.groupId && Number(candidate.isAvailable) === 1)
       : [item];
     const hasOptions = group.length > 1
       || Boolean(item.availableSizes?.length)

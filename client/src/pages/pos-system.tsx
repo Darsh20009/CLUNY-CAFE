@@ -160,7 +160,6 @@ export default function PosSystem() {
   const [selectedDepartment, setSelectedDepartment] = useState<'all' | 'drinks' | 'food'>('all');
   const [searchQuery, setSearchQuery] = useState("");
   const productMenuRef = useRef<HTMLDivElement | null>(null);
-  const selectedDisplayProductIdRef = useRef("");
   const navigationFrameRef = useRef<number | null>(null);
   const [orderItems, setOrderItems] = useState<any[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -939,8 +938,15 @@ export default function PosSystem() {
     return () => window.removeEventListener('keydown', handleKey);
   }, [orderItems.length, showItemDiscountFor, showHeldCarts, showMergeBills]);
 
+  const productsBranchId = String(activeBranchId || employee?.branchId || "");
   const { data: productsData, isLoading: isLoadingProducts } = useQuery<CoffeeItem[]>({
-    queryKey: ["/api/coffee-items"],
+    queryKey: ["/api/coffee-items", productsBranchId || "all"],
+    queryFn: async () => {
+      const query = productsBranchId ? `?branchId=${encodeURIComponent(productsBranchId)}` : "";
+      const response = await fetch(`/api/coffee-items${query}`, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to load products for this branch");
+      return response.json();
+    },
     staleTime: 5 * 60 * 1000,
   });
 
@@ -1125,20 +1131,34 @@ export default function PosSystem() {
     return `${item.category || 'none'}::${nameBase}`;
   }, []);
 
+  const productsForBranch = useMemo(() => {
+    const branchId = productsBranchId;
+    return (productsData || []).filter((item: any) => {
+      if (!branchId) return true;
+      const publishedBranches = Array.isArray(item.publishedBranches) ? item.publishedBranches : [];
+      if (publishedBranches.length > 0 && !publishedBranches.includes("*") && !publishedBranches.includes(branchId)) {
+        return false;
+      }
+      const branchAvailability = Array.isArray(item.branchAvailability) ? item.branchAvailability : [];
+      const branchRule = branchAvailability.find((entry: any) => String(entry.branchId) === branchId);
+      return !(branchRule && Number(branchRule.isAvailable) === 0);
+    });
+  }, [productsData, productsBranchId]);
+
   const groupedItemsMap = useMemo(() => {
     if (!productsData) return {} as Record<string, CoffeeItem[]>;
-    return productsData.reduce((acc: Record<string, CoffeeItem[]>, item) => {
+    return productsForBranch.reduce((acc: Record<string, CoffeeItem[]>, item) => {
       const key = getGroupingKey(item);
       if (!acc[key]) acc[key] = [];
       acc[key].push(item);
       return acc;
     }, {});
-  }, [productsData, getGroupingKey]);
+  }, [productsData, productsForBranch, getGroupingKey]);
 
   const filteredItemsList = useMemo(() => {
     if (!productsData) return [];
     const q = searchQuery.toLowerCase();
-    const allCounts = productsData
+    const allCounts = productsForBranch
       .map((i: any) => i.salesCount || 0)
       .filter((c: number) => c > 0)
       .sort((a: number, b: number) => b - a);
@@ -1163,17 +1183,17 @@ export default function PosSystem() {
           isBestSeller: (item.salesCount || 0) >= bsThreshold && bsThreshold > 0,
         };
       });
-  }, [productsData, selectedCategory, selectedDepartment, searchQuery, groupedItemsMap]);
+  }, [productsData, productsForBranch, selectedCategory, selectedDepartment, searchQuery, groupedItemsMap]);
 
   // Departments that have at least one product
   const availableDepartments = useMemo(() => {
     if (!productsData) return [];
-    const depts = new Set(productsData.map((p: any) => p.department || 'drinks'));
+    const depts = new Set(productsForBranch.map((p: any) => p.department || 'drinks'));
     const result: { id: 'drinks' | 'food'; nameAr: string; nameEn: string }[] = [];
     if (depts.has('drinks')) result.push({ id: 'drinks', nameAr: 'مشروبات', nameEn: 'Drinks' });
     if (depts.has('food'))   result.push({ id: 'food',   nameAr: 'أكل',      nameEn: 'Food'   });
     return result;
-  }, [productsData]);
+  }, [productsData, productsForBranch]);
 
   // Arabic display names for raw category keys (fallback when no MenuCategory records exist)
   const CATEGORY_DISPLAY: Record<string, { ar: string; en: string }> = {
@@ -1197,8 +1217,8 @@ export default function PosSystem() {
 
   const visibleCategories = useMemo(() => {
     const filteredProducts = selectedDepartment === 'all'
-      ? productsData || []
-      : (productsData || []).filter((p: any) => (p.department || 'drinks') === selectedDepartment);
+      ? productsForBranch
+      : productsForBranch.filter((p: any) => (p.department || 'drinks') === selectedDepartment);
     const itemCategorySet = new Set(filteredProducts.map((p: any) => p.category).filter(Boolean));
 
     // ① Try to match against MenuCategory records (when they exist)
@@ -1223,7 +1243,7 @@ export default function PosSystem() {
         icon: Tag,
       };
     });
-  }, [productsData, menuCategories, selectedDepartment, i18n.language]);
+  }, [productsForBranch, menuCategories, selectedDepartment, i18n.language]);
 
   // Helper: get the correct unit price for a POS order item, respecting the selected size
   // Defined here (before calculateTotal) so it can be used in useMemo callbacks
@@ -1440,25 +1460,30 @@ export default function PosSystem() {
 
   const sendDualPosNavigation = useCallback((selectedProductId?: string) => {
     if (dualPosSyncMode !== "follow") return;
-    const viewport = productMenuRef.current?.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]");
+    const scrollRoot = productMenuRef.current;
+    const viewport = scrollRoot?.matches("[data-radix-scroll-area-viewport]")
+      ? scrollRoot
+      : scrollRoot?.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]");
     const scrollRatio = viewport && viewport.scrollHeight > viewport.clientHeight
       ? viewport.scrollTop / (viewport.scrollHeight - viewport.clientHeight)
       : 0;
-    if (selectedProductId) selectedDisplayProductIdRef.current = selectedProductId;
     rtSend("dual_pos_navigation_update", {
       payload: {
         category: selectedCategory,
         department: selectedDepartment,
         search: searchQuery,
         scrollRatio: Math.min(1, Math.max(0, scrollRatio)),
-        selectedProductId: selectedDisplayProductIdRef.current || undefined,
+        ...(selectedProductId ? { selectedProductId } : {}),
       },
     });
   }, [dualPosSyncMode, rtSend, searchQuery, selectedCategory, selectedDepartment]);
 
   useEffect(() => {
     if (dualPosSyncMode !== "follow") return;
-    const viewport = productMenuRef.current?.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]");
+    const scrollRoot = productMenuRef.current;
+    const viewport = scrollRoot?.matches("[data-radix-scroll-area-viewport]")
+      ? scrollRoot
+      : scrollRoot?.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]");
     if (!viewport) return;
     const handleScroll = () => {
       if (navigationFrameRef.current !== null) cancelAnimationFrame(navigationFrameRef.current);
