@@ -42,6 +42,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useToast } from "@/hooks/use-toast";
 import { useNotifications } from "@/hooks/use-notifications";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { filterProductsForBranch } from "@/lib/branch-products";
 import { queueOfflineOrder, syncOfflineOrders, countPendingOrders } from "@/lib/offline-queue";
 import type { CoffeeItem, Order, Table, Employee } from "@shared/schema";
 import clunyLogo from "@assets/cluny-logo-customer.png";
@@ -943,8 +944,7 @@ export default function PosSystem() {
     queryKey: ["/api/coffee-items", productsBranchId || "all"],
     queryFn: async () => {
       const query = productsBranchId ? `?branchId=${encodeURIComponent(productsBranchId)}` : "";
-      const response = await fetch(`/api/coffee-items${query}`, { credentials: "include" });
-      if (!response.ok) throw new Error("Failed to load products for this branch");
+      const response = await apiRequest("GET", `/api/coffee-items${query}`);
       return response.json();
     },
     staleTime: 5 * 60 * 1000,
@@ -1132,17 +1132,7 @@ export default function PosSystem() {
   }, []);
 
   const productsForBranch = useMemo(() => {
-    const branchId = productsBranchId;
-    return (productsData || []).filter((item: any) => {
-      if (!branchId) return true;
-      const publishedBranches = Array.isArray(item.publishedBranches) ? item.publishedBranches : [];
-      if (publishedBranches.length > 0 && !publishedBranches.includes("*") && !publishedBranches.includes(branchId)) {
-        return false;
-      }
-      const branchAvailability = Array.isArray(item.branchAvailability) ? item.branchAvailability : [];
-      const branchRule = branchAvailability.find((entry: any) => String(entry.branchId) === branchId);
-      return !(branchRule && Number(branchRule.isAvailable) === 0);
-    });
+    return filterProductsForBranch(productsData, productsBranchId);
   }, [productsData, productsBranchId]);
 
   const groupedItemsMap = useMemo(() => {

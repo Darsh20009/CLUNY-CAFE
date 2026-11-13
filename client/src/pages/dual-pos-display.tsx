@@ -13,6 +13,8 @@ import DualPosIdlePromo from "@/components/dual-pos-idle-promo";
 import { useRealtimeEvent, useRealtimeSend, useRealtimeStatus } from "@/hooks/useRealtimeEngine";
 import { getRealtimeEngine } from "@/lib/realtime-engine";
 import { PWAInstallButton } from "@/components/pwa-install";
+import { apiRequest } from "@/lib/queryClient";
+import { filterProductsForBranch } from "@/lib/branch-products";
 
 type DisplayOrderItem = {
   lineItemId: string;
@@ -129,8 +131,7 @@ export default function DualPOSDisplay() {
     queryKey: ["/api/coffee-items", branchId || "all"],
     queryFn: async () => {
       const query = branchId ? `?branchId=${encodeURIComponent(branchId)}` : "";
-      const response = await fetch(`/api/coffee-items${query}`, { credentials: "include" });
-      if (!response.ok) throw new Error("Failed to load products for this branch");
+      const response = await apiRequest("GET", `/api/coffee-items${query}`);
       return response.json();
     },
     staleTime: 5 * 60 * 1000,
@@ -451,16 +452,10 @@ export default function DualPOSDisplay() {
     ];
   }, [menuCategories]);
 
-  const productsForBranch = useMemo(() => products.filter((product: any) => {
-    if (!branchId) return true;
-    const publishedBranches = Array.isArray(product.publishedBranches) ? product.publishedBranches : [];
-    if (publishedBranches.length > 0 && !publishedBranches.includes("*") && !publishedBranches.includes(branchId)) {
-      return false;
-    }
-    const branchAvailability = Array.isArray(product.branchAvailability) ? product.branchAvailability : [];
-    const branchRule = branchAvailability.find((entry: any) => String(entry.branchId) === branchId);
-    return !(branchRule && Number(branchRule.isAvailable) === 0);
-  }), [products, branchId]);
+  const productsForBranch = useMemo(
+    () => filterProductsForBranch(products, branchId),
+    [products, branchId],
+  );
 
   const visibleProducts = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
