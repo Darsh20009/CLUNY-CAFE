@@ -757,9 +757,15 @@ export default function DualPOSDisplay() {
                           alt={isArabic ? item.nameAr : item.nameEn || item.nameAr}
                           loading="lazy"
                           className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+                          onError={(event) => {
+                            event.currentTarget.onerror = null;
+                            event.currentTarget.src = clunyLogo;
+                          }}
                         />
                       ) : (
-                        <div className="flex h-full items-center justify-center text-emerald-800/40"><Coffee className="h-12 w-12" /></div>
+                        <div className="flex h-full items-center justify-center bg-white p-8">
+                          <img src={clunyLogo} alt="CLUNY CAFE" className="max-h-full max-w-full object-contain" />
+                        </div>
                       )}
                       {canControl && (
                         <span className="absolute bottom-2 end-2 flex h-9 w-9 items-center justify-center rounded-full bg-emerald-800 text-white shadow-lg">
@@ -812,7 +818,21 @@ export default function DualPOSDisplay() {
                 {orderItems.map((item) => (
                   <article key={item.lineItemId} className="flex gap-3 rounded-2xl border border-stone-100 bg-stone-50 p-3">
                     <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-stone-200">
-                      {imageFor(item.imageUrl) ? <img src={imageFor(item.imageUrl)} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-emerald-800/40"><Coffee className="h-7 w-7" /></div>}
+                      {imageFor(item.imageUrl) ? (
+                        <img
+                          src={imageFor(item.imageUrl)}
+                          alt=""
+                          className="h-full w-full object-cover"
+                          onError={(event) => {
+                            event.currentTarget.onerror = null;
+                            event.currentTarget.src = clunyLogo;
+                          }}
+                        />
+                      ) : (
+                        <div className="flex h-full items-center justify-center bg-white p-3">
+                          <img src={clunyLogo} alt="" className="max-h-full max-w-full object-contain" />
+                        </div>
+                      )}
                     </div>
                     <div className="min-w-0 flex-1">
                       <h3 className="truncate font-bold">{isArabic ? item.nameAr : item.nameEn || item.nameAr}</h3>

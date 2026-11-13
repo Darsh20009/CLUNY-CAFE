@@ -2997,10 +2997,14 @@ export default function PosSystem() {
                             src={item.imageUrl} 
                             alt={item.nameAr}
                             className="w-full h-full object-cover"
+                            onError={(event) => {
+                              event.currentTarget.onerror = null;
+                              event.currentTarget.src = clunyLogo;
+                            }}
                           />
                         ) : (
-                          <div className="w-full h-full bg-muted flex items-center justify-center">
-                            <Coffee className="w-10 h-10 text-muted-foreground/30" />
+                          <div className="w-full h-full bg-white flex items-center justify-center p-8">
+                            <img src={clunyLogo} alt="CLUNY CAFE" className="max-h-full max-w-full object-contain" />
                           </div>
                         )}
                         {!item.isAvailable && (
